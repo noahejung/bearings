@@ -45,10 +45,14 @@ SOCRATA_DATASETS = {
     "pluto":            "64uk-42ks",  # Primary Land Use Tax Lot Output (PLUTO)
 }
 
-# Overture release string. Changes monthly. VERIFY at docs.overturemaps.org
-# before relying on it; the ingest task has an explicit check.
-# Verified live 2026-07-12 against https://docs.overturemaps.org/release-calendar/ —
-# the plan's original "2025-06-25.0" was exactly one year stale.
+# Overture release string. NOT used directly by fetch_pois() anymore --
+# overture.resolve_release() lists the public S3 bucket at runtime and picks
+# the newest release, because Overture retains only the last two releases
+# and a hardcoded string breaks the pipeline roughly monthly (the plan's
+# original "2025-06-25.0" was exactly one year stale on day one). This
+# constant survives only as resolve_release()'s last-resort fallback for
+# when the bucket listing itself is unreachable; keep it roughly current
+# but do not depend on it being current.
 OVERTURE_RELEASE = "2026-06-17.0"
 OVERTURE_S3 = (
     "s3://overturemaps-us-west-2/release/{release}/theme=places/type=place/*"
