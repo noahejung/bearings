@@ -1,0 +1,25 @@
+[project]
+name = "bearings"
+version = "0.1.0"
+description = "Per-address 'what is daily life actually like here' report for NYC, built on free public data."
+readme = "README.md"
+authors = [
+    { name = "noahejung", email = "nejtung@gmail.com" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "h3",
+    "duckdb",
+    "pandas",
+    "httpx",
+    "networkx",
+]
+
+[dependency-groups]
+dev = [
+    "pytest",
+]
+
+[build-system]
+requires = ["uv_build>=0.11.28,<0.12.0"]
+build-backend = "uv_build"

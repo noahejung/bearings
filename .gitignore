@@ -1,0 +1,16 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv/
+
+# Test cache
+.pytest_cache/
+
+# Raw downloads and derived data — never committed (see PLAN.md Global Constraints)
+data/
