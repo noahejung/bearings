@@ -1,14 +1,23 @@
 """Assemble the per-address profile.
 
 Everything expensive (POI ingest, the transit graph, Dijkstra from each
-anchor) is computed once and memoised. In Phase 2 these become build-time
-artefacts written to disk; for now, module-level caches keep the CLI usable."""
+anchor) is computed once and memoised. The two slowest pieces -- the POI
+table (pulled from Overture over S3) and the anchor-time dict (a full
+Dijkstra run from every anchor) -- are additionally persisted to
+`config.DERIVED_DIR` as build-time artefacts: the first call in the data
+directory's lifetime pays the real cost and writes the result to disk;
+every call after that, in this run or a future one, loads it back in
+milliseconds. `warm_caches()` is the seam the HTTP API (api.py) calls on
+startup so the first real request is never the one paying for a cold
+boot."""
 
+import json
 from functools import lru_cache
 
+import duckdb
 import pandas as pd
 
-from bearings import cells, geocode, transit
+from bearings import cells, config, geocode, transit
 from bearings.sources import compstat, gtfs, hpd, noise, overture, pluto, precincts, trees
 from bearings.transit import WALK_SPEED_MPS, _haversine_m
 
@@ -44,22 +53,81 @@ _ERA_NOTES = {
 }
 
 
+_POIS_PATH = config.DERIVED_DIR / "pois.parquet"
+_ANCHOR_TIMES_PATH = config.DERIVED_DIR / "anchor_times.json"
+
+
+def _write_parquet(df: pd.DataFrame, path) -> None:
+    """Write a DataFrame to Parquet via DuckDB -- already a dependency, so
+    this needs no new package (pandas' own to_parquet requires pyarrow,
+    which nothing here otherwise pulls in)."""
+    config.DERIVED_DIR.mkdir(parents=True, exist_ok=True)
+    con = duckdb.connect()
+    con.register("_df", df)
+    con.execute(f"COPY _df TO '{path.as_posix()}' (FORMAT PARQUET)")
+    con.close()
+
+
+def _read_parquet(path) -> pd.DataFrame:
+    con = duckdb.connect()
+    df = con.execute(f"SELECT * FROM read_parquet('{path.as_posix()}')").fetch_df()
+    con.close()
+    return df
+
+
 @lru_cache(maxsize=1)
 def _pois():
-    return overture.fetch_pois()
+    """The Overture POI table -- ~478k rows pulled over S3, which is the
+    single slowest thing this module does. Persisted to disk (see the
+    module docstring) so only the very first boot ever pays for it."""
+    if _POIS_PATH.exists():
+        return _read_parquet(_POIS_PATH)
+    df = overture.fetch_pois()
+    _write_parquet(df, _POIS_PATH)
+    return df
 
 
 @lru_cache(maxsize=1)
 def _stations():
     # Every feed, not just the subway -- an address near Newport should
     # see PATH stations in nearest_stations, not just whatever subway
-    # happens to be 1200m away.
+    # happens to be 1200m away. Not persisted to disk: both GTFS zips are
+    # already cached locally by sources/gtfs.py, so parsing them from disk
+    # is already fast -- there's no cold-vs-warm gap here worth closing.
     return pd.concat([gtfs.stations(feed) for feed in gtfs.FEEDS], ignore_index=True)
 
 
 @lru_cache(maxsize=1)
 def _anchor_times():
-    return transit.times_from_anchors()
+    """{anchor: {stop_id: seconds}} -- a full Dijkstra run from every
+    anchor over the whole transit graph. Persisted to disk for the same
+    reason _pois() is: it's real work, and it never changes without a new
+    GTFS feed, so there is no reason to redo it every boot."""
+    if _ANCHOR_TIMES_PATH.exists():
+        with _ANCHOR_TIMES_PATH.open() as f:
+            raw = json.load(f)
+        return {
+            anchor: {stop: int(sec) for stop, sec in by_stop.items()}
+            for anchor, by_stop in raw.items()
+        }
+    times = transit.times_from_anchors()
+    config.DERIVED_DIR.mkdir(parents=True, exist_ok=True)
+    with _ANCHOR_TIMES_PATH.open("w") as f:
+        json.dump(times, f)
+    return times
+
+
+def warm_caches() -> None:
+    """Populate every module-level cache profile_for() depends on: the POI
+    table, the station tables, and the anchor-time dict (which builds the
+    transit graph and runs Dijkstra as a side effect). Called once by
+    api.py's startup handler so the first real HTTP request never pays the
+    cold-boot cost. Safe to call more than once -- every cache here is
+    memoised, so repeat calls are free.
+    """
+    _pois()
+    _stations()
+    _anchor_times()
 
 
 def _walk_minutes(metres: float) -> int:
