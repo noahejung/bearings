@@ -10,7 +10,9 @@ sources are ingested, spatially indexed to H3 hexagons, and cached locally
 before the CLI ever runs a query. Full design context and the reasoning
 behind the product angle lives in the vault at `Projects/bearings/SPEC.md`.
 
-This is Phase 1: the ingest pipeline and a working CLI. There is no UI yet.
+Phase 1 (the ingest pipeline, the CLI, and the `bearings.api` FastAPI wrapper) is
+done. Phase 2 (`web/`) is a React + TypeScript front end for the report and the
+fact-checker -- see "Running the front end" below.
 
 ## Running it
 
@@ -81,6 +83,34 @@ Measured on this machine (raw GTFS/precinct downloads already cached in
 
 Bad or out-of-NYC addresses return **422** with a real message, never a
 500 -- `geocode.GeocodeError` is caught at both endpoints.
+
+## Running the front end
+
+The API must already be running (see above) -- the dev server proxies `/api/*`
+straight to it.
+
+```bash
+cd web
+npm install   # first time only; installs from package.json, never a bare `npm install <pkg>`
+npm run dev
+```
+
+Open the printed `http://localhost:5173`. Click any example address chip for an
+instant report (no typing required), then "Load the example listing" on the
+fact-check section for a one-click, pre-verified example: a real Bronx address
+whose listing copy is genuinely contradicted by the record (72 open Class C --
+"immediately hazardous" -- HPD violations against a "well-maintained" claim;
+1,410 noise complaints against a "quiet" claim).
+
+`npm run build` type-checks (`tsc -b`) and produces a static `web/dist/` --
+no server-side rendering, no API keys baked in. `VITE_API_BASE_URL` overrides
+the API origin for a build where the two aren't served from the same host;
+it defaults to relative `/api/...` paths.
+
+Stack: Vite + React + TypeScript, hand-written CSS (no component library, no
+Tailwind), no animation library -- all motion is CSS, gated behind
+`prefers-reduced-motion`. Light and dark themes both fully styled; the theme
+toggle persists to `localStorage` and otherwise follows the OS preference.
 
 ## Data sources
 
@@ -157,5 +187,16 @@ src/bearings/
     precincts.py              # precinct boundary point-in-polygon join
   transit.py            # GTFS -> graph -> real travel times from anchors
   profile.py            # assemble the per-address profile
+  api.py                # FastAPI wrapper: GET /api/profile, POST /api/factcheck
   cli.py                 # `bearings profile "<address>"`
+  factcheck.py           # rule-based claim extraction + evidence lookup
+
+web/                    # React + TypeScript front end (Phase 2) -- see "Running
+                         # the front end" above
+  src/
+    App.tsx               # top-level state: address, profile, fact-check
+    api.ts                # typed fetch wrapper for the two endpoints
+    types.ts               # mirrors the API contract exactly
+    components/             # one component per report field + the fact-checker
+    styles/index.css         # the whole design system, hand-written CSS
 ```

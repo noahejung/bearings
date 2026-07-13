@@ -1,0 +1,11 @@
+node_modules/
+dist/
+dist-ssr/
+*.local
+
+# Editor
+.vscode/*
+!.vscode/extensions.json
+
+# tsc build info
+*.tsbuildinfo
