@@ -15,6 +15,9 @@ dependencies = [
     "networkx",
 ]
 
+[project.scripts]
+bearings = "bearings.cli:main"
+
 [dependency-groups]
 dev = [
     "pytest",
