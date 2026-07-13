@@ -28,13 +28,14 @@ def _haversine_m(a: tuple[float, float], b: tuple[float, float]) -> float:
     return 2 * r * math.asin(math.sqrt(h))
 
 
-def _ride_times() -> pd.DataFrame:
-    """Median seconds between every pair of adjacent stations, from the timetable.
+def _ride_times(feed: str) -> pd.DataFrame:
+    """Median seconds between every pair of adjacent stations, from the
+    timetable of a single feed.
 
     Median rather than mean: express and local trips share track, and the
     occasional pathological schedule row would drag a mean around.
     """
-    st = gtfs.stop_times().sort_values(["trip_id", "seq"])
+    st = gtfs.stop_times(feed).sort_values(["trip_id", "seq"])
 
     st["next_stop"] = st.groupby("trip_id")["stop_id"].shift(-1)
     st["next_arrival"] = st.groupby("trip_id")["arrival"].shift(-1)
@@ -52,19 +53,35 @@ def _ride_times() -> pd.DataFrame:
 
 
 def build_graph() -> nx.DiGraph:
+    """One graph, built from every feed in gtfs.FEEDS.
+
+    Each feed contributes its own stations and ride edges (its own
+    timetable never mixes with another feed's). Transfer edges are then
+    computed once, over every station regardless of feed -- this is
+    deliberate: it's the only place a PATH platform and a subway platform
+    are ever compared, and it's how the two networks connect (e.g. PATH's
+    World Trade Center to the subway's) without any feed-pair-specific
+    code. Namespaced stop_ids (gtfs._namespaced) make this safe -- a PATH
+    station and an MTA station can never collide on ID even if some future
+    feed reused a number.
+    """
     g = nx.DiGraph()
 
-    stations = gtfs.stations()
-    for row in stations.itertuples():
+    all_stations = pd.concat(
+        [gtfs.stations(feed) for feed in gtfs.FEEDS], ignore_index=True
+    )
+    for row in all_stations.itertuples():
         g.add_node(row.stop_id, name=row.name, lat=row.lat, lng=row.lng, cell=row.cell)
 
-    # Riding edges, straight from the timetable.
-    for leg in _ride_times().itertuples():
-        if leg.src in g and leg.dst in g:
-            g.add_edge(leg.src, leg.dst, weight=float(leg.seconds), kind="ride")
+    # Riding edges, straight from each feed's own timetable.
+    for feed in gtfs.FEEDS:
+        for leg in _ride_times(feed).itertuples():
+            if leg.src in g and leg.dst in g:
+                g.add_edge(leg.src, leg.dst, weight=float(leg.seconds), kind="ride")
 
-    # Transfer edges: stations close enough to walk between.
-    coords = {r.stop_id: (r.lat, r.lng) for r in stations.itertuples()}
+    # Transfer edges: any two stations (same feed or different) close
+    # enough to walk between.
+    coords = {r.stop_id: (r.lat, r.lng) for r in all_stations.itertuples()}
     ids = list(coords)
     for i, a in enumerate(ids):
         for b in ids[i + 1 :]:

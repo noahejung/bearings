@@ -30,6 +30,10 @@ ANCHORS = {
 GEOSEARCH_URL = "https://geosearch.planninglabs.nyc/v2/search"
 MTA_GTFS_URL = "http://web.mta.info/developers/data/nyct/subway/google_transit.zip"
 
+# PATH (Port Authority Trans-Hudson) serves Jersey City/Newark/Hoboken --
+# not MTA subway territory, but the newport_path anchor lives there.
+PATH_GTFS_URL = "https://data.trilliumtransit.com/gtfs/path-nj-us/path-nj-us.zip"
+
 SOCRATA_DOMAIN = "data.cityofnewyork.us"
 # 4x4 dataset identifiers. Confirmed-live ones are noted; the rest MUST be
 # verified by the task that first fetches them.

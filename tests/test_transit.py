@@ -56,6 +56,34 @@ def test_every_anchor_snaps_to_a_station_that_is_actually_there():
         )
 
 
+def test_path_stations_are_in_the_graph(graph):
+    path_nodes = [n for n in graph.nodes if n.startswith("PATH:")]
+    assert len(path_nodes) == 13
+
+
+def test_path_and_subway_wtc_are_transfer_connected(graph):
+    """PATH's WTC (~40.71271, -74.01193) sits close enough to the subway's
+    WTC/Cortlandt cluster that the existing 200m haversine transfer rule
+    should connect the two networks without any special-casing."""
+    path_wtc = [
+        n
+        for n, d in graph.nodes(data=True)
+        if n.startswith("PATH:") and "world trade center" in d["name"].lower()
+    ]
+    assert path_wtc, "PATH World Trade Center station not found in graph"
+    p = path_wtc[0]
+
+    subway_neighbors_within_transfer_range = [
+        (n, d["kind"])
+        for n, d in graph[p].items()
+        if not n.startswith("PATH:") and d["kind"] == "transfer"
+    ]
+    assert subway_neighbors_within_transfer_range, (
+        "no subway station transfer-connected to PATH WTC -- "
+        "the cross-network edge did not form"
+    )
+
+
 def test_farther_stations_take_longer(times):
     """Sanity: Coney Island must be farther from Midtown than Union Sq."""
     from bearings.sources import gtfs
