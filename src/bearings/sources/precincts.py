@@ -8,7 +8,7 @@ from functools import lru_cache
 import duckdb
 import httpx
 
-from bearings import config
+from bearings import config, staleness
 
 
 @lru_cache(maxsize=1)
@@ -20,6 +20,8 @@ def _con() -> duckdb.DuckDBPyConnection:
         resp = httpx.get(config.PRECINCT_GEOJSON, timeout=60.0, follow_redirects=True)
         resp.raise_for_status()
         path.write_bytes(resp.content)
+    else:
+        staleness.warn_if_stale(path, config.PRECINCT_CACHE_MAX_AGE_S, "precinct boundaries")
 
     con = duckdb.connect()
     con.execute("INSTALL spatial; LOAD spatial;")

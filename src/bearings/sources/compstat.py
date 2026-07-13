@@ -12,7 +12,7 @@ from pathlib import Path
 
 import httpx
 
-from bearings import config
+from bearings import config, staleness
 
 # nyc.gov 403s a default-UA client (see the module docstring), but a real
 # browser gets a 200 (confirmed live 2026-07-13) -- this is a landing page
@@ -44,6 +44,9 @@ def _download(pct: int) -> Path:
     dest = config.RAW_DIR / f"pct{pct:03d}.pdf"
 
     if dest.exists():
+        staleness.warn_if_stale(
+            dest, config.COMPSTAT_CACHE_MAX_AGE_S, f"precinct {pct} CompStat PDF"
+        )
         return dest
 
     resp = httpx.get(

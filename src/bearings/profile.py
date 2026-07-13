@@ -17,7 +17,7 @@ from functools import lru_cache
 import duckdb
 import pandas as pd
 
-from bearings import cells, config, geocode, transit
+from bearings import cells, config, geocode, staleness, transit
 from bearings.sources import compstat, gtfs, hpd, noise, overture, pluto, precincts, trees
 from bearings.transit import WALK_SPEED_MPS, _haversine_m
 
@@ -81,6 +81,7 @@ def _pois():
     single slowest thing this module does. Persisted to disk (see the
     module docstring) so only the very first boot ever pays for it."""
     if _POIS_PATH.exists():
+        staleness.warn_if_stale(_POIS_PATH, config.POI_CACHE_MAX_AGE_S, "POI table")
         return _read_parquet(_POIS_PATH)
     df = overture.fetch_pois()
     _write_parquet(df, _POIS_PATH)
@@ -104,6 +105,9 @@ def _anchor_times():
     reason _pois() is: it's real work, and it never changes without a new
     GTFS feed, so there is no reason to redo it every boot."""
     if _ANCHOR_TIMES_PATH.exists():
+        staleness.warn_if_stale(
+            _ANCHOR_TIMES_PATH, config.ANCHOR_TIMES_CACHE_MAX_AGE_S, "anchor-times"
+        )
         with _ANCHOR_TIMES_PATH.open() as f:
             raw = json.load(f)
         return {

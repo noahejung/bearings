@@ -64,6 +64,20 @@ OVERTURE_S3 = (
 # "77 precincts" figure conventionally excludes. Column is "precinct".
 PRECINCT_GEOJSON = "https://data.cityofnewyork.us/resource/y76i-bdw7.geojson"
 
+# --- disk-cache freshness (see bearings.staleness) ---
+# Every one of these caches is write-once, read-forever -- crossing this
+# window doesn't block anything or trigger a refetch, it only turns a
+# silent staleness failure into a loud warning. Picked from each source's
+# own documented publish cadence, with slack: Overture ships a new release
+# roughly monthly, GTFS schedules change a handful of times a year, NYPD
+# republishes CompStat weekly (README.md), and precinct boundaries are
+# essentially static (the last NYPD precinct was added in 2013).
+POI_CACHE_MAX_AGE_S = 30 * 86400
+ANCHOR_TIMES_CACHE_MAX_AGE_S = 30 * 86400
+GTFS_CACHE_MAX_AGE_S = 30 * 86400
+COMPSTAT_CACHE_MAX_AGE_S = 10 * 86400
+PRECINCT_CACHE_MAX_AGE_S = 365 * 86400
+
 NYPD_PCT_PDF = (
     "https://www.nyc.gov/assets/nypd/downloads/pdf/crime_statistics/"
     "cs-en-us-{pct:03d}pct.pdf"

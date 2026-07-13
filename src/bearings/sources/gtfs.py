@@ -18,7 +18,7 @@ from pathlib import Path
 import httpx
 import pandas as pd
 
-from bearings import cells, config
+from bearings import cells, config, staleness
 
 FEEDS: dict[str, dict[str, str | None]] = {
     "mta": {
@@ -47,6 +47,7 @@ def _download(feed: str) -> Path:
     dest = config.RAW_DIR / spec["cache_name"]
 
     if dest.exists():
+        staleness.warn_if_stale(dest, config.GTFS_CACHE_MAX_AGE_S, f"{feed} GTFS feed")
         return dest
 
     resp = httpx.get(spec["url"], timeout=120.0, follow_redirects=True)
