@@ -58,12 +58,12 @@ import time
 
 import httpx
 
+from bearings import config
+
 SOURCE = {
     "name": "FEMA National Flood Hazard Layer",
     "url": "https://hazards.fema.gov/arcgis/rest/services/public/NFHL/MapServer/28",
 }
-
-_QUERY_URL = "https://hazards.fema.gov/arcgis/rest/services/public/NFHL/MapServer/28/query"
 
 # FEMA's own sentinel for "no Base Flood Elevation applies to this zone".
 _NO_BFE = -9999.0
@@ -116,7 +116,7 @@ def _query(params: dict[str, object]) -> httpx.Response:
     last_exc: Exception | None = None
     for attempt in range(_MAX_ATTEMPTS):
         try:
-            resp = httpx.get(_QUERY_URL, params=params, timeout=30.0)
+            resp = httpx.get(config.FEMA_NFHL_QUERY_URL, params=params, timeout=30.0)
             resp.raise_for_status()
             return resp
         except httpx.TransportError as exc:

@@ -34,6 +34,13 @@ MTA_GTFS_URL = "http://web.mta.info/developers/data/nyct/subway/google_transit.z
 # not MTA subway territory, but the newport_path anchor lives there.
 PATH_GTFS_URL = "https://data.trilliumtransit.com/gtfs/path-nj-us/path-nj-us.zip"
 
+# FEMA National Flood Hazard Layer, public ArcGIS MapServer (confirmed live
+# 2026-07-13 -- found by web search, not guessed). Layer 28 is "Flood
+# Hazard Zones", the one polygon layer that carries a FLD_ZONE per polygon.
+FEMA_NFHL_QUERY_URL = (
+    "https://hazards.fema.gov/arcgis/rest/services/public/NFHL/MapServer/28/query"
+)
+
 SOCRATA_DOMAIN = "data.cityofnewyork.us"
 # 4x4 dataset identifiers. Confirmed-live ones are noted; the rest MUST be
 # verified by the task that first fetches them.
