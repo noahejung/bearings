@@ -44,14 +44,15 @@ def test_profile_returns_the_contract_shape(client):
         "building",
     }
     assert set(body["location"]) == {"lat", "lng", "bbl"}
-    assert set(body["transit"]) == {"nearest_stations", "to_anchors", "caveat"}
+    assert set(body["transit"]) == {"nearest_stations", "to_anchors", "caveat", "source"}
     assert set(body["transit"]["to_anchors"]) == {
         "midtown",
         "wtc",
         "downtown_brooklyn",
         "newport_path",
     }
-    assert set(body["amenities"]) == {
+    assert set(body["amenities"]) == {"counts", "source"}
+    assert set(body["amenities"]["counts"]) == {
         "grocery",
         "cafe",
         "bar",
@@ -70,6 +71,7 @@ def test_profile_returns_the_contract_shape(client):
         "felony_assault_pct",
         "total_ytd",
         "total_pct",
+        "source",
     }
     assert set(body["quiet"]) == {"noise_complaints_12mo", "source"}
     assert set(body["green"]) == {"street_trees_nearby", "source"}
@@ -93,8 +95,23 @@ def test_profile_amenities_include_every_category_even_at_zero(client):
     # Midtown will not be zero everywhere, but every key must exist
     # regardless -- a missing key and a real zero must be indistinguishable
     # from "not present", which the contract forbids.
-    for count in body["amenities"].values():
+    for count in body["amenities"]["counts"].values():
         assert isinstance(count, int)
+
+
+def test_profile_transit_amenities_and_safety_each_carry_a_real_source(client):
+    """Regression guard: transit, amenities, and safety used to be the only
+    three of the six report blocks with no citation at all, in direct
+    violation of SourceTag.tsx's own stated invariant ('a stat without a
+    citation is a bug') and the spec's 'every stat must carry a real,
+    working source URL.'"""
+    resp = client.get("/api/profile", params={"address": EMPIRE_STATE})
+    body = resp.json()
+
+    for block in (body["transit"], body["amenities"], body["safety"]):
+        source = block["source"]
+        assert source["name"]
+        assert source["url"].startswith("http")
 
 
 def test_profile_bad_address_is_422_not_500(client):

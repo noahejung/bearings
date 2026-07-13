@@ -22,8 +22,8 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
-from bearings import factcheck, geocode, profile
-from bearings.sources import overture
+from bearings import factcheck, geocode, profile, transit
+from bearings.sources import compstat, overture
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s", stream=sys.stdout
@@ -53,13 +53,30 @@ _state = {"warm": False}
 def _to_contract(prof: dict) -> dict:
     """Reshape profile.profile_for()'s dict to the API contract exactly:
     drop `shard` (internal, not part of the contract), add the transit
-    `caveat`, and fill every amenity bucket to a real zero instead of
-    letting an empty bucket vanish as a missing key."""
+    `caveat`, fill every amenity bucket to a real zero instead of letting an
+    empty bucket vanish as a missing key, and attach a `source` to every
+    block that carries real numbers -- transit, amenities, and safety came
+    from profile.py with no citation at all (quiet/green/building already
+    carry one each). Per SourceTag.tsx's own non-negotiable: a stat without
+    a citation is a bug."""
     transit_block = dict(prof["transit"])
     transit_block["caveat"] = TRANSIT_CAVEAT
+    transit_block["source"] = dict(transit.SOURCE)
 
-    amenities = {category: 0 for category in AMENITY_CATEGORIES}
-    amenities.update(prof["amenities"])
+    # Nested (not flat) deliberately: every value in `counts` is a real int
+    # (a bare zero, never a missing key -- see AMENITY_CATEGORIES above), and
+    # `source` sits beside it rather than mixed into the same dict, so
+    # "iterate every amenity count" never has to skip a non-numeric key.
+    counts = {category: 0 for category in AMENITY_CATEGORIES}
+    counts.update(prof["amenities"])
+    amenities = {"counts": counts, "source": dict(overture.SOURCE)}
+
+    # safety is `{}` when no precinct matched the point (see profile._safety)
+    # -- an empty object stays empty rather than carrying a citation for
+    # numbers that were never reported.
+    safety = dict(prof["safety"])
+    if safety:
+        safety["source"] = dict(compstat.SOURCE)
 
     return {
         "address": prof["address"],
@@ -67,7 +84,7 @@ def _to_contract(prof: dict) -> dict:
         "location": prof["location"],
         "transit": transit_block,
         "amenities": amenities,
-        "safety": prof["safety"],
+        "safety": safety,
         "quiet": prof["quiet"],
         "green": prof["green"],
         "building": prof["building"],

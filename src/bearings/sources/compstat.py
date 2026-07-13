@@ -14,6 +14,15 @@ import httpx
 
 from bearings import config
 
+# nyc.gov 403s a default-UA client (see the module docstring), but a real
+# browser gets a 200 (confirmed live 2026-07-13) -- this is a landing page
+# a user's own click opens with their own browser UA, so the block that
+# makes _download() need config.BROWSER_UA doesn't apply here.
+SOURCE = {
+    "name": "NYPD CompStat",
+    "url": "https://www.nyc.gov/site/nypd/stats/crime-statistics/citywide-crime-stats.page",
+}
+
 # Column order in a -raw row, after the label:
 #   WTD_2026, WTD_2025, WTD_pct, 28D_2026, 28D_2025, 28D_pct,
 #   YTD_2026, YTD_2025, YTD_pct, 2yr, 16yr, 33yr

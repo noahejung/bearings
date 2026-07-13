@@ -18,7 +18,8 @@ survives a defamation claim on contact.
 
 import re
 
-from bearings import profile
+from bearings import profile, transit
+from bearings.sources import overture
 
 # ---------------------------------------------------------------------------
 # Thresholds. Every one of these is a judgement call; the reasoning for each
@@ -125,14 +126,10 @@ def _status_for(
 # placeholder. Verified live 2026-07-13.
 # ---------------------------------------------------------------------------
 
-_TRANSIT_SOURCE = {
-    "name": "MTA GTFS + PATH GTFS",
-    "url": "http://web.mta.info/developers/data/nyct/subway/google_transit.zip",
-}
-_AMENITIES_SOURCE = {
-    "name": "Overture Maps Places",
-    "url": "https://docs.overturemaps.org/guides/places/",
-}
+# Transit and amenities sources live on the modules that actually produce
+# those facts (transit.SOURCE, overture.SOURCE) -- the API contract's report
+# cards cite the same two constants (see api.py), so there is exactly one
+# place to get each URL right, not two copies that can drift apart.
 # DOB permits are not ingested yet (see the fact-checker task's predicate
 # table), but the dataset that would check "newly renovated" is real and
 # live -- cite it now so the source is honest about what *would* answer
@@ -181,7 +178,7 @@ def _check_transit_walk(prof: dict) -> _ClaimEval:
         # radius at all. That absence is itself real evidence against
         # "steps from the subway," not a reason to call this no_data.
         evidence = "No subway or PATH station within 1,200 metres of this address."
-        return "contradicted", evidence, None, dict(_TRANSIT_SOURCE)
+        return "contradicted", evidence, None, dict(transit.SOURCE)
 
     nearest = nearby[0]
     minutes = nearest["walk_minutes"]
@@ -193,7 +190,7 @@ def _check_transit_walk(prof: dict) -> _ClaimEval:
         "contradicted",
     )
     evidence = f"{nearest['name']} is a {minutes}-minute walk from this address."
-    return status, evidence, minutes, dict(_TRANSIT_SOURCE)
+    return status, evidence, minutes, dict(transit.SOURCE)
 
 
 def _check_violations(prof: dict) -> _ClaimEval:
@@ -230,7 +227,7 @@ def _check_amenities(prof: dict) -> _ClaimEval:
         total, AMENITIES_SPARSE_AT_OR_BELOW, AMENITIES_DENSE_AT_OR_ABOVE, "contradicted", "supported"
     )
     evidence = f"{total} points of interest within a ~10-minute walk of this address."
-    return status, evidence, total, dict(_AMENITIES_SOURCE)
+    return status, evidence, total, dict(overture.SOURCE)
 
 
 def _check_unfalsifiable(prof: dict) -> _ClaimEval:

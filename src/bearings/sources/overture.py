@@ -17,6 +17,13 @@ from bearings import cells, config
 
 logger = logging.getLogger(__name__)
 
+# The one citation for every amenity-count fact this module feeds (both
+# api.py's amenities card and factcheck.py's "close to everything" claim).
+SOURCE = {
+    "name": "Overture Maps Places",
+    "url": "https://docs.overturemaps.org/guides/places/",
+}
+
 # Overture retains only the last two releases, so a hardcoded release string
 # breaks the pipeline roughly monthly (the plan originally shipped one that
 # was a year stale on day one). Resolve the newest one at runtime instead;

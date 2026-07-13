@@ -12,6 +12,15 @@ import pandas as pd
 from bearings import cells, config
 from bearings.sources import gtfs
 
+# The one citation for every transit fact this module produces (station
+# names, routes, walk times, ride times) -- both api.py (the report cards)
+# and factcheck.py (the "steps from the subway" claim) point here, so there
+# is exactly one URL to keep correct.
+SOURCE = {
+    "name": "MTA GTFS + PATH GTFS",
+    "url": "http://web.mta.info/developers/data/nyct/subway/google_transit.zip",
+}
+
 WALK_SPEED_MPS = 1.35        # ~4.9 km/h, a normal walking pace
 TRANSFER_PENALTY_S = 240     # 4 min: walk between platforms + wait for a train
 TRANSFER_MAX_M = 200.0       # stations closer than this are considered connected
