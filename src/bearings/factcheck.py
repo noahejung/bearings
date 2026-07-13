@@ -303,21 +303,36 @@ def _clauses(listing_text: str) -> list[str]:
 
 
 def _extract_claims(listing_text: str, prof: dict) -> list[dict]:
-    claims: list[dict] = []
-    seen: set[tuple[int, str]] = set()  # (clause index, predicate) -- de-dupe
-    # synonyms of the same predicate landing in the same clause, e.g.
-    # "quiet and peaceful" matching both "quiet" and "peaceful".
+    """One claim per marketing phrase that matches, `quote` set to the exact
+    matched phrase -- not the whole clause it sits in.
 
-    for idx, clause in enumerate(_clauses(listing_text)):
+    This used to dedupe on (clause index, predicate), so that two different
+    phrases sharing a predicate in the same clause ("prime location -- a
+    true gem", both -> unfalsifiable) collapsed into a single claim, and
+    that claim's `quote` was the *entire* clause rather than either phrase.
+    Two bugs from one mechanism: a real marketing phrase could be silently
+    dropped with no claim at all, and when two *different* predicates
+    shared a clause ("well-maintained ... close to everything"), both
+    surviving claims quoted the identical full-clause text, which reads as
+    a duplicate/rendering glitch even though each verdict is independently
+    correct. Keying on the exact matched phrase instead of the predicate
+    fixes both: every phrase gets exactly one claim, and that claim quotes
+    only the words that actually triggered it. A phrase repeated twice in
+    the very same clause (e.g. "quiet, quiet street") still only produces
+    one claim, since each pattern is searched at most once per clause.
+    """
+    claims: list[dict] = []
+
+    for clause in _clauses(listing_text):
         for pattern, predicate in _PATTERNS:
-            if (idx, predicate) in seen or not pattern.search(clause):
+            match = pattern.search(clause)
+            if not match:
                 continue
-            seen.add((idx, predicate))
 
             status, evidence, value, source = _PREDICATE_CHECKS[predicate](prof)
             claims.append(
                 {
-                    "quote": clause,
+                    "quote": match.group(0),
                     "predicate": predicate,
                     "status": status,
                     "evidence": evidence,

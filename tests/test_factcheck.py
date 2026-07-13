@@ -44,13 +44,26 @@ def test_quiet_claim_is_supported_at_a_genuinely_quiet_residential_address():
     assert noise_claims[0]["status"] == "supported"
 
 
-def test_two_synonyms_of_the_same_predicate_in_one_clause_are_not_duplicated():
-    # "quiet" and "peaceful" both match the "noise" predicate; landing in
-    # the *same* comma-delimited clause must not produce two identical
-    # claims for it.
+def test_two_phrases_sharing_a_predicate_in_one_clause_each_get_their_own_claim():
+    """Regression guard: "quiet" and "peaceful" both match the "noise"
+    predicate and land in the same clause. The old dedup mechanism
+    (keyed on clause index + predicate, not the matched phrase) silently
+    collapsed this down to a single claim quoting the *whole clause* --
+    which both (a) silently dropped a real marketing phrase ("peaceful")
+    from the response entirely, and (b) meant that when two *different*
+    phrases shared a predicate in one clause ("prime location -- a true
+    gem"), only one card was rendered, quoting the full clause, so a
+    reader could not tell two distinct marketing claims had even been
+    found. Each phrase must produce its own claim, quoting only itself.
+    """
     result = factcheck.check(EMPIRE_STATE, "A quiet and peaceful retreat.")
     noise_claims = [c for c in result["claims"] if c["predicate"] == "noise"]
-    assert len(noise_claims) == 1
+    assert len(noise_claims) == 2
+    quotes = {c["quote"].lower() for c in noise_claims}
+    assert quotes == {"quiet", "peaceful"}
+    # Same underlying number for both -- they're checking the same real
+    # fact, just phrased two different ways in the listing.
+    assert noise_claims[0]["value"] == noise_claims[1]["value"]
 
 
 def test_steps_from_the_subway_is_supported_when_true():
@@ -112,7 +125,7 @@ def test_close_to_everything_reflects_real_amenity_density():
     assert claims[0]["status"] == "supported"  # Midtown is dense with POIs
 
 
-def test_a_packed_marketing_sentence_yields_one_claim_per_predicate():
+def test_a_packed_marketing_sentence_yields_one_claim_per_phrase():
     result = factcheck.check(
         EMPIRE_STATE,
         "Quiet, tree-lined street, steps from the subway. Newly renovated, "
@@ -124,7 +137,12 @@ def test_a_packed_marketing_sentence_yields_one_claim_per_predicate():
     assert predicates.count("transit_walk") == 1
     assert predicates.count("renovation") == 1
     assert predicates.count("sunlight") == 1
-    assert predicates.count("unfalsifiable") == 2  # "prime location" + "a true gem"
+    # "prime location" and "a true gem" share a clause *and* a predicate --
+    # each is still its own claim (see the dedup regression test above),
+    # plus the separate "won't last" clause: three, not two.
+    assert predicates.count("unfalsifiable") == 3
+    quotes = {c["quote"].lower() for c in result["claims"] if c["predicate"] == "unfalsifiable"}
+    assert quotes == {"prime location", "a true gem", "won't last"}
 
 
 def test_every_claim_carries_a_source_with_a_real_url():
