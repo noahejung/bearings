@@ -1,4 +1,5 @@
 import type { Safety } from "../types";
+import { SourceTag } from "./SourceTag";
 
 interface Row {
   label: string;
@@ -69,6 +70,7 @@ export function SafetyCard({ safety }: { safety: Safety }) {
             comprehensive crime picture, and "total" folds in categories not broken out
             individually.
           </p>
+          {safety.source && <SourceTag source={safety.source} />}
         </>
       )}
     </article>

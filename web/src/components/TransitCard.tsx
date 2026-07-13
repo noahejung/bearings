@@ -1,5 +1,6 @@
 import type { Transit } from "../types";
 import { RouteBullets } from "./RouteBullet";
+import { SourceTag } from "./SourceTag";
 
 const ANCHOR_LABELS: Record<keyof Transit["to_anchors"], string> = {
   midtown: "Midtown",
@@ -76,6 +77,7 @@ export function TransitCard({ transit }: { transit: Transit }) {
         </span>
         {transit.caveat}
       </p>
+      <SourceTag source={transit.source} />
     </article>
   );
 }

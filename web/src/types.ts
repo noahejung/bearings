@@ -23,9 +23,10 @@ export interface Transit {
   nearest_stations: Station[];
   to_anchors: ToAnchors;
   caveat: string;
+  source: Source;
 }
 
-export interface Amenities {
+export interface AmenityCounts {
   grocery: number;
   cafe: number;
   bar: number;
@@ -36,8 +37,14 @@ export interface Amenities {
   laundry: number;
 }
 
+export interface Amenities {
+  counts: AmenityCounts;
+  source: Source;
+}
+
 // Empty object when no precinct match was found for the point -- every field is
 // therefore optional, and the UI must render a real fallback state, not a broken grid.
+// `source` follows the same rule: it's only present when there's real data to cite.
 export interface Safety {
   precinct?: number;
   week_ending?: string;
@@ -47,6 +54,7 @@ export interface Safety {
   felony_assault_pct?: number;
   total_ytd?: number;
   total_pct?: number;
+  source?: Source;
 }
 
 export interface Quiet {
@@ -71,7 +79,9 @@ export interface Building {
   year_built: number | null;
   era: Era;
   era_note: string | null;
-  hpd_open_violations: HpdViolations;
+  // null when the address has no BBL (bearings/profile.py's _building()) --
+  // there's no lot to look violations up on, not zero violations.
+  hpd_open_violations: HpdViolations | null;
   source: Source;
 }
 

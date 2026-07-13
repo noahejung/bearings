@@ -1,10 +1,11 @@
-import type { Amenities } from "../types";
+import type { Amenities, AmenityCounts } from "../types";
+import { SourceTag } from "./SourceTag";
 import { Stat } from "./Stat";
 
 // Fixed display order -- deliberately not sorted by count, so the grid doesn't reshuffle
 // address to address (that would make it harder to compare two profiles at a glance,
 // which is exactly the kind of thing this whole tool exists to make comparable).
-const CATEGORY_LABELS: [keyof Amenities, string][] = [
+const CATEGORY_LABELS: [keyof AmenityCounts, string][] = [
   ["grocery", "Grocery"],
   ["cafe", "Cafe"],
   ["restaurant", "Restaurant"],
@@ -28,7 +29,7 @@ export function AmenitiesCard({ amenities }: { amenities: Amenities }) {
         {CATEGORY_LABELS.map(([key, label]) => (
           <li className="amenity-grid__tile" key={key}>
             <span className="amenity-grid__count">
-              <Stat value={amenities[key]} />
+              <Stat value={amenities.counts[key]} />
             </span>
             <span className="amenity-grid__label">{label}</span>
           </li>
@@ -39,6 +40,7 @@ export function AmenitiesCard({ amenities }: { amenities: Amenities }) {
         the real walkable street network, so it can over- or under-count near rivers,
         parks, or highways.
       </p>
+      <SourceTag source={amenities.source} />
     </article>
   );
 }
