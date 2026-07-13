@@ -43,6 +43,8 @@ SOCRATA_DATASETS = {
     "restaurants":      "43nn-pn8j",  # DOHMH Restaurant Inspections (confirmed)
     "trees":            "uvpi-gqnh",  # 2015 Street Tree Census
     "pluto":            "64uk-42ks",  # Primary Land Use Tax Lot Output (PLUTO)
+    "bedbugs":          "wz6d-d3jb",  # Bedbug Reporting (confirmed live 2026-07-13)
+    "rodents":          "p937-wjvj",  # DOHMH Rodent Inspections (confirmed live 2026-07-13)
 }
 
 # Overture release string. NOT used directly by fetch_pois() anymore --
