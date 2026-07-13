@@ -41,8 +41,10 @@ connection reset (`WinError 10054` / SSL renegotiation failure), not a
 4xx/5xx or a malformed response. This is a property of that specific
 FEMA host, not of NYC Open Data's Socrata domain (rock solid across every
 other source in this codebase) and not of this module's request shape.
-`zone()` retries a transient connection failure up to 3 times with a
-short linear backoff before giving up for real.
+`zone()` retries a transient connection failure up to 5 times with a
+short linear backoff before giving up for real -- 3 attempts was tried
+first and still failed intermittently in this project's own test runs,
+so the count was raised rather than the failure silently tolerated.
 
 **On dollar figures:** this module deliberately returns no premium
 estimate. NFIP premiums vary by elevation, structure type, and coverage
@@ -68,7 +70,7 @@ SOURCE = {
 # FEMA's own sentinel for "no Base Flood Elevation applies to this zone".
 _NO_BFE = -9999.0
 
-_MAX_ATTEMPTS = 3
+_MAX_ATTEMPTS = 5
 _RETRY_BACKOFF_S = 1.0
 
 # Base description per zone letter, from FEMA's published glossary
