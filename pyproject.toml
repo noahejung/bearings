@@ -13,6 +13,8 @@ dependencies = [
     "pandas",
     "httpx",
     "networkx",
+    "fastapi",
+    "uvicorn",
 ]
 
 [project.scripts]
