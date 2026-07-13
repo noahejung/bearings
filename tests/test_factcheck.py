@@ -27,6 +27,23 @@ def test_quiet_claim_is_contradicted_at_a_genuinely_loud_address():
     }
 
 
+def test_quiet_claim_is_supported_at_a_genuinely_quiet_residential_address():
+    """Regression guard for miscalibrated thresholds: the old bounds
+    (<=15 supported, >=50 contradicted) were roughly 10-100x too low against
+    real 311 volumes, so almost every ordinary NYC residential address --
+    including this exact one, the app's own curated "quiet, far, green"
+    demo address (web/src/data/examples.ts) -- came back "contradicted" for
+    the word "quiet." 3220 Netherland Ave, Riverdale carries 318 real 311
+    noise complaints within 400m/12mo (confirmed live) -- clearly on the
+    quiet side of a city that runs into the thousands at genuinely loud
+    addresses (see the threshold comment), but well past the old <=15 bound.
+    """
+    result = factcheck.check("3220 Netherland Ave, Bronx", "A quiet, tree-lined street.")
+    noise_claims = [c for c in result["claims"] if c["predicate"] == "noise"]
+    assert len(noise_claims) == 1
+    assert noise_claims[0]["status"] == "supported"
+
+
 def test_two_synonyms_of_the_same_predicate_in_one_clause_are_not_duplicated():
     # "quiet" and "peaceful" both match the "noise" predicate; landing in
     # the *same* comma-delimited clause must not produce two identical

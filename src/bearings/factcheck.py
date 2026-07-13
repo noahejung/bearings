@@ -40,10 +40,27 @@ from bearings import profile
 
 # "quiet" / "peaceful" / "serene" / "tranquil" vs. 311 noise complaints in
 # the trailing 12 months, within 400m (roughly a 5-minute walk at
-# transit.WALK_SPEED_MPS). More than one complaint a week on average is not
-# a reasonable read of "quiet"; under one a month is.
-NOISE_QUIET_AT_OR_BELOW = 15
-NOISE_LOUD_AT_OR_ABOVE = 50
+# transit.WALK_SPEED_MPS).
+#
+# These two numbers were originally picked by feel (<=15 / >=50) and were
+# off by roughly an order of magnitude: a live sweep of complaints_near()
+# across ~20 real NYC points -- genuinely quiet outer-borough residential
+# streets (Riverdale 11, Fieldston 13, Great Kills 31, Douglaston 44, Kew
+# Gardens 238) through brownstone-quiet blocks with some nearby commercial
+# exposure (Bay Ridge 442, Ditmas Park 495, Carroll Gardens 581, Prospect
+# Park South 642) up to genuinely loud commercial/nightlife corridors
+# (Herald Sq 899, Empire State 1,297, Union Sq 1,714, Bushwick/St Marks/LES
+# nightlife 2,500-4,700) -- showed the old bounds landed almost every
+# ordinary residential address on the "contradicted" side, including the
+# app's own "quiet, far, green" Riverdale demo address (318 complaints,
+# previously misclassified). Recalibrated against that distribution: the
+# quiet bound covers genuinely low-traffic residential streets, the loud
+# bound sits just under Midtown-grade addresses, and the wide gap between
+# them is deliberate -- 400m is not a small radius, and a fixed-radius
+# complaint count is an inherently noisy (no pun intended) proxy for
+# subjective "quiet." See README's Known Simplifications.
+NOISE_QUIET_AT_OR_BELOW = 250
+NOISE_LOUD_AT_OR_ABOVE = 1200
 
 # "tree-lined" / "leafy" / "verdant" vs. living Street Tree Census trees in
 # the same 400m radius. NYC's post-MillionTreesNYC canopy is denser than
