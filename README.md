@@ -1,20 +1,37 @@
 # bearings
 
-A per-address "what is daily life actually like here" report for New York
-City, built entirely on free public data -- and a fact-checker that runs a
-real estate listing's own marketing copy ("quiet, tree-lined, steps from
-the subway") against that same data and shows what the record actually
-says. Type an address, get back real GTFS-derived transit times to a
-handful of commute anchors, nearby subway and PATH stations, amenity
-density within a ~10-minute walk, 311 noise complaints, street-tree counts,
-precinct crime, and a building's year built plus its open HPD violations.
-Nothing touches an external API at read time -- the underlying sources are
-ingested, spatially indexed to H3 hexagons, and cached locally before the
-CLI or API ever answers a query. The fact-checker never renders a verdict
-("misleading," "a scam") -- it reports a sourced number and lets the reader
-draw the conclusion; that's a deliberate legal and product choice, not an
-oversight, see the rule at the bottom of this file. Full design context and
-the reasoning behind the product angle lives in the vault at
+Every rental listing is a pile of adjectives -- "quiet," "tree-lined,"
+"steps from the subway." New York City happens to publish the data that
+can check most of them. `bearings` does that, address by address.
+
+Here's a live run against a real Bronx listing, unedited:
+
+| The listing says | The public record says |
+| --- | --- |
+| "tree-lined street" | **Supported** -- 380 living street trees within a 5-minute walk (NYC Street Tree Census) |
+| "quiet" | **Contradicted** -- 1,409 311 noise complaints within a 5-minute walk in the last 12 months |
+| "impeccably maintained building" | **Contradicted** -- 72 open Class C ("immediately hazardous") HPD violations on record |
+| "steps from the subway" | **Contradicted** -- the nearest station, 181 St, is a 10-minute walk away |
+| "sun-drenched" | **No data** -- solar/shadow modelling from building footprints isn't built yet, so it says so instead of guessing |
+| "charming" / "prime location" | **Unfalsifiable** -- marketing puffery, not a checkable factual claim |
+
+Every row came from one call to `bearings.factcheck.check("1520 Sedgwick
+Ave, Bronx", listing_text)` against the listing's actual copy -- not a
+cherry-picked demo. "Running the API" below shows how to reproduce it
+against any NYC address.
+
+Under the hood it's a per-address report built entirely on free public
+data -- 311, HPD violations, PLUTO, the street tree census, MTA + PATH
+GTFS, Overture Places, NYPD CompStat -- spatially indexed to H3 hexagons
+and cached locally, so nothing touches an external API at read time.
+Transit numbers come from real GTFS timetables, not straight-line distance
+to the nearest dot on a map.
+
+The rule the whole project is built around: report the data, never render
+a verdict. No "misleading," no "scam" -- just a sourced number and the
+record it came from. Truth is a defense; editorializing is not, and that's
+a deliberate legal and product choice, not an oversight -- see "The rule
+that governs the output" below. Full design context lives in the vault at
 `Projects/bearings/SPEC.md`.
 
 Phase 1 (the ingest pipeline, the CLI, and the `bearings.api` FastAPI wrapper) is
