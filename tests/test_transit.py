@@ -42,6 +42,20 @@ def test_times_to_midtown_are_plausible(times):
     assert min(midtown.values()) < 300
 
 
+def test_every_anchor_snaps_to_a_station_that_is_actually_there():
+    """A 2.4km snap silently produced Times Sq -> Newport = 8.5 min. Never again."""
+    graph = transit.build_graph()
+    for name, (lat, lng) in transit.config.ANCHORS.items():
+        stop = transit._nearest_station(graph, lat, lng)
+        d = transit._haversine_m(
+            (graph.nodes[stop]["lat"], graph.nodes[stop]["lng"]), (lat, lng)
+        )
+        assert d <= transit.MAX_ANCHOR_SNAP_M, (
+            f"anchor {name!r} snapped to {graph.nodes[stop]['name']!r} "
+            f"{d:.0f}m away - the network serving it is missing from the graph"
+        )
+
+
 def test_farther_stations_take_longer(times):
     """Sanity: Coney Island must be farther from Midtown than Union Sq."""
     from bearings.sources import gtfs

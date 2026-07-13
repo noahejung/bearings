@@ -15,6 +15,7 @@ from bearings.sources import gtfs
 WALK_SPEED_MPS = 1.35        # ~4.9 km/h, a normal walking pace
 TRANSFER_PENALTY_S = 240     # 4 min: walk between platforms + wait for a train
 TRANSFER_MAX_M = 200.0       # stations closer than this are considered connected
+MAX_ANCHOR_SNAP_M = 400.0    # beyond this, the anchor's real network is missing
 
 
 def _haversine_m(a: tuple[float, float], b: tuple[float, float]) -> float:
@@ -85,6 +86,14 @@ def _nearest_station(graph: nx.DiGraph, lat: float, lng: float) -> str:
     )
 
 
+class AnchorSnapTooFar(Exception):
+    """An anchor's nearest station in the graph is implausibly far away —
+    almost certainly because the transit network actually serving that
+    anchor is missing from the graph, not because the anchor is genuinely
+    unserved. A 2,367m silent snap once made Times Sq -> Newport read as
+    8.5 minutes. Fail loudly instead."""
+
+
 def times_from_anchors() -> dict[str, dict[str, int]]:
     """{anchor: {stop_id: seconds}} — the ride time from every station to each
     anchor. Run once, offline. This is the whole point of precomputation."""
@@ -94,6 +103,14 @@ def times_from_anchors() -> dict[str, dict[str, int]]:
     out: dict[str, dict[str, int]] = {}
     for name, (lat, lng) in config.ANCHORS.items():
         target = _nearest_station(graph, lat, lng)
+        d = _haversine_m((graph.nodes[target]["lat"], graph.nodes[target]["lng"]), (lat, lng))
+        if d > MAX_ANCHOR_SNAP_M:
+            raise AnchorSnapTooFar(
+                f"anchor {name!r} at ({lat}, {lng}) snapped to "
+                f"{graph.nodes[target]['name']!r} ({target}), {d:.0f}m away, "
+                f"which exceeds MAX_ANCHOR_SNAP_M={MAX_ANCHOR_SNAP_M:.0f}m — "
+                "the network actually serving this anchor is missing from the graph"
+            )
         lengths = nx.single_source_dijkstra_path_length(reverse, target, weight="weight")
         out[name] = {stop: int(round(sec)) for stop, sec in lengths.items()}
 
