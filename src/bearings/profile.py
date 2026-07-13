@@ -9,7 +9,7 @@ from functools import lru_cache
 import pandas as pd
 
 from bearings import cells, geocode, transit
-from bearings.sources import gtfs, overture
+from bearings.sources import compstat, gtfs, overture, precincts
 from bearings.transit import WALK_SPEED_MPS, _haversine_m
 
 NEAREST_STATION_COUNT = 3
@@ -91,6 +91,29 @@ def _amenities(cell: str) -> dict[str, int]:
     return {k: int(v) for k, v in counts.items()}
 
 
+@lru_cache(maxsize=128)
+def _crime(pct: int) -> dict:
+    return compstat.fetch_precinct(pct)
+
+
+def _safety(lat: float, lng: float) -> dict:
+    pct = precincts.precinct_for(lat, lng)
+    if pct is None:
+        return {}
+
+    c = _crime(pct)
+    return {
+        "precinct": pct,
+        "week_ending": c["week_ending"],
+        "robbery_ytd": c["robbery_ytd"],
+        "robbery_pct": c["robbery_pct"],
+        "felony_assault_ytd": c["felony_assault_ytd"],
+        "felony_assault_pct": c["felony_assault_pct"],
+        "total_ytd": c["total_ytd"],
+        "total_pct": c["total_pct"],
+    }
+
+
 def profile_for(address: str) -> dict:
     loc = geocode.geocode(address)
     cell = cells.cell_for(loc.lat, loc.lng)
@@ -106,5 +129,5 @@ def profile_for(address: str) -> dict:
             "to_anchors": _to_anchors(nearby),
         },
         "amenities": _amenities(cell),
-        "safety": {},  # precinct join lands in Task 9
+        "safety": _safety(loc.lat, loc.lng),
     }

@@ -46,3 +46,14 @@ def test_carroll_gardens_is_quieter_than_midtown(empire_state):
     cg = profile.profile_for("360 Smith St, Brooklyn")
     assert cg["amenities"]["restaurant"] < empire_state["amenities"]["restaurant"]
     assert cg["cell"] != empire_state["cell"]
+
+
+def test_safety_is_populated(empire_state):
+    s = empire_state["safety"]
+    assert s["precinct"] > 0
+    assert s["total_ytd"] > 0
+
+
+def test_carroll_gardens_lands_in_the_76th():
+    cg = profile.profile_for("360 Smith St, Brooklyn")
+    assert cg["safety"]["precinct"] == 76

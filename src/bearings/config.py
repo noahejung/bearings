@@ -58,6 +58,12 @@ OVERTURE_S3 = (
     "s3://overturemaps-us-west-2/release/{release}/theme=places/type=place/*"
 )
 
+# NYPD precinct boundaries. Verified live 2026-07-13: 78 features, not the
+# 77 precincts NYPD publicly counts -- precinct "22" is the Central Park
+# Precinct, a real numbered precinct this dataset includes but that NYPD's
+# "77 precincts" figure conventionally excludes. Column is "precinct".
+PRECINCT_GEOJSON = "https://data.cityofnewyork.us/resource/y76i-bdw7.geojson"
+
 NYPD_PCT_PDF = (
     "https://www.nyc.gov/assets/nypd/downloads/pdf/crime_statistics/"
     "cs-en-us-{pct:03d}pct.pdf"
