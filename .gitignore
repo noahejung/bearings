@@ -12,5 +12,10 @@ wheels/
 # Test cache
 .pytest_cache/
 
-# Raw downloads and derived data — never committed (see PLAN.md Global Constraints)
-data/
+# Raw downloads and derived data — never committed (see PLAN.md Global Constraints).
+# Anchored to the repo root (leading /): an unanchored "data/" also matched
+# web/src/data/ -- confirmed live, this silently kept web/src/data/examples.ts
+# (a real source file the app imports and the demo depends on) out of every
+# commit since it was written. A fresh clone of this repo was missing it
+# entirely; `git ls-files | grep examples.ts` returned nothing before this fix.
+/data/
