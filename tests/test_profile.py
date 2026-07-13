@@ -57,3 +57,44 @@ def test_safety_is_populated(empire_state):
 def test_carroll_gardens_lands_in_the_76th():
     cg = profile.profile_for("360 Smith St, Brooklyn")
     assert cg["safety"]["precinct"] == 76
+
+
+def test_has_the_new_blocks(empire_state):
+    assert {"quiet", "green", "building"} <= set(empire_state)
+
+
+def test_quiet_block_shape(empire_state):
+    q = empire_state["quiet"]
+    assert isinstance(q["noise_complaints_12mo"], int)
+    assert q["noise_complaints_12mo"] > 0
+    assert q["source"] == {
+        "name": "NYC 311",
+        "url": "https://data.cityofnewyork.us/d/erm2-nwe9",
+    }
+
+
+def test_green_block_shape(empire_state):
+    g = empire_state["green"]
+    assert isinstance(g["street_trees_nearby"], int)
+    assert g["source"] == {
+        "name": "NYC Street Tree Census",
+        "url": "https://data.cityofnewyork.us/d/uvpi-gqnh",
+    }
+
+
+def test_building_block_for_empire_state(empire_state):
+    b = empire_state["building"]
+    assert b["year_built"] == 1931
+    assert b["era"] == "prewar"
+    assert "rent-stabilised" in b["era_note"]
+    assert b["hpd_open_violations"]["class_c"] >= 0
+    assert b["source"] == {
+        "name": "NYC PLUTO + HPD",
+        "url": "https://data.cityofnewyork.us/d/wvxf-dwi5",
+    }
+
+
+def test_building_year_built_is_never_a_bare_zero(empire_state):
+    # PLUTO's yearbuilt=0 "not recorded" sentinel must never leak through
+    # as a literal year -- it has to become None.
+    assert empire_state["building"]["year_built"] != 0

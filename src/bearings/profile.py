@@ -9,11 +9,39 @@ from functools import lru_cache
 import pandas as pd
 
 from bearings import cells, geocode, transit
-from bearings.sources import compstat, gtfs, overture, precincts
+from bearings.sources import compstat, gtfs, hpd, noise, overture, pluto, precincts, trees
 from bearings.transit import WALK_SPEED_MPS, _haversine_m
 
 NEAREST_STATION_COUNT = 3
 STATION_SEARCH_M = 1200.0
+
+# One merged citation for the building block: PLUTO supplies year_built/era,
+# HPD supplies hpd_open_violations. The contract calls for a single source
+# object here rather than one per field, so this borrows HPD's dataset URL
+# (arbitrary choice between the two -- both are cited by name) rather than
+# inventing a third URL that points at neither dataset.
+_BUILDING_SOURCE = {"name": "NYC PLUTO + HPD", "url": hpd.SOURCE["url"]}
+
+# Keyed by era ("prewar"/"postwar"/"modern"); None has no note -- there is
+# nothing to say about an age we don't know. Prewar wording matches the
+# API contract's example exactly; postwar/modern follow SPEC.md's framing
+# of building age as an affordability *signal*, never a promise.
+_ERA_NOTES = {
+    "prewar": (
+        "Pre-war walk-up stock often carries rent-stabilised units, so a "
+        "cheap apartment may exist here. This is a signal, not a promise."
+    ),
+    "postwar": (
+        "Mid-century construction is a mixed bag for rent stabilisation -- "
+        "check the building's individual history rather than assuming from "
+        "age alone. This is a signal, not a promise."
+    ),
+    "modern": (
+        "Post-2000 construction rarely carries rent-stabilised units -- the "
+        "price you see is close to the price you'll pay. This is a signal, "
+        "not a promise."
+    ),
+}
 
 
 @lru_cache(maxsize=1)
@@ -114,6 +142,51 @@ def _safety(lat: float, lng: float) -> dict:
     }
 
 
+@lru_cache(maxsize=256)
+def _quiet(lat: float, lng: float) -> dict:
+    return {
+        "noise_complaints_12mo": noise.complaints_near(lat, lng),
+        "source": dict(noise.SOURCE),
+    }
+
+
+@lru_cache(maxsize=256)
+def _green(lat: float, lng: float) -> dict:
+    return {
+        "street_trees_nearby": trees.near(lat, lng),
+        "source": dict(trees.SOURCE),
+    }
+
+
+@lru_cache(maxsize=256)
+def _pluto_building(bbl: str) -> dict:
+    return pluto.building(bbl)
+
+
+@lru_cache(maxsize=256)
+def _hpd_violations(bbl: str) -> dict:
+    return hpd.open_violations(bbl)
+
+
+def _building(bbl: str | None) -> dict:
+    # No BBL means genuinely no way to look this building up -- every field
+    # here must be null, never a guessed or zeroed value.
+    if bbl is None:
+        year_built, era, violations = None, None, None
+    else:
+        b = _pluto_building(bbl)
+        year_built, era = b["year_built"], b["era"]
+        violations = _hpd_violations(bbl)
+
+    return {
+        "year_built": year_built,
+        "era": era,
+        "era_note": _ERA_NOTES.get(era),
+        "hpd_open_violations": violations,
+        "source": dict(_BUILDING_SOURCE),
+    }
+
+
 def profile_for(address: str) -> dict:
     loc = geocode.geocode(address)
     cell = cells.cell_for(loc.lat, loc.lng)
@@ -130,4 +203,7 @@ def profile_for(address: str) -> dict:
         },
         "amenities": _amenities(cell),
         "safety": _safety(loc.lat, loc.lng),
+        "quiet": _quiet(loc.lat, loc.lng),
+        "green": _green(loc.lat, loc.lng),
+        "building": _building(loc.bbl),
     }
