@@ -17,9 +17,11 @@ import logging
 import sys
 import time
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from bearings import factcheck, geocode, profile, transit
@@ -146,3 +148,19 @@ def post_factcheck(body: FactcheckRequest) -> dict:
         return factcheck.check(body.address, body.listing_text)
     except geocode.GeocodeError as e:
         raise HTTPException(status_code=422, detail=str(e)) from e
+
+
+# Single-origin deploy: serve the built React app (web/dist, produced by
+# `npm run build`) from the same FastAPI process that serves /api/*, so
+# there is one origin, one port, and VITE_API_BASE_URL never has to point
+# anywhere but "" (see web/src/api.ts's own comment on that). This mount
+# MUST be registered last -- Starlette matches routes in registration
+# order, and a Mount("/") matches every path, so registering it before the
+# explicit @app.get("/api/...") routes above would swallow those requests
+# first. Conditional on the directory existing so that local dev/tests
+# (where nobody has run `npm run build`, and TestClient(app) just imports
+# this module) never fail to construct the app -- StaticFiles raises at
+# construction time if its directory is missing.
+_WEB_DIST = Path(__file__).resolve().parents[2] / "web" / "dist"
+if _WEB_DIST.is_dir():
+    app.mount("/", StaticFiles(directory=_WEB_DIST, html=True), name="frontend")
