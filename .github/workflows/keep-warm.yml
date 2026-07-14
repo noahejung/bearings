@@ -1,0 +1,71 @@
+name: Keep Render service warm
+
+# --- WHY THIS WORKFLOW EXISTS ---
+#
+# bearings is deployed on Render's FREE instance plan (see render.yaml).
+# Render's free tier spins a service down after ~15 minutes of no inbound
+# traffic, and cold start back up from a full spin-down is ~60-75s (Render
+# platform overhead -- this app's own boot is fast because caches are baked
+# into the Docker image, see render.yaml's own comment on that). Noah put
+# https://bearings.onrender.com/ on his resume. A recruiter clicking that
+# link while the service is asleep sees a blank tab for over a minute and
+# closes it -- a live URL that behaves like a dead one is worse than no URL
+# at all. This workflow's only job is to ping the app often enough that it
+# never crosses that 15-minute idle threshold. DO NOT delete this thinking
+# it's a no-op -- removing it silently reintroduces the cold-start problem
+# on the exact URL that's on Noah's resume.
+#
+# Pings GET /api/health, never /api/profile -- /api/profile calls live NYC
+# Socrata/GeoSearch/MTA APIs per request (see src/bearings/api.py) and a
+# ping every ~10 minutes against those would burn rate limits for no
+# reason. /api/health does no outbound network calls at all (see
+# render.yaml's own healthCheckPath comment) -- it's the cheapest possible
+# thing that still touches the live app and forces Render to see traffic.
+#
+# --- HONEST CAVEATS (read before assuming this is bulletproof) ---
+#
+# 1. GitHub does not guarantee scheduled workflows fire at the exact
+#    minute requested. Under platform load -- especially at the top of
+#    every hour, GitHub's own documented worst case -- a scheduled run can
+#    be delayed by several minutes, or in rare cases skipped outright. The
+#    cron below is deliberately offset from exact 10-minute marks
+#    (2,12,22,32,42,52 rather than */10) specifically to dodge the
+#    top-of-hour congestion spike GitHub calls out in its own docs. That
+#    reduces the odds of a delay, it does not eliminate them.
+# 2. GitHub auto-disables scheduled workflows on a repo after 60 days with
+#    NO repository activity (pushes/commits -- the scheduled runs
+#    themselves do not count as "activity" for this purpose). As long as
+#    this repo keeps receiving normal commits at least that often, this is
+#    a non-issue; if the repo ever goes fully dormant, this workflow will
+#    silently stop firing and nobody will be notified.
+# 3. THIS REPO IS PRIVATE. GitHub Actions minutes for private repos are
+#    NOT unlimited -- GitHub Free personal accounts get 2,000 Linux
+#    minutes/month (GitHub Pro: 3,000/month); public repos get unlimited
+#    minutes for free, but flipping this repo public is explicitly out of
+#    scope here. GitHub bills a minimum of 1 minute per job run regardless
+#    of actual runtime, so cadence directly sets the minutes bill. See the
+#    dispatch report for this workflow for the exact math -- the short
+#    version: ANY cadence tight enough to actually beat Render's 15-minute
+#    spin-down window costs more Actions minutes per month than this
+#    account's entire free quota, before counting ci.yml's own usage on
+#    top. That's a structural mismatch, not a tuning problem -- see the
+#    report for the recommended alternative (an external free pinger, or
+#    paying for Render's Starter plan instead of working around Free).
+
+on:
+  schedule:
+    # Every 10 minutes, offset 2 minutes off the top-of-hour marks
+    # (2,12,22,32,42,52) rather than */10 (0,10,20,30,40,50) -- see caveat
+    # #1 above. Comfortably inside Render's ~15-minute idle spin-down
+    # window even allowing for some schedule jitter.
+    - cron: "2,12,22,32,42,52 * * * *"
+  workflow_dispatch: {}
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: GET /api/health (fails the job on anything but 200)
+        run: |
+          curl --fail-with-body -sS --max-time 20 \
+            https://bearings.onrender.com/api/health
