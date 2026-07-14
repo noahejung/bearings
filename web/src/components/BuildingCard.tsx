@@ -1,5 +1,6 @@
 import type { Building } from "../types";
 import { SourceTag } from "./SourceTag";
+import { Stamp } from "./Stamp";
 import { Stat } from "./Stat";
 
 const ERA_LABELS: Record<NonNullable<Building["era"]>, string> = {
@@ -19,56 +20,57 @@ export function BuildingCard({ building }: { building: Building }) {
   const hasRecord = building.year_built !== null && violations !== null;
 
   return (
-    <article className="card card--building" aria-labelledby="building-heading">
-      <header className="card__header">
-        <span className="card__kicker">Field 06 — Building age</span>
-        <h2 className="card__title" id="building-heading">
-          What could exist here
-        </h2>
+    <article className="field" aria-labelledby="building-heading">
+      <header className="field__head">
+        <div>
+          <span className="field__code">§06·BLD</span>
+          <h2 className="field__title" id="building-heading">
+            What could exist here
+          </h2>
+        </div>
+        <Stamp variant={hasRecord ? "confirmed" : "no_data"} compact />
       </header>
 
       {!hasRecord || violations === null ? (
-        <p className="card__empty">No PLUTO/HPD record for this lot.</p>
+        <p className="field__empty">No PLUTO/HPD record for this lot.</p>
       ) : (
         <>
-          <p className="building-era-note">{building.era_note}</p>
-          <p className="building-facts">
+          <p className="building__note">{building.era_note}</p>
+          <p className="building__facts">
             Built <strong>{building.year_built}</strong>
-            {building.era && (
-              <span className={`era-badge era-badge--${building.era}`}>
-                {ERA_LABELS[building.era]}
-              </span>
-            )}
+            {building.era && <span className="era">{ERA_LABELS[building.era]}</span>}
           </p>
 
-          <div className="violations-row">
-            <div className="violations-row__tile">
-              <span className="violations-row__count">
+          <div className="violations">
+            <div className="violation">
+              <span className="violation__count">
                 <Stat value={violations.class_a} />
               </span>
-              <span className="violations-row__label">Class A</span>
+              <span className="violation__label">Class A</span>
             </div>
-            <div className="violations-row__tile">
-              <span className="violations-row__count">
+            <div className="violation">
+              <span className="violation__count">
                 <Stat value={violations.class_b} />
               </span>
-              <span className="violations-row__label">Class B</span>
+              <span className="violation__label">Class B</span>
             </div>
-            <div
-              className={`violations-row__tile${violations.class_c > 0 ? " violations-row__tile--flag" : ""}`}
-            >
-              <span className="violations-row__count">
+            <div className={`violation${violations.class_c > 0 ? " violation--flag" : ""}`}>
+              <span className="violation__count">
                 <Stat value={violations.class_c} />
               </span>
-              <span className="violations-row__label">
+              <span className="violation__label">
                 Class C{violations.class_c > 0 && <em> — immediately hazardous</em>}
               </span>
             </div>
           </div>
-          <p className="card__footnote">Open HPD housing-code violations, by class.</p>
         </>
       )}
-      <SourceTag source={building.source} />
+      <p className="field__provenance">
+        NYC PLUTO + HPD Housing Maintenance Code Violations, current release · open violations
+        by class.
+        <br />
+        <SourceTag source={building.source} />
+      </p>
     </article>
   );
 }

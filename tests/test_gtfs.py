@@ -76,3 +76,44 @@ def test_mta_stop_ids_stay_unnamespaced(stations):
     # MTA is the default feed and predates namespacing; its IDs must not
     # gain a prefix as a side effect of adding PATH support.
     assert not stations["stop_id"].str.startswith("PATH:").any()
+
+
+# ---------------------------------------------------------------------------
+# shapes() -- real line geometry for the map (VISUAL.md's subway layer).
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(scope="module")
+def mta_shapes():
+    return gtfs.shapes()
+
+
+@pytest.fixture(scope="module")
+def path_shapes():
+    return gtfs.shapes(feed="path")
+
+
+def test_mta_shape_count_matches_raw_shape_ids(mta_shapes):
+    # Confirmed live 2026-07-14: shapes.txt has 257 unique shape_ids for MTA.
+    assert 200 < len(mta_shapes) < 320
+
+
+def test_path_shape_count_matches_raw_shape_ids(path_shapes):
+    # Confirmed live 2026-07-14: shapes.txt has 38 unique shape_ids for PATH.
+    assert 20 < len(path_shapes) < 60
+
+
+def test_shape_coords_are_ordered_lat_lng_pairs_inside_nyc(mta_shapes):
+    row = mta_shapes.iloc[0]
+    assert len(row["coords"]) > 1
+    for lat, lng in row["coords"]:
+        assert 40.4 < lat < 41.0
+        assert -74.4 < lng < -73.6
+
+
+def test_mta_shape_ids_stay_unnamespaced(mta_shapes):
+    assert not mta_shapes["shape_id"].str.startswith("PATH:").any()
+
+
+def test_path_shape_ids_are_namespaced(path_shapes):
+    assert path_shapes["shape_id"].str.startswith("PATH:").all()

@@ -168,3 +168,25 @@ def test_cors_allows_localhost_origin(client):
         "/api/health", headers={"Origin": "http://localhost:5173"}
     )
     assert resp.headers.get("access-control-allow-origin") == "http://localhost:5173"
+
+
+def test_map_returns_the_contract_shape(client):
+    resp = client.get("/api/map", params={"address": EMPIRE_STATE})
+    assert resp.status_code == 200
+    body = resp.json()
+    assert set(body) == {
+        "subject",
+        "bbox",
+        "subway_lines",
+        "stations",
+        "cells",
+        "basemap_note",
+        "sources",
+    }
+    assert len(body["cells"]) == 37
+    assert len(body["subway_lines"]) > 0
+
+
+def test_map_bad_address_is_422_not_500(client):
+    resp = client.get("/api/map", params={"address": "qqqqqqqqzzzzzzz not a real place"})
+    assert resp.status_code == 422

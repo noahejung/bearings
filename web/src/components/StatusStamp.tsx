@@ -1,25 +1,21 @@
 import type { ClaimStatus } from "../types";
+import { Stamp, stampLabel, type StampVariant } from "./Stamp";
 
-// Display labels are a human gloss on the API's four exact status values -- the
-// underlying `status` is never renamed, only re-worded for the reader. Every label
-// describes what the *record* did (confirmed it / contradicted it / couldn't check it /
-// has nothing on file), never a judgement about the listing or the landlord. That's the
-// whole "report the data, never render a verdict" rule, applied to word choice.
-const LABELS: Record<ClaimStatus, string> = {
-  supported: "Confirmed by the record",
-  contradicted: "Contradicted by the record",
-  unfalsifiable: "Unverifiable — puffery",
-  no_data: "No record on file",
+// The API's claim status enum is a stable contract (factcheck.py: supported
+// / contradicted / unfalsifiable / no_data) -- this is the one place that
+// glosses it onto the shared Stamp vocabulary for display. The underlying
+// `status` string itself is never renamed anywhere else in the app.
+const STATUS_TO_VARIANT: Record<ClaimStatus, StampVariant> = {
+  supported: "confirmed",
+  contradicted: "contradicted",
+  unfalsifiable: "unverifiable",
+  no_data: "no_data",
 };
 
 export function statusLabel(status: ClaimStatus): string {
-  return LABELS[status];
+  return stampLabel(STATUS_TO_VARIANT[status]);
 }
 
 export function StatusStamp({ status }: { status: ClaimStatus }) {
-  return (
-    <span className={`stamp stamp--${status}`}>
-      <span className="stamp__label">{LABELS[status]}</span>
-    </span>
-  );
+  return <Stamp variant={STATUS_TO_VARIANT[status]} />;
 }

@@ -1,5 +1,6 @@
 import type { Safety } from "../types";
 import { SourceTag } from "./SourceTag";
+import { Stamp } from "./Stamp";
 
 interface Row {
   label: string;
@@ -7,7 +8,7 @@ interface Row {
   pct: number | undefined;
 }
 
-// A falling count is encoded as the same green used for "confirmed" elsewhere in the UI,
+// A falling count is encoded as the same ink used for "confirmed" elsewhere in the UI,
 // a rising count as the same red used for "contradicted" -- not because rising crime is
 // a moral failing being judged, but because trend direction is the one number here that
 // benefits from a glance-able encoding (per the brief: "the trend arrow matters more
@@ -40,16 +41,19 @@ export function SafetyCard({ safety }: { safety: Safety }) {
   ];
 
   return (
-    <article className="card card--safety" aria-labelledby="safety-heading">
-      <header className="card__header">
-        <span className="card__kicker">Field 03 — Precinct crime</span>
-        <h2 className="card__title" id="safety-heading">
-          {hasData ? `${safety.precinct}${ordinalSuffix(safety.precinct!)} Precinct` : "Precinct crime"}
-        </h2>
+    <article className="field" aria-labelledby="safety-heading">
+      <header className="field__head">
+        <div>
+          <span className="field__code">§03·SFY</span>
+          <h2 className="field__title" id="safety-heading">
+            {hasData ? `${safety.precinct}${ordinalSuffix(safety.precinct!)} Precinct` : "Precinct crime"}
+          </h2>
+        </div>
+        <Stamp variant={hasData ? "confirmed" : "no_data"} compact />
       </header>
 
       {!hasData ? (
-        <p className="card__empty">No NYPD precinct match for this location.</p>
+        <p className="field__empty">No NYPD precinct match for this location.</p>
       ) : (
         <>
           <table className="safety-table">
@@ -65,12 +69,13 @@ export function SafetyCard({ safety }: { safety: Safety }) {
               ))}
             </tbody>
           </table>
-          <p className="card__footnote">
-            Week ending {safety.week_ending} · robbery and felony assault only — not a
-            comprehensive crime picture, and "total" folds in categories not broken out
+          <p className="field__provenance">
+            NYPD CompStat, week ending {safety.week_ending} · robbery and felony assault only —
+            not a comprehensive crime picture, and "total" folds in categories not broken out
             individually.
+            <br />
+            {safety.source && <SourceTag source={safety.source} />}
           </p>
-          {safety.source && <SourceTag source={safety.source} />}
         </>
       )}
     </article>

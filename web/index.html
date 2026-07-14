@@ -3,38 +3,25 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="color-scheme" content="light dark" />
-    <script>
-      // Set the resolved theme before first paint so there is never a flash of the
-      // wrong theme. src/hooks/useTheme.ts reads this same attribute back on mount
-      // and owns it from there.
-      (function () {
-        try {
-          var stored = localStorage.getItem("bearings-theme");
-          var theme =
-            stored === "light" || stored === "dark"
-              ? stored
-              : window.matchMedia("(prefers-color-scheme: dark)").matches
-                ? "dark"
-                : "light";
-          document.documentElement.setAttribute("data-theme", theme);
-        } catch (e) {
-          /* localStorage or matchMedia unavailable -- CSS media-query fallback covers it */
-        }
-      })();
-    </script>
-    <title>bearings — get your bearings before you sign</title>
+    <meta name="color-scheme" content="light" />
+    <title>Bearings™ — Peoples Bureau for Consumer Information</title>
     <meta
       name="description"
       content="A per-address record of daily life in New York City, and a claim-by-claim fact check for apartment listings, built on public data."
     />
     <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🧭</text></svg>" />
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link
-      href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;0,9..144,700;0,9..144,900;1,9..144,500&family=Public+Sans:ital,wght@0,400;0,500;0,600;0,700;1,400&family=IBM+Plex+Mono:ital,wght@0,400;0,500;0,600;1,400&display=swap"
-      rel="stylesheet"
-    />
+    <!--
+      One family, house-locked: Bahnschrift (a DIN-derived, Akzidenz-adjacent
+      grotesk that ships on Windows) for display/UI, Cascadia Mono/Consolas
+      for anything metadata/legal/tabular. Both are system fonts -- no
+      webfont request, no external network dependency, and the exact stack
+      the two Noah-approved mockups (bearings-map.html, bearings-looks.html)
+      already used. VISUAL.md's own stretch goal (Velvetyne's Terminal
+      Grotesque) isn't vendored anywhere in this repo or the vault, and
+      self-hosting a new webfont file was out of this dispatch's scope --
+      ported the locked mockups' proven stack instead of improvising a third
+      option. See the dispatch report for the full reasoning.
+    -->
   </head>
   <body>
     <div id="root"></div>

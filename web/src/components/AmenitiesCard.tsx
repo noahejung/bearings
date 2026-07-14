@@ -1,5 +1,6 @@
 import type { Amenities, AmenityCounts } from "../types";
 import { SourceTag } from "./SourceTag";
+import { Stamp } from "./Stamp";
 import { Stat } from "./Stat";
 
 // Fixed display order -- deliberately not sorted by count, so the grid doesn't reshuffle
@@ -18,29 +19,36 @@ const CATEGORY_LABELS: [keyof AmenityCounts, string][] = [
 
 export function AmenitiesCard({ amenities }: { amenities: Amenities }) {
   return (
-    <article className="card card--amenities" aria-labelledby="amenities-heading">
-      <header className="card__header">
-        <span className="card__kicker">Field 02 — Amenities</span>
-        <h2 className="card__title" id="amenities-heading">
-          Within a 10-minute walk
-        </h2>
+    <article className="field" aria-labelledby="amenities-heading">
+      <header className="field__head">
+        <div>
+          <span className="field__code">§02·AMN</span>
+          <h2 className="field__title" id="amenities-heading">
+            Within a 10-minute walk
+          </h2>
+        </div>
+        {/* Every bucket is a real, queried int (never a missing key -- api.py's own
+            _to_contract() fills every category to a real zero), so this field is
+            always confirmed, unlike fields where a null is genuinely possible. */}
+        <Stamp variant="confirmed" compact />
       </header>
-      <ul className="amenity-grid">
+      <ul className="amenities">
         {CATEGORY_LABELS.map(([key, label]) => (
-          <li className="amenity-grid__tile" key={key}>
-            <span className="amenity-grid__count">
+          <li className="amenity" key={key}>
+            <span className="amenity__count">
               <Stat value={amenities.counts[key]} />
             </span>
-            <span className="amenity-grid__label">{label}</span>
+            <span className="amenity__label">{label}</span>
           </li>
         ))}
       </ul>
-      <p className="card__footnote">
-        Counted within the address's H3 cell and its immediate neighbours — a hex disk, not
-        the real walkable street network, so it can over- or under-count near rivers,
-        parks, or highways.
+      <p className="field__provenance">
+        Overture Maps Places, current release · counted within the address's H3 cell and its
+        immediate neighbours (a hex disk, not the real walkable street network — can over- or
+        under-count near rivers, parks, or highways).
+        <br />
+        <SourceTag source={amenities.source} />
       </p>
-      <SourceTag source={amenities.source} />
     </article>
   );
 }

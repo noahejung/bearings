@@ -15,7 +15,7 @@ function EvidenceText({ text, value }: { text: string; value: number | null }) {
 
   const nodes: ReactNode[] = parts.map((part, i) =>
     part === String(value) ? (
-      <strong className="claim-card__evidence-number" key={i}>
+      <strong className="claim__evidence-number" key={i}>
         {value.toLocaleString()}
       </strong>
     ) : (
@@ -27,23 +27,25 @@ function EvidenceText({ text, value }: { text: string; value: number | null }) {
 
 export function ClaimCard({ claim }: { claim: Claim }) {
   return (
-    <li className={`claim-card claim-card--${claim.status}`}>
-      <div className="claim-card__top">
-        <div className="claim-card__quote">
-          <p className="claim-card__quote-kicker">The listing says</p>
-          <p className="claim-card__quote-text">&ldquo;{claim.quote}&rdquo;</p>
+    <li className={`claim claim--${claim.status === "supported" ? "confirmed" : claim.status}`}>
+      <div className="claim__top">
+        <div className="claim__quote">
+          <p className="claim__quote-kicker">The listing says</p>
+          <p className="claim__quote-text">&ldquo;{claim.quote}&rdquo;</p>
         </div>
         <StatusStamp status={claim.status} />
       </div>
 
-      <div className="claim-card__evidence">
-        <p className="claim-card__evidence-kicker">The record says</p>
-        <p className="claim-card__evidence-text">
+      <div className="claim__evidence">
+        <p className="claim__evidence-kicker">The record says</p>
+        <p className="claim__evidence-text">
           <EvidenceText text={claim.evidence} value={claim.value} />
         </p>
       </div>
 
-      <SourceTag source={claim.source} />
+      <p className="field__provenance">
+        <SourceTag source={claim.source} />
+      </p>
     </li>
   );
 }

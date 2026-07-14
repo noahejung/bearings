@@ -5,7 +5,6 @@ import { FactCheckView } from "./components/FactCheckView";
 import { Header } from "./components/Header";
 import { ReportView } from "./components/ReportView";
 import { EXAMPLE_ADDRESSES, EXAMPLE_LISTING_ADDRESS, EXAMPLE_LISTING_TEXT } from "./data/examples";
-import { useTheme } from "./hooks/useTheme";
 import type { FactcheckResult, Profile } from "./types";
 
 function scrollToId(id: string) {
@@ -16,8 +15,6 @@ function scrollToId(id: string) {
 }
 
 export default function App() {
-  const [theme, toggleTheme] = useTheme();
-
   const [addressInput, setAddressInput] = useState("");
   const [profile, setProfile] = useState<Profile | null>(null);
   const [profileLoading, setProfileLoading] = useState(false);
@@ -75,8 +72,8 @@ export default function App() {
   }
 
   return (
-    <div className="app">
-      <Header theme={theme} onToggleTheme={toggleTheme} />
+    <div className="wrap">
+      <Header cell={profile?.cell} />
 
       <main>
         <AddressSearch
@@ -90,8 +87,8 @@ export default function App() {
         />
 
         {profileLoading && !profile && (
-          <p className="loading-line" role="status">
-            Pulling the record<span className="loading-line__dots" aria-hidden="true" />
+          <p className="loading mono" role="status">
+            Pulling the record<span className="loading__dots" aria-hidden="true" />
           </p>
         )}
 
@@ -112,12 +109,18 @@ export default function App() {
         )}
       </main>
 
-      <footer className="site-footer">
+      <div className="stripe" />
+      <footer className="footer">
         <p>
-          Built on public data. Every number here traces back to a source you can click.{" "}
-          <span className="site-footer__rule">Report the data — never the verdict.</span>
+          Built on public data. Every number here traces back to a source you can click.
+          <span className="footer__rule">Report the data — never the verdict.</span>
         </p>
       </footer>
+      <div className="band band--foot">
+        <span>NO LISTINGS · NO REVIEWS · NO NAMES · NO REAL-TIME</span>
+        <span className="band__steel">Made in the Peoples Bureau</span>
+        <span>{`BRG—${new Date().getFullYear()}`}</span>
+      </div>
     </div>
   );
 }

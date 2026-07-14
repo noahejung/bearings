@@ -1,4 +1,4 @@
-import type { FactcheckResult, Profile } from "./types";
+import type { FactcheckResult, MapGeometry, Profile } from "./types";
 
 // Empty string -> relative "/api/..." paths, which the Vite dev proxy (vite.config.ts)
 // forwards to the backend, and which work unmodified once both are served from one
@@ -59,4 +59,8 @@ export function postFactcheck(address: string, listingText: string): Promise<Fac
     method: "POST",
     body: JSON.stringify({ address, listing_text: listingText }),
   });
+}
+
+export function getMapGeometry(address: string): Promise<MapGeometry> {
+  return request<MapGeometry>(`/api/map?address=${encodeURIComponent(address)}`);
 }

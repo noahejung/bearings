@@ -89,11 +89,12 @@ uv sync
 uv run uvicorn bearings.api:app --host 127.0.0.1 --port 8000
 ```
 
-Three endpoints:
+Four endpoints:
 
 - `GET /api/health` -> `{"status": "ok", "warm": bool}`
 - `GET /api/profile?address=<str>` -> the full profile (transit, amenities, safety, quiet, green, building); every one of those six blocks carries its own `source`
 - `POST /api/factcheck` body `{"address": str, "listing_text": str}` -> claim-by-claim fact check of listing marketing copy against the real data
+- `GET /api/map?address=<str>` -> real map geometry for the neighbourhood: GTFS subway/PATH alignments, real stations, and real per-H3-cell 311 noise density for the front end's self-drawn map (`web/src/components/MapView.tsx`). Deliberately does **not** include street or building-footprint layers -- `src/bearings/mapgeo.py`'s module docstring explains why (Overture's `transportation`/`buildings` themes are ~60GB/~276GB globally with no viable per-request bbox query at this codebase's scale) and the response's own `basemap_note` field states the same gap to the front end, rather than silently drawing nothing.
 
 `/api/factcheck` is the rule this whole project is built around, made
 concrete. One real claim from a live run against `1520 Sedgwick Ave, Bronx`
@@ -166,12 +167,19 @@ it defaults to relative `/api/...` paths.
 
 Stack: Vite + React + TypeScript, hand-written CSS (no component library, no
 Tailwind), no animation library -- all motion is CSS, gated behind
-`prefers-reduced-motion`. Light and dark themes both fully styled; the theme
-toggle persists to `localStorage` and otherwise follows the OS preference.
+`prefers-reduced-motion`. Visual direction is locked to one palette: The
+Designers Republic™ Steel set (bone `#EDE9DE`, ink `#111111`, steel
+`#8A8D8F`, pillar-box red `#D7263D` -- see `Projects/bearings/VISUAL.md` in
+the vault). No dark mode: the report is styled as a physical municipal
+record, not a dashboard, and a "dark mode" has no equivalent on paper. The
+one map component (`MapView.tsx`) is self-drawn SVG, no map library, no tile
+server, no live third-party basemap call -- real H3 cell boundaries via the
+`h3-js` npm package, real GTFS subway/PATH geometry, and real 311-derived
+per-cell density.
 
 ## Deploy
 
-Live URL: _not yet deployed -- replace this line once it is._
+Live URL: **https://bearings.onrender.com/**
 
 The repo builds and runs as a single Docker image (see `Dockerfile`) --
 frontend and API in one container, one process, one port. `render.yaml` at
@@ -185,7 +193,12 @@ under a hard `docker run --memory=512m` cap with zero OOM kills -- fits
 Render's Free tier (512MB RAM) with roughly half the budget still free.
 Full methodology and numbers in the deploy dispatch's agent-report.
 
-### Deploying to Render (no Render account yet)
+### Deploying to Render (already deployed -- steps below for reference / re-deploy)
+
+A Render Blueprint service already exists and is live at the URL above. A
+push to `main` auto-deploys to that live URL directly -- there is no staging
+buffer. The steps below are what created it and remain accurate for a
+from-scratch re-deploy (e.g. a new Render account).
 
 1. Go to [dashboard.render.com](https://dashboard.render.com) and sign up
    (GitHub sign-in is the fastest path, since the repo lives on GitHub).
@@ -390,7 +403,10 @@ src/bearings/
     precincts.py              # precinct boundary point-in-polygon join
   transit.py            # GTFS -> graph -> real travel times from anchors
   profile.py            # assemble the per-address profile
-  api.py                # FastAPI wrapper: GET /api/profile, POST /api/factcheck
+  mapgeo.py              # real map geometry for one address: subway lines,
+                          # stations, per-H3-cell 311 density (no streets/buildings --
+                          # see the module docstring for why)
+  api.py                # FastAPI wrapper: GET /api/profile, POST /api/factcheck, GET /api/map
   cli.py                 # `bearings profile "<address>"`
   factcheck.py           # rule-based claim extraction + evidence lookup
 
@@ -398,8 +414,10 @@ web/                    # React + TypeScript front end (Phase 2) -- see "Running
                          # the front end" above
   src/
     App.tsx               # top-level state: address, profile, fact-check
-    api.ts                # typed fetch wrapper for the two endpoints
+    api.ts                # typed fetch wrapper for the API endpoints
     types.ts               # mirrors the API contract exactly
-    components/             # one component per report field + the fact-checker
+    components/             # one component per report field, the fact-checker,
+                             # and MapView.tsx (the self-drawn map)
+    lib/catalogue.ts         # BRG—YYYY—MMDD—xx catalogue code generator
     styles/index.css         # the whole design system, hand-written CSS
 ```

@@ -158,6 +158,26 @@ def stations(feed: str = "mta") -> pd.DataFrame:
     return out[["stop_id", "name", "lat", "lng", "cell", "routes"]].reset_index(drop=True)
 
 
+def shapes(feed: str = "mta") -> pd.DataFrame:
+    """One row per unique shape_id, coords ordered by shape_pt_sequence as a
+    list of (lat, lng) tuples -- the real line geometry a shape_id traces,
+    used by the map (VISUAL.md's subway layer). Not collapsed further: a
+    route can run several distinct shapes (branches, express skips), and
+    drawing every one of them is what makes the map's subway lines match
+    the real network rather than a simplified one-line-per-route sketch.
+    """
+    raw = _read(feed, "shapes.txt").sort_values(["shape_id", "shape_pt_sequence"])
+
+    records = []
+    for shape_id, g in raw.groupby("shape_id", sort=False):
+        coords = list(zip(g["shape_pt_lat"].tolist(), g["shape_pt_lon"].tolist(), strict=True))
+        records.append({"shape_id": shape_id, "coords": coords})
+
+    out = pd.DataFrame.from_records(records, columns=["shape_id", "coords"])
+    out["shape_id"] = _namespaced(feed, out["shape_id"])
+    return out
+
+
 def stop_times(feed: str = "mta") -> pd.DataFrame:
     """The timetable for the given feed, with times normalised to
     seconds-since-midnight and stops collapsed to (namespaced) parent

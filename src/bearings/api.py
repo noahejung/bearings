@@ -24,7 +24,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from bearings import factcheck, geocode, profile, transit
+from bearings import factcheck, geocode, mapgeo, profile, transit
 from bearings.sources import compstat, overture
 
 logging.basicConfig(
@@ -148,6 +148,19 @@ def post_factcheck(body: FactcheckRequest) -> dict:
         return factcheck.check(body.address, body.listing_text)
     except geocode.GeocodeError as e:
         raise HTTPException(status_code=422, detail=str(e)) from e
+
+
+@app.get("/api/map")
+def get_map(address: str = Query(..., min_length=1)) -> dict:
+    """Real map geometry for the neighbourhood around `address` -- see
+    mapgeo.map_geometry()'s docstring for exactly what is (subway, stations,
+    per-cell noise density) and is not (streets, buildings) included, and
+    why."""
+    try:
+        loc = geocode.geocode(address)
+    except geocode.GeocodeError as e:
+        raise HTTPException(status_code=422, detail=str(e)) from e
+    return mapgeo.map_geometry(loc.lat, loc.lng, loc.bbl)
 
 
 # Single-origin deploy: serve the built React app (web/dist, produced by

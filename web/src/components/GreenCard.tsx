@@ -1,21 +1,29 @@
 import type { Green } from "../types";
 import { SourceTag } from "./SourceTag";
+import { Stamp } from "./Stamp";
 import { Stat } from "./Stat";
 
 export function GreenCard({ green }: { green: Green }) {
+  const hasData = green.street_trees_nearby !== null;
   return (
-    <article className="card card--headline-stat" aria-labelledby="green-heading">
-      <header className="card__header">
-        <span className="card__kicker">Field 05 — Street trees</span>
-        <h2 className="card__title" id="green-heading">
-          Living street trees
-        </h2>
+    <article className="field" aria-labelledby="green-heading">
+      <header className="field__head">
+        <div>
+          <span className="field__code">§05·GRN</span>
+          <h2 className="field__title" id="green-heading">
+            Living street trees
+          </h2>
+        </div>
+        <Stamp variant={hasData ? "confirmed" : "no_data"} compact />
       </header>
-      <p className="headline-stat">
+      <p className="headline">
         <Stat value={green.street_trees_nearby} />
       </p>
-      <p className="card__footnote">within a 5-minute walk</p>
-      <SourceTag source={green.source} />
+      <p className="field__provenance">
+        2015 Street Tree Census · within a 5-minute walk (400m radius).
+        <br />
+        <SourceTag source={green.source} />
+      </p>
     </article>
   );
 }

@@ -50,11 +50,7 @@ export function RouteBullet({ route }: { route: string }) {
   const wide = route.length > 2;
   return (
     <span
-      className={[
-        "route-bullet",
-        dark && "route-bullet--dark-text",
-        wide && "route-bullet--wide",
-      ]
+      className={["bullet", dark && "bullet--dark-text", wide && "bullet--wide"]
         .filter(Boolean)
         .join(" ")}
       style={{ backgroundColor: bg }}
@@ -68,7 +64,7 @@ export function RouteBullet({ route }: { route: string }) {
 export function RouteBullets({ routes }: { routes: string[] }) {
   if (routes.length === 0) return null;
   return (
-    <span className="route-bullets">
+    <span className="bullets">
       {routes.map((r) => (
         <RouteBullet route={r} key={r} />
       ))}

@@ -56,13 +56,13 @@ export function FactCheckView({
   }
 
   return (
-    <section className="factcheck-view" id="factcheck" aria-labelledby="factcheck-heading">
-      <header className="section-header">
-        <p className="kicker">The fact-check</p>
-        <h2 className="section-header__title" id="factcheck-heading">
+    <section className="factcheck" id="factcheck" aria-labelledby="factcheck-heading">
+      <header className="report__head">
+        <p className="report__kicker mono">The fact-check</p>
+        <h2 className="report__title" id="factcheck-heading">
           Paste a listing. We'll pull the record on every claim.
         </h2>
-        <p className="section-header__lede">
+        <p className="factcheck__lede">
           Every marketing phrase gets matched to a predicate and checked against the same
           data behind the report above. Four outcomes are possible — confirmed,
           contradicted, no record, or genuinely unfalsifiable. That last one isn't a
@@ -71,8 +71,8 @@ export function FactCheckView({
         </p>
       </header>
 
-      <form className="factcheck-form" onSubmit={handleSubmit}>
-        <div className="factcheck-form__field">
+      <form className="factcheck__form" onSubmit={handleSubmit}>
+        <div>
           <label htmlFor={textareaId}>Listing description</label>
           <textarea
             id={textareaId}
@@ -82,21 +82,21 @@ export function FactCheckView({
             onChange={(e) => onListingTextChange(e.target.value)}
           />
         </div>
-        <div className="factcheck-form__actions">
-          <button type="button" className="button--ghost" onClick={onLoadExample} disabled={loading}>
+        <div className="factcheck__actions">
+          <button type="button" className="button button--ghost" onClick={onLoadExample} disabled={loading}>
             Load the example listing
           </button>
-          <button type="submit" disabled={!canSubmit}>
+          <button type="submit" className="button" disabled={!canSubmit}>
             {loading ? "Checking…" : "Check this listing"}
           </button>
         </div>
         {!address && (
-          <p className="factcheck-form__hint">Pull a neighborhood record above first.</p>
+          <p className="factcheck__hint">Pull a neighborhood record above first.</p>
         )}
       </form>
 
       {error && (
-        <p className="address-search__error" role="alert">
+        <p className="search__error" role="alert">
           {error}
         </p>
       )}
@@ -104,14 +104,14 @@ export function FactCheckView({
       {result && (
         <div className="factcheck-results">
           {result.claims.length === 0 ? (
-            <p className="card__empty">
+            <p className="field__empty">
               No checkable marketing phrases found in that text. Try pasting a fuller
               listing description, or load the example.
             </p>
           ) : (
             <>
               <Tally result={result} />
-              <ul className="claim-list">
+              <ul className="claims">
                 {result.claims.map((claim, i) => (
                   <ClaimCard claim={claim} key={`${claim.predicate}-${i}`} />
                 ))}
