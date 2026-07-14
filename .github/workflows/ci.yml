@@ -1,0 +1,135 @@
+name: CI
+
+# --- WHY THIS WORKFLOW DELIBERATELY DOES NOT RUN THE FULL PYTEST SUITE ---
+#
+# Every test in this repo hits a live NYC Open Data / NYC GeoSearch / MTA /
+# Overture / FEMA endpoint -- there is no mocking anywhere (see CLAUDE.md's
+# "Invariants": "TDD, real data, no mocking"). That's correct for local dev,
+# where one person runs the suite at a time. It is NOT safe for CI: the full
+# 149-test suite chains through `bearings.geocode` (which calls
+# https://geosearch.planninglabs.nyc/v2/search) dozens of times per run --
+# once per test in test_geocode.py, plus once *per test* in test_profile.py,
+# test_api.py, and test_factcheck.py, because every one of those re-geocodes
+# the fixture address from scratch. A single burst of that size measurably
+# 503s the geocoder (confirmed live 2026-07-14: 44 failures, all 503s, zero
+# code defects). Running it on every push -- doubly so on every PR, where
+# CI might fire twice for the same commit -- would either flake the build
+# red for a reason that has nothing to do with the code, or get bearings'
+# calling pattern rate-limited/blocked by a public service run for the whole
+# city, which is a worse outcome than a slightly smaller CI job.
+#
+# So: this job runs every test file that does NOT import `bearings.geocode`
+# and does NOT call `bearings.profile.profile_for()` (which geocodes
+# internally). That is every source-module test (Socrata, GTFS, transit
+# graph, trees, rodents, noise, bedbugs, flood, heat, HPD, PLUTO, precincts,
+# CompStat, Overture) plus the pure, no-network `cells.py` h3 tests, plus
+# the staleness-cache tests. Confirmed live on 2026-07-14: 102 tests, 0
+# failures, ~90s total. Excluded: test_geocode.py, test_profile.py,
+# test_api.py, test_factcheck.py -- all four chain through the geocoder.
+#
+# DO NOT "fix" this by adding the excluded files back in. If you need to
+# verify the geocoder-chained paths, run them locally:
+#   uv run pytest tests/test_geocode.py tests/test_profile.py tests/test_api.py tests/test_factcheck.py
+# one at a time, not in CI, not in a loop, and not against a fresh venv in
+# a tight retry loop -- that is the exact pattern that trips the 503s.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  smoke-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          version: "0.11.28"
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Install dependencies
+        run: uv sync --all-extras --dev
+
+      # pdftotext (poppler-utils) is a runtime dependency of
+      # bearings.sources.compstat, not a Python package -- see the
+      # Dockerfile for the same requirement in the deploy image. Installed
+      # here only because test_compstat.py exercises the real PDF parse
+      # against a live NYPD PDF.
+      - name: Install poppler-utils (pdftotext, for CompStat parsing)
+        run: sudo apt-get update && sudo apt-get install -y poppler-utils
+
+      # No Python linter is configured anywhere in this repo (pyproject.toml
+      # has no [tool.ruff] / [tool.black] / [tool.mypy] section, and none of
+      # ruff/black/mypy/flake8 is an installed dependency). Per this repo's
+      # own rule ("do not introduce a new linter"), this workflow does not
+      # invent one. The closest thing this repo already has configured is
+      # the frontend's own `tsc -b --noEmit` (the "typecheck" script in
+      # web/package.json) -- that runs below, in the frontend job, and is
+      # the full extent of "lint" this workflow does.
+      - name: Run smoke-subset tests (no live geocoder calls)
+        run: |
+          uv run pytest \
+            tests/test_cells.py \
+            tests/test_socrata.py \
+            tests/test_gtfs.py \
+            tests/test_transit.py \
+            tests/test_trees.py \
+            tests/test_rodents.py \
+            tests/test_staleness.py \
+            tests/test_staleness_wiring.py \
+            tests/test_compstat.py \
+            tests/test_hpd.py \
+            tests/test_noise.py \
+            tests/test_overture.py \
+            tests/test_pluto.py \
+            tests/test_precincts.py \
+            tests/test_bedbugs.py \
+            tests/test_flood.py \
+            tests/test_heat.py \
+            -v
+
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      # NOTE: web/package.json's own "typecheck" script (`tsc -b --noEmit`)
+      # is broken independent of anything in this workflow -- confirmed live
+      # 2026-07-14: `tsc -b --noEmit` errors with "Referenced project
+      # 'tsconfig.node.json' may not disable emit" (a known TS project-
+      # references limitation: --noEmit conflicts with a referenced
+      # project's `composite: true`). This is NOT a real type error --
+      # plain `tsc -b` (no --noEmit), which is what `npm run build` runs
+      # below, compiles with zero errors. Rather than invent a workaround
+      # under this dispatch's "packaging, not refactoring" scope, this job
+      # relies on `npm run build`'s embedded `tsc -b` for real type
+      # checking (a type error fails the build step) and skips the broken
+      # standalone script. Fixing web/package.json's "typecheck" script
+      # is a small, separate follow-up -- flagged, not silently patched
+      # here.
+      - name: Unit tests (vitest, jsdom -- no live network)
+        run: npm run test
+
+      # Also the real typecheck: tsc -b (inside this script) fails the step
+      # on a genuine type error. Also verifies the artifact the Dockerfile
+      # copies in.
+      - name: Build
+        run: npm run build
