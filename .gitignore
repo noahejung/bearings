@@ -12,6 +12,14 @@ wheels/
 # Test cache
 .pytest_cache/
 
+# Secrets -- nothing in this repo currently reads an env var (no
+# os.getenv/os.environ anywhere in src/, confirmed 2026-07-14 pre-publish
+# audit), so there is no live secret to leak today. Excluded anyway as a
+# standing guard for whenever that changes (e.g. a Socrata app token).
+.env
+.env.*
+!.env.example
+
 # Raw downloads and derived data — never committed (see PLAN.md Global Constraints).
 # Anchored to the repo root (leading /): an unanchored "data/" also matched
 # web/src/data/ -- confirmed live, this silently kept web/src/data/examples.ts
