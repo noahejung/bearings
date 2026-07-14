@@ -1,0 +1,54 @@
+# Render Blueprint -- https://render.com/docs/blueprint-spec
+#
+# Deploys the existing Dockerfile (repo root) as a single Render web service.
+# Everything CPU/network-expensive (the ~478k-row Overture POI table, both
+# GTFS feeds, the transit graph + Dijkstra anchor times) is already baked
+# into the image at `docker build` time -- see the Dockerfile's own "Bake
+# the derived data artifacts at BUILD time, not container-boot time" block.
+# This file only wires that existing image into Render; it does not change
+# anything about how the app itself boots or serves requests.
+#
+# Verified against Render's own docs on 2026-07-14 (render.com/docs/docker,
+# /docs/blueprint-spec, /docs/free, /docs/compute-plans) -- not guessed.
+
+services:
+  - type: web
+    name: bearings
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+
+    # Free instance type is 512 MB RAM / 0.1 CPU (render.com/docs/compute-plans).
+    # Measured live on 2026-07-14 (docker run --memory=512m --memory-swap=512m,
+    # cgroup v2 accounting read directly from /sys/fs/cgroup/memory.stat):
+    # idle ~235MB resident (anon), after 6 sequential real /api/profile
+    # requests across 5 different NYC precincts/BBLs ~236.5MB, peak during a
+    # 3-way concurrent burst ~244.4MB (Docker's own MemUsage figure topped at
+    # 245.4MiB / 47.9%). Zero OOM kills in any of those runs
+    # (`docker inspect` OOMKilled=false throughout). That leaves roughly
+    # 260-270MB of headroom under the 512MB cap -- comfortably fits, not
+    # "just barely." See the deploy dispatch's agent-report for the full
+    # measurement methodology and numbers.
+    #
+    # NOTE: Render's "Starter" plan does NOT raise RAM above Free's 512MB --
+    # both are 512MB/{0.1 CPU, 0.5 CPU} per Render's own compute-plans page.
+    # Starter buys more CPU and removes the 15-minute idle spin-down; it is
+    # NOT a memory upgrade. If this app ever did need more RAM, "Standard"
+    # (2GB/1 CPU) is the actual next tier up, not Starter.
+    plan: free
+
+    # Cheap on purpose: returns {"status": "ok", "warm": bool} with no
+    # outbound calls (see src/bearings/api.py's health() -- no live NYC/MTA
+    # API traffic on the health-check path, so Render's periodic health
+    # pings can never rate-limit or flap this service). Do NOT point this
+    # at /api/profile -- that hits live NYC Open Data / MTA / GeoSearch APIs
+    # per request and would do exactly that.
+    healthCheckPath: /api/health
+
+    # US East, not Render's oregon default: this app's dominant per-request
+    # latency is live calls to NYC Open Data / MTA GTFS / NYC GeoSearch, all
+    # of which are themselves on the US East coast -- virginia is the
+    # closest Render region to that traffic and to NYC-based users. Change
+    # this in the Render Dashboard before first deploy if you'd rather keep
+    # the default; it can't be changed after the service is created.
+    region: virginia

@@ -169,6 +169,93 @@ Tailwind), no animation library -- all motion is CSS, gated behind
 `prefers-reduced-motion`. Light and dark themes both fully styled; the theme
 toggle persists to `localStorage` and otherwise follows the OS preference.
 
+## Deploy
+
+Live URL: _not yet deployed -- replace this line once it is._
+
+The repo builds and runs as a single Docker image (see `Dockerfile`) --
+frontend and API in one container, one process, one port. `render.yaml` at
+the repo root is a [Render Blueprint](https://render.com/docs/infrastructure-as-code)
+that wires that existing image into a Render web service; it changes
+nothing about how the app itself boots or serves requests.
+
+**Memory, measured live (not guessed):** idle ~235MB resident, ~245MB peak
+under a 3-way concurrent burst of real `/api/profile` requests, tested
+under a hard `docker run --memory=512m` cap with zero OOM kills -- fits
+Render's Free tier (512MB RAM) with roughly half the budget still free.
+Full methodology and numbers in the deploy dispatch's agent-report.
+
+### Deploying to Render (no Render account yet)
+
+1. Go to [dashboard.render.com](https://dashboard.render.com) and sign up
+   (GitHub sign-in is the fastest path, since the repo lives on GitHub).
+2. Click **New > Blueprint**.
+3. Click **Connect** next to this repo. If Render hasn't seen your GitHub
+   account yet, it prompts you to connect it first. **This repo is
+   currently private** -- when GitHub asks which repos to grant Render's
+   app access to, either pick "All repositories" or explicitly select
+   `noahejung/bearings`.
+4. Name the Blueprint and confirm the branch to deploy (`main`). Leave the
+   **Blueprint Path** field on its default -- `render.yaml` already sits at
+   the repo root.
+5. Render reads `render.yaml` and shows a preview of what it's about to
+   create: one web service named `bearings`, Docker runtime, Free plan.
+   Review it.
+6. Click **Deploy Blueprint**. Render clones the repo, runs `docker build`
+   against the existing `Dockerfile` (measured locally: ~1.5 minutes for a
+   full from-scratch build on an already-warm base-image cache; add time
+   for Render's own base-image pulls on a genuinely cold build node), then
+   starts the container.
+7. Once the deploy finishes, the live URL is on the service's page in the
+   dashboard (`https://bearings-<random-suffix>.onrender.com` unless the
+   plain name was available). Update the placeholder at the top of this
+   section with it.
+
+### Operational caveats, stated honestly
+
+- **Free tier spins down after 15 minutes with no inbound traffic**
+  (Render's own documented behavior, not an assumption) and spins back up
+  on the next request. Render's own stated spin-up time is "about one
+  minute"; this app's own boot is fast on top of that (~1-12s measured
+  live, since the POI table, GTFS feeds, and transit graph are baked into
+  the image at build time -- see the Dockerfile) -- so the realistic
+  cold-start-to-first-response window after an idle period is **roughly
+  60-75 seconds**, dominated by Render's own platform spin-up, not this
+  app.
+- **The Free tier's filesystem is ephemeral across every spin-down**
+  (Render's own documented behavior). The two slow, expensive caches (POI
+  table, anchor times) are baked into the image itself, so they survive
+  restarts fine. The NYPD CompStat PDF cache and the precinct-boundary
+  GeoJSON are *not* baked in by design (see the Dockerfile's own comment on
+  why) -- they're fetched lazily on the first request that touches a given
+  precinct. On Free tier, that means every spin-up effectively resets that
+  cache, so the first `/api/profile` request for any precinct after an idle
+  period pays a few real seconds fetching + parsing a live NYPD PDF again,
+  not just the very first request ever. Not a bug, just worth knowing.
+- **The NYC GeoSearch geocoder rate-limits under a burst of calls.**
+  Confirmed live (see `.github/workflows/ci.yml`'s own comment): a
+  concentrated burst of geocoding calls in a short window measurably 503s
+  the geocoder, unrelated to any defect in this code. Every `/api/profile`
+  request geocodes once; a traffic spike (e.g. a link shared widely at
+  once) could hit that same wall. `geocode.GeocodeError` is caught and
+  surfaces as a real 422/502-shaped error rather than crashing the
+  process, but there's no retry/backoff or client-side rate limiting here
+  yet.
+- **Render's Free instance type is 512MB RAM and 0.1 CPU** (from Render's
+  own compute-plans page). All memory numbers above were measured on this
+  developer's machine, not on Render's actual hardware -- the RAM budget is
+  the same number either way (a `docker --memory` cap is a real, enforced
+  cgroup limit, not a simulation), but CPU-bound portions of a request
+  (pandas/DuckDB filtering, JSON encoding) may run slower under Render's
+  0.1 CPU allocation than they did locally; the dominant cost per request
+  is network I/O to live NYC/MTA APIs either way, so this is a plausible
+  but unverified effect, not a measured one.
+- **Render's "Starter" plan does not add RAM.** Per Render's own pricing
+  page, Starter is 512MB RAM / 0.5 CPU -- identical RAM to Free, just more
+  CPU and no idle spin-down. If this app's memory footprint ever did
+  outgrow 512MB, "Standard" (2GB/1 CPU) is the tier that actually fixes
+  that, not Starter.
+
 ## Data sources -- total licensing cost: $0
 
 All of the following are wired in and actively used (nothing here is a
