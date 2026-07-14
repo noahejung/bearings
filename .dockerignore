@@ -1,0 +1,24 @@
+# Keeps the build context small and fast to send to the Docker daemon.
+# None of these are ever COPY'd into an image by the Dockerfile regardless
+# (it copies only pyproject.toml, uv.lock, src/, README.md, web/, and
+# web/dist) -- this file exists purely so `docker build` doesn't tar up
+# gigabytes of local data/, .venv, node_modules, and git history just to
+# throw them away.
+
+.git/
+.venv/
+__pycache__/
+*.py[oc]
+.pytest_cache/
+
+# Never baked in via a stale local copy -- the Dockerfile builds this
+# fresh at image-build time (see its "bake the derived data artifacts"
+# section). A locally-cached data/ could otherwise silently ship stale
+# POI/GTFS data instead of what the build actually fetched.
+/data/
+
+web/node_modules/
+web/dist/
+web/*.tsbuildinfo
+
+.github/
