@@ -6,7 +6,7 @@ import { Protocol } from "pmtiles";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ApiError, getCitywide, getMapGeometry } from "../api";
 import { crimeRelativeLabel, formatPercentile, ordinalSuffix } from "../lib/crime";
-import { buildMapStyle } from "../lib/mapStyle";
+import { buildMapStyle, buildOverlayLayers } from "../lib/mapStyle";
 import { percentileRank } from "../lib/relativeScale";
 import type { Citywide, MapCell, MapGeometry, Source } from "../types";
 import { colorFor } from "./RouteBullet";
@@ -448,132 +448,24 @@ export function MapView({ address }: { address: string }) {
     const map = mapRef.current;
     if (!map || !mapReady) return;
 
+    // Sources for MapView's own local overlay layers -- populated later
+    // (effects 5/6/7 below) once real geometry has actually loaded; empty
+    // here so the layers below have something to attach to at init.
     map.addSource("precincts", { type: "geojson", data: EMPTY_FC });
-    map.addLayer({
-      id: "precinct-fill",
-      type: "fill",
-      source: "precincts",
-      layout: { visibility: "none" },
-      paint: {
-        "fill-color": RED,
-        "fill-opacity": [
-          "case",
-          ["==", ["get", "hasCrime"], 0],
-          0,
-          ["interpolate", ["linear"], ["get", "w"], 0, 0.08, 1, 0.6],
-        ],
-      },
-    });
-    map.addLayer({
-      id: "precinct-outline",
-      type: "line",
-      source: "precincts",
-      layout: { visibility: "none" },
-      paint: { "line-color": INK, "line-width": 0.6, "line-opacity": 0.5 },
-    });
-
-    // Level-of-detail by zoom (VISUAL.md §5, REVISED 2026-07-15) for this
-    // app's own local overlay layers, the same idea mapStyle.ts's roads
-    // already apply to the basemap: building mass and the hex grid only
-    // make visual sense once you're zoomed in enough to read individual
-    // shapes, and residential (rank 0) streets fade in before arterials.
-    const BUILDINGS_ZOOM_FADE: maplibregl.DataDrivenPropertyValueSpecification<number> = [
-      "interpolate",
-      ["linear"],
-      ["zoom"],
-      13,
-      0,
-      15,
-      0.34,
-    ];
-    // Subject cell always visible (VISUAL.md: "Subject cell always
-    // visible") -- every other cell fades in from zoom 12 to 14, which is
-    // also when the hex grid becomes "large enough to read".
-    const CELL_ZOOM_FADE: maplibregl.DataDrivenPropertyValueSpecification<number> = [
-      "interpolate",
-      ["linear"],
-      ["zoom"],
-      12,
-      0,
-      14,
-      1,
-    ];
-
     map.addSource("buildings", { type: "geojson", data: EMPTY_FC });
-    map.addLayer({
-      id: "buildings-fill",
-      type: "fill",
-      source: "buildings",
-      paint: { "fill-color": STEEL, "fill-opacity": BUILDINGS_ZOOM_FADE },
-    });
-
     map.addSource("streets", { type: "geojson", data: EMPTY_FC });
-    map.addLayer({
-      id: "streets-line",
-      type: "line",
-      source: "streets",
-      layout: { "line-cap": "round", "line-join": "round" },
-      paint: {
-        "line-color": INK,
-        "line-width": [
-          "*",
-          ["match", ["get", "rank"], 0, 0.6, 1, 0.9, 2, 1.4, 3, 2.0, 0.6],
-          ["interpolate", ["linear"], ["zoom"], 13, 0.7, 17, 1.4],
-        ],
-        // Residential (rank 0) streets fade in over zoom 13-15; every
-        // higher rank keeps its previous fixed opacity (already visible
-        // at any zoom this local overlay ever renders at).
-        "line-opacity": [
-          "case",
-          ["==", ["get", "rank"], 0],
-          ["interpolate", ["linear"], ["zoom"], 13, 0, 15, 0.35],
-          ["match", ["get", "rank"], 1, 0.55, 2, 0.75, 3, 0.9, 0.35],
-        ],
-      },
-    });
-
     map.addSource("subway", { type: "geojson", data: EMPTY_FC });
-    map.addLayer({
-      id: "subway-line",
-      type: "line",
-      source: "subway",
-      layout: { "line-cap": "round", "line-join": "round" },
-      paint: { "line-color": RED, "line-width": 2.4, "line-opacity": 0.92 },
-    });
-
-    // The H3 disk is the only STRONG ink on the sheet (VISUAL.md §5) --
-    // thin outline (Noah, 2026-07-15: reduce stroke weight), subject cell
-    // red. Fill only carries a value when a cell-resolution metric is
-    // selected -- `hasValue`/`w` are computed once per metric selection
-    // in cellsGeoJSON() (effect 5b below), so this paint expression stays
-    // static regardless of which metric is active.
     map.addSource("cells", { type: "geojson", data: EMPTY_FC });
-    map.addLayer({
-      id: "cells-fill",
-      type: "fill",
-      source: "cells",
-      paint: {
-        "fill-color": RED,
-        "fill-opacity": [
-          "case",
-          ["==", ["get", "isSubject"], 1],
-          0,
-          ["==", ["get", "hasValue"], 1],
-          ["*", CELL_ZOOM_FADE, ["interpolate", ["linear"], ["get", "w"], 0, 0.08, 1, 0.6]],
-          0,
-        ],
-      },
-    });
-    map.addLayer({
-      id: "cells-outline",
-      type: "line",
-      source: "cells",
-      paint: {
-        "line-color": ["case", ["==", ["get", "isSubject"], 1], RED, INK],
-        "line-width": ["case", ["==", ["get", "isSubject"], 1], 1.6, 0.6],
-        "line-opacity": ["case", ["==", ["get", "isSubject"], 1], 1, ["*", CELL_ZOOM_FADE, 0.45]],
-      },
-    });
+
+    // The actual layer definitions (paint/layout/filter) live in
+    // mapStyle.ts's buildOverlayLayers(), as a pure/exported function so
+    // this exact layer set is unit-testable with MapLibre's real style
+    // validator (mapStyle.test.ts) -- see that function's own comment for
+    // the 2026-07-15 "zoom expression nested, not top-level" bug this
+    // extraction guards against.
+    for (const layer of buildOverlayLayers()) {
+      map.addLayer(layer);
+    }
 
     const onCellMove = (e: maplibregl.MapLayerMouseEvent) => {
       const f = e.features?.[0];
