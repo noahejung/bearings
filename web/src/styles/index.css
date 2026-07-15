@@ -153,15 +153,6 @@ body {
   text-transform: uppercase;
 }
 
-.band__steel {
-  color: var(--steel);
-}
-
-.band--foot {
-  margin-top: 56px;
-  border-bottom-width: 6px;
-}
-
 /* ---------- masthead — the wordmark, largest and most considered mark on
    the sheet (DESIGN.md §6 Primary) ---------- */
 .masthead {
@@ -193,12 +184,6 @@ body {
   letter-spacing: 0.08em;
   text-transform: uppercase;
   color: var(--steel);
-}
-
-.stripe {
-  height: 11px;
-  margin: 32px 0;
-  background: repeating-linear-gradient(-45deg, var(--ink) 0 9px, var(--bone) 9px 18px);
 }
 
 /* ---------- address search ---------- */
@@ -477,16 +462,6 @@ body {
   align-items: flex-start;
   gap: 0.75rem;
   margin-bottom: 1rem;
-}
-
-.field__code {
-  display: block;
-  font-family: var(--font-mono);
-  font-size: 0.68rem;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-  color: var(--steel);
-  margin-bottom: 0.3rem;
 }
 
 .field__title {
@@ -900,15 +875,12 @@ body {
   color: var(--steel);
 }
 
+/* Plain muted label, not a dashed rubber-stamp -- VISUAL.md §1 NO-LARP:
+   NO_DATA is a real, honest outcome (we looked and found no record), so it
+   reads like any other stamp, just steel instead of ink. */
 .stamp--no_data {
-  border-style: dashed;
   border-color: var(--steel);
   color: var(--steel);
-  background: repeating-linear-gradient(
-    -45deg,
-    transparent 0 5px,
-    rgba(138, 141, 143, 0.16) 5px 10px
-  );
 }
 
 /* ---------- fact-check section ---------- */
@@ -1029,9 +1001,13 @@ body {
   color: var(--bone);
 }
 
-.tally__item--unfalsifiable,
-.tally__item--no_data {
+.tally__item--unfalsifiable {
   border-style: dashed;
+  border-color: var(--steel);
+  color: var(--steel);
+}
+
+.tally__item--no_data {
   border-color: var(--steel);
   color: var(--steel);
 }
@@ -1291,14 +1267,6 @@ body {
   font-size: 0.82rem;
   color: var(--steel);
   line-height: 1.6;
-}
-
-.footer__rule {
-  display: block;
-  margin-top: 0.35rem;
-  font-family: var(--font-mono);
-  color: var(--ink);
-  letter-spacing: 0.02em;
 }
 
 /* ---------- responsive ---------- */

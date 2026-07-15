@@ -101,6 +101,9 @@ async def lifespan(_app: FastAPI):
     logger.info("  POI table (Overture over S3 on a cold boot -- this is the slow part)...")
     profile.warm_caches()
 
+    logger.info("  map base layers (building footprints + street centrelines)...")
+    mapgeo.warm_caches()
+
     _state["warm"] = True
     logger.info("all caches warm in %.1fs -- ready to serve", time.monotonic() - start)
 

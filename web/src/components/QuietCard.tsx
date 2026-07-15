@@ -9,7 +9,6 @@ export function QuietCard({ quiet }: { quiet: Quiet }) {
     <article className="field" aria-labelledby="quiet-heading">
       <header className="field__head">
         <div>
-          <span className="field__code">§04·QUI</span>
           <h2 className="field__title" id="quiet-heading">
             311 noise complaints
           </h2>

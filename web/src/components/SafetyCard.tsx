@@ -44,7 +44,6 @@ export function SafetyCard({ safety }: { safety: Safety }) {
     <article className="field" aria-labelledby="safety-heading">
       <header className="field__head">
         <div>
-          <span className="field__code">§03·SFY</span>
           <h2 className="field__title" id="safety-heading">
             {hasData ? `${safety.precinct}${ordinalSuffix(safety.precinct!)} Precinct` : "Precinct crime"}
           </h2>

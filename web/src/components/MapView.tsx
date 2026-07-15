@@ -6,11 +6,10 @@ import type { MapCell, MapGeometry } from "../types";
 // VISUAL.md §5 -- self-drawn vectors, no map library, no tile server, no
 // live third-party basemap call in the request path. Ported from the
 // Noah-approved prototype (scratchpad/bearings-map.html, base=hybrid,
-// texture=stipple). Real geometry only: GTFS subway/PATH alignments and
-// real H3 cell boundaries (h3-js cellToBoundary) with real 311-derived
-// density -- see mapgeo.py's own docstring for exactly which layers are
-// real and which (streets, building mass) are a stated, reasoned gap
-// rather than a silently-faked drawing.
+// texture=stipple). Every layer is real geometry: NYC building footprints
+// and street centrelines (baked at build time -- sources/buildings.py,
+// sources/streets.py), GTFS subway/PATH alignments, and real H3 cell
+// boundaries (h3-js cellToBoundary) with real 311-derived density.
 
 const BONE = "#EDE9DE";
 const INK = "#111111";
@@ -25,6 +24,13 @@ const VB_H = 560;
 // operable live via the button below -- this constant is just the
 // default state, not the only way to flip it.
 const SHOW_FULL_GRID_BY_DEFAULT = true;
+
+// Road-class weighting, indexed by MapStreet.rank (0=local .. 3=highway) --
+// matches the approved prototype exactly (scratchpad/bearings-map.html,
+// base=hybrid: stroke-width [0.28, 0.55, 1.0, 1.65], stroke-opacity
+// [0.3, 0.62, 0.85, 1] * 0.85 hybrid dimming).
+const STREET_WIDTH = [0.28, 0.55, 1.0, 1.65];
+const STREET_OPACITY = [0.3, 0.62, 0.85, 1].map((o) => o * 0.85);
 
 function mercator(lng: number, lat: number): [number, number] {
   return [
@@ -223,7 +229,6 @@ export function MapView({ address }: { address: string }) {
 
   return (
     <div className="mapfield">
-      <span className="field__code">§00·MAP</span>
       <h2 className="field__title">The neighbourhood, drawn</h2>
 
       <div className="mapfield__controls">
@@ -249,7 +254,35 @@ export function MapView({ address }: { address: string }) {
       <div className="mapfield__stage">
         <div>
           <div className="mapfield__frame">
-            <svg viewBox={`0 0 ${VB_W} ${VB_H}`} aria-label="H3 cell map with real subway alignments">
+            <svg
+              viewBox={`0 0 ${VB_W} ${VB_H}`}
+              aria-label="H3 cell map with real building footprints, street centrelines, and subway alignments"
+            >
+              {/* Building mass, no outline -- reads as ground (VISUAL.md §5). */}
+              {geo.buildings.map((b, i) => (
+                <path
+                  key={i}
+                  d={pathD(b.coords.map(([lat, lng]) => p(lng, lat)), true)}
+                  fill={STEEL}
+                  fillOpacity={0.34}
+                  stroke="none"
+                />
+              ))}
+
+              {/* Street hairlines, weighted by road class -- ink, on top of
+                  the building mass but under everything else. */}
+              {geo.streets.map((s, i) => (
+                <path
+                  key={i}
+                  d={pathD(s.coords.map(([lat, lng]) => p(lng, lat)))}
+                  fill="none"
+                  stroke={INK}
+                  strokeWidth={STREET_WIDTH[s.rank]}
+                  strokeOpacity={STREET_OPACITY[s.rank]}
+                  strokeLinecap="round"
+                />
+              ))}
+
               {geo.subway_lines.map((line, i) => (
                 <path
                   key={i}
@@ -290,6 +323,14 @@ export function MapView({ address }: { address: string }) {
             </svg>
           </div>
           <div className="mapfield__legend">
+            <span>
+              <i style={{ background: STEEL, opacity: 0.34 }} />
+              Building footprint
+            </span>
+            <span>
+              <i style={{ background: INK, height: 2 }} />
+              Street, by road class
+            </span>
             <span>
               <i style={{ background: RED }} />
               Subway / PATH — real alignment

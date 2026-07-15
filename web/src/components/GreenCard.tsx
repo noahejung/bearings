@@ -9,7 +9,6 @@ export function GreenCard({ green }: { green: Green }) {
     <article className="field" aria-labelledby="green-heading">
       <header className="field__head">
         <div>
-          <span className="field__code">§05·GRN</span>
           <h2 className="field__title" id="green-heading">
             Living street trees
           </h2>

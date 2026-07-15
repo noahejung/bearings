@@ -22,7 +22,6 @@ export function AmenitiesCard({ amenities }: { amenities: Amenities }) {
     <article className="field" aria-labelledby="amenities-heading">
       <header className="field__head">
         <div>
-          <span className="field__code">§02·AMN</span>
           <h2 className="field__title" id="amenities-heading">
             Within a 10-minute walk
           </h2>

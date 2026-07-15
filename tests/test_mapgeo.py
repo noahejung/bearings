@@ -16,6 +16,13 @@ EMPIRE_STATE = "350 5th Ave, Manhattan"
 QUIET_RIVERDALE = "3220 Netherland Ave, Bronx"
 
 
+@pytest.fixture(scope="module", autouse=True)
+def warmed():
+    # Real bake the first time this runs in a fresh data/ directory (see
+    # sources/buildings.py / sources/streets.py); a fast no-op after that.
+    mapgeo.warm_caches()
+
+
 @pytest.fixture(scope="module")
 def loc():
     return geocode.geocode(EMPIRE_STATE)
@@ -30,6 +37,8 @@ def test_returns_the_contract_shape(geo):
     assert set(geo) == {
         "subject",
         "bbox",
+        "buildings",
+        "streets",
         "subway_lines",
         "stations",
         "cells",
@@ -38,6 +47,22 @@ def test_returns_the_contract_shape(geo):
     }
     assert set(geo["subject"]) == {"lat", "lng", "bbl", "cell"}
     assert set(geo["bbox"]) == {"south", "north", "west", "east"}
+
+
+def test_finds_real_building_mass_near_a_dense_block(geo):
+    assert len(geo["buildings"]) > 50
+    for b in geo["buildings"]:
+        assert len(b["coords"]) >= 3
+        lat, lng = b["coords"][0]
+        assert 40.4 < lat < 41.0
+        assert -74.4 < lng < -73.6
+
+
+def test_finds_real_street_hairlines_near_a_dense_block(geo):
+    assert len(geo["streets"]) > 20
+    for s in geo["streets"]:
+        assert len(s["coords"]) >= 2
+        assert s["rank"] in (0, 1, 2, 3)
 
 
 def test_finds_real_subway_lines_near_a_dense_transit_address(geo):
@@ -94,10 +119,13 @@ def test_a_quiet_address_has_real_low_or_zero_cells():
     assert min(values) == 0 or sorted(values)[len(values) // 2] < 20
 
 
-def test_basemap_note_is_present_and_explains_the_real_limitation(geo):
-    # Non-negotiable: never silently draw nothing. If a layer isn't
-    # rendered, the reason has to be stated, not implied by its absence.
-    assert "Overture" in geo["basemap_note"]
+def test_basemap_note_is_present_and_does_not_claim_an_absence(geo):
+    # Regression guard: the note used to say streets/buildings were absent
+    # (Overture-scale limitation) -- now that both layers render, it must
+    # never claim that gap still exists.
+    assert geo["basemap_note"]
+    assert "not rendered" not in geo["basemap_note"]
+    assert "absent" not in geo["basemap_note"]
 
 
 def test_sources_cite_real_working_urls(geo):

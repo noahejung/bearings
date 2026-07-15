@@ -52,6 +52,8 @@ SOCRATA_DATASETS = {
     "pluto":            "64uk-42ks",  # Primary Land Use Tax Lot Output (PLUTO)
     "bedbugs":          "wz6d-d3jb",  # Bedbug Reporting (confirmed live 2026-07-13)
     "rodents":          "p937-wjvj",  # DOHMH Rodent Inspections (confirmed live 2026-07-13)
+    "buildings":        "5zhs-2jue",  # BUILDING -- NYC building footprints (confirmed live 2026-07-14)
+    "centerlines":      "inkn-q76z",  # NYC Street Centerline (CSCL) (confirmed live 2026-07-14)
 }
 
 # Overture release string. NOT used directly by fetch_pois() anymore --
@@ -86,6 +88,11 @@ ANCHOR_TIMES_CACHE_MAX_AGE_S = 30 * 86400
 GTFS_CACHE_MAX_AGE_S = 30 * 86400
 COMPSTAT_CACHE_MAX_AGE_S = 10 * 86400
 PRECINCT_CACHE_MAX_AGE_S = 365 * 86400
+# Building footprints and street centrelines change rarely (new construction,
+# demolitions, occasional street re-mapping) -- same 30-day slack as the POI
+# table, which is baked from a similarly-official, similarly-infrequent source.
+BUILDINGS_CACHE_MAX_AGE_S = 30 * 86400
+CENTERLINES_CACHE_MAX_AGE_S = 30 * 86400
 
 NYPD_PCT_PDF = (
     "https://www.nyc.gov/assets/nypd/downloads/pdf/crime_statistics/"

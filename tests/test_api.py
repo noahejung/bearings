@@ -177,6 +177,8 @@ def test_map_returns_the_contract_shape(client):
     assert set(body) == {
         "subject",
         "bbox",
+        "buildings",
+        "streets",
         "subway_lines",
         "stations",
         "cells",
@@ -185,6 +187,15 @@ def test_map_returns_the_contract_shape(client):
     }
     assert len(body["cells"]) == 37
     assert len(body["subway_lines"]) > 0
+    # Empire State's block is dense -- both new base layers must carry real
+    # geometry here, not just a structurally-present empty list.
+    assert len(body["buildings"]) > 0
+    assert len(body["streets"]) > 0
+    for b in body["buildings"]:
+        assert len(b["coords"]) >= 3
+    for s in body["streets"]:
+        assert len(s["coords"]) >= 2
+        assert s["rank"] in (0, 1, 2, 3)
 
 
 def test_map_bad_address_is_422_not_500(client):

@@ -23,7 +23,6 @@ export function BuildingCard({ building }: { building: Building }) {
     <article className="field" aria-labelledby="building-heading">
       <header className="field__head">
         <div>
-          <span className="field__code">§06·BLD</span>
           <h2 className="field__title" id="building-heading">
             What could exist here
           </h2>

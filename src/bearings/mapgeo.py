@@ -1,40 +1,32 @@
 """Real map geometry for one address -- the data behind VISUAL.md's hybrid
-base map: real GTFS subway/PATH alignments, real GTFS stations, and real
-per-H3-cell 311 noise density for the neighbourhood around an address.
+base map: real building-footprint mass, real street centrelines, real GTFS
+subway/PATH alignments and stations, and real per-H3-cell 311 noise density
+for the neighbourhood around an address.
 
-What this module deliberately does NOT produce: street centrelines or
-building-mass footprints. VISUAL.md's map spec assumed Overture's
-`transportation` and `buildings` themes were "already ingested" the same
-way `places` is (see overture.py's fetch_pois()) -- they are not, and a
-live per-request bbox query against either is not viable at this
-codebase's data scale. Confirmed live 2026-07-14 by listing the actual S3
-prefixes (`?list-type=2&prefix=release/<rel>/theme=<theme>/type=<type>/`):
+Streets and building mass were originally a stated gap here: VISUAL.md's
+map spec assumed Overture's `transportation` and `buildings` themes were
+"already ingested" the same way `places` is (see overture.py's
+fetch_pois()), but a live probe (2026-07-14) found `transportation` is
+~60GB across 128 files and `buildings` ~276GB across 512 files -- a
+per-request bbox query against either does not return within 3 minutes.
+That finding stands; Overture remains the wrong source for these two
+layers at this codebase's data scale.
 
-    theme=places/type=place              16 files,  ~11 GB total
-    theme=transportation/type=segment   128 files,  ~60 GB total
-    theme=buildings/type=building       512 files, ~276 GB total
+What changed: NYC Open Data's *own* building-footprint and street-centreline
+datasets are a different animal from Overture's global slices -- they are
+NYC-scoped from the source, not a slice of a planet-sized file, so they are
+small enough (1.08M footprints, 122k centreline segments -- confirmed live
+2026-07-14) to bake in full at build time the same way `warm_caches()`
+already bakes the POI table and transit graph. See sources/buildings.py and
+sources/streets.py for the fetch/bake/bbox-slice pipeline; this module only
+does the fast request-time bbox slice against their already-baked Parquet
+files (`footprints_in_bbox()` / `segments_in_bbox()`), never touching
+Socrata directly for these two layers.
 
-`places` is the one theme this codebase already ingests (fetch_pois(),
-~48.9s for the whole NYC bbox during the Docker build -- see the deploy
-dispatch's own measurement). A same-shaped bbox query against
-`transportation`, scoped to a single ~700m-radius neighbourhood (a much
-*smaller* area than the whole-NYC places query that already works), was
-run live against this same DuckDB+httpfs setup and did not return within
-3 minutes, climbing past 766MB resident memory before being killed.
-Unlike `places`, neither `transportation` nor `buildings` appears to be
-laid out in a way that lets DuckDB's Parquet row-group statistics skip
-most of each multi-hundred-megabyte file for an unrelated bbox -- so the
-query has to touch most of a many-gigabyte file per request. That is a
-genuine offline batch-ingestion project (mirroring how `warm_caches()`
-already bakes the POI table and transit graph at build time, not request
-time), not something this dispatch's time budget covers. Shipping it
-"anyway" would mean either a multi-minute page load or silently drawing
-nothing -- both worse than the honest gap `basemap_note` states below.
-
-What IS real here: GTFS shapes.txt (local, already-cached zips, cheap for
-any address) and 311 noise complaints, queried once per request as a
-single bounding-box Socrata call (not one call per cell) and bucketed into
-real H3 cells with the same `h3` library the rest of the pipeline uses.
+GTFS shapes.txt (local, already-cached zips, cheap for any address) and 311
+noise complaints (a single bounding-box Socrata call, not one call per
+cell) round out the picture, bucketed into real H3 cells with the same
+`h3` library the rest of the pipeline uses.
 """
 
 import math
@@ -44,7 +36,7 @@ import h3
 import pandas as pd
 
 from bearings import cells, config, transit
-from bearings.sources import gtfs, socrata
+from bearings.sources import buildings, gtfs, socrata, streets
 
 # Matches the approved prototype's k=3 disk (37 cells) and its ~700m
 # half-width box -- see the dispatch's scratchpad bearings-map.html /
@@ -54,19 +46,20 @@ BBOX_RADIUS_M = 700.0
 _NOISE_WINDOW_DAYS = 365
 
 BASEMAP_NOTE = (
-    "Street and building base layers are not rendered. Overture's "
-    "transportation (~60GB across 128 files) and buildings (~276GB across "
-    "512 files) themes have no viable per-request bounding-box query at "
-    "this codebase's current ingestion pattern -- confirmed live "
-    "2026-07-14, see mapgeo.py's module docstring. Subway alignments "
-    "(GTFS shapes.txt) and H3 cell density (real NYC 311 counts) below "
-    "are real; streets and building mass are an honest gap, not a "
-    "guessed drawing."
+    "Every layer is real, drawn from public records: building footprints "
+    "and street centrelines (NYC Open Data, baked once at build time -- "
+    "see sources/buildings.py and sources/streets.py), subway/PATH "
+    "alignments (GTFS shapes.txt), and per-cell density (real NYC 311 "
+    "noise counts). No basemap tiles, no third-party map service -- "
+    "every line on this sheet was computed from a dataset this report "
+    "also cites."
 )
 
 SOURCES = {
     "subway": dict(transit.SOURCE),
     "cells": {"name": "NYC 311", "url": "https://data.cityofnewyork.us/d/erm2-nwe9"},
+    "buildings": dict(buildings.SOURCE),
+    "streets": dict(streets.SOURCE),
 }
 
 
@@ -160,9 +153,22 @@ def map_geometry(lat: float, lng: float, bbl: str | None) -> dict:
     return {
         "subject": {"lat": lat, "lng": lng, "bbl": bbl, "cell": subject_cell},
         "bbox": bbox,
+        "buildings": buildings.footprints_in_bbox(bbox),
+        "streets": streets.segments_in_bbox(bbox),
         "subway_lines": _subway_lines(bbox),
         "stations": _stations_in_bbox(bbox),
         "cells": _cell_values(subject_cell, bbox),
         "basemap_note": BASEMAP_NOTE,
         "sources": SOURCES,
     }
+
+
+def warm_caches() -> None:
+    """Bake the building-footprint and street-centreline Parquet files if
+    they don't already exist. Called once by Dockerfile's build-time step
+    and by api.py's startup handler (mirroring profile.warm_caches()'s own
+    pattern) so the first real /api/map request never pays the ~4-minute
+    citywide-fetch cost -- see sources/buildings.py and sources/streets.py.
+    Safe to call more than once; a no-op once both files exist."""
+    buildings.warm_cache()
+    streets.warm_cache()

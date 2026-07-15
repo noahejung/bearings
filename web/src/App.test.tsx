@@ -58,6 +58,19 @@ const PROFILE = {
 const MAP_GEOMETRY = {
   subject: { lat: 40.7484, lng: -73.9857, bbl: "1008350041", cell: "892a100d2d7ffff" },
   bbox: { south: 40.7421, north: 40.7547, west: -73.9957, east: -73.9757 },
+  buildings: [
+    {
+      bbl: "1008350041",
+      coords: [
+        [40.7482, -73.9859],
+        [40.7486, -73.9859],
+        [40.7486, -73.9855],
+        [40.7482, -73.9855],
+        [40.7482, -73.9859],
+      ],
+    },
+  ],
+  streets: [{ physicalid: "12345", coords: [[40.748, -73.986], [40.749, -73.985]], rank: 2 }],
   subway_lines: [
     { coords: [[40.748, -73.986], [40.75, -73.984]] },
   ],
@@ -66,10 +79,12 @@ const MAP_GEOMETRY = {
     h3: i === 0 ? "892a100d2d7ffff" : `892a100d2d7ff${i.toString().padStart(2, "0")}`,
     value: i === 0 ? 42 : i,
   })),
-  basemap_note: "Street and building base layers are not rendered. Overture's transportation...",
+  basemap_note: "Every layer is real, drawn from public records...",
   sources: {
     subway: { name: "MTA GTFS + PATH GTFS", url: "http://web.mta.info/developers/data/nyct/subway/google_transit.zip" },
     cells: { name: "NYC 311", url: "https://data.cityofnewyork.us/d/erm2-nwe9" },
+    buildings: { name: "NYC Building Footprints", url: "https://data.cityofnewyork.us/d/5zhs-2jue" },
+    streets: { name: "NYC Street Centerline (CSCL)", url: "https://data.cityofnewyork.us/d/inkn-q76z" },
   },
 };
 
@@ -115,13 +130,15 @@ describe("App (full mount)", () => {
 
     await waitFor(() => expect(screen.getByText(PROFILE.address)).toBeInTheDocument());
 
-    // The six real report fields, each with its section code.
-    expect(screen.getByText("§01·TRN")).toBeInTheDocument();
-    expect(screen.getByText("§02·AMN")).toBeInTheDocument();
-    expect(screen.getByText("§03·SFY")).toBeInTheDocument();
-    expect(screen.getByText("§04·QUI")).toBeInTheDocument();
-    expect(screen.getByText("§05·GRN")).toBeInTheDocument();
-    expect(screen.getByText("§06·BLD")).toBeInTheDocument();
+    // The six real report fields, named by their own heading -- VISUAL.md
+    // §1's NO-LARP rule cut the invented "§0X·XXX" section codes, so the
+    // metric's own label is the only thing that identifies it now.
+    expect(screen.getByRole("heading", { name: /getting around/i })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: /within a 10-minute walk/i })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: /precinct/i })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: /311 noise complaints/i })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: /living street trees/i })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: /what could exist here/i })).toBeInTheDocument();
 
     // Real values actually reached the DOM, not just the field chrome.
     expect(screen.getByText("34 St-Herald Sq")).toBeInTheDocument();
@@ -129,12 +146,21 @@ describe("App (full mount)", () => {
     expect(screen.getByText("1931")).toBeInTheDocument();
 
     // The map field rendered with the real fetched geometry, not stuck loading.
-    await waitFor(() => expect(screen.getByText("§00·MAP")).toBeInTheDocument());
+    await waitFor(() =>
+      expect(screen.getByRole("heading", { name: /the neighbourhood, drawn/i })).toBeInTheDocument(),
+    );
     expect(screen.getByText(/34 St-Herald Sq/).closest("body")).toBeTruthy();
     expect(screen.getByLabelText(/H3 cell map/i)).toBeInTheDocument();
 
     // The fact-check section is present and wired to the same address.
     expect(screen.getByRole("heading", { name: /paste a listing/i })).toBeInTheDocument();
+
+    // NO-LARP regression (VISUAL.md §1, 2026-07-14): the fictional bureau,
+    // catalogue codes, and refusals line must never come back.
+    expect(screen.queryByText(/Peoples Bureau/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/BRG—/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/NO LISTINGS/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/§0/)).not.toBeInTheDocument();
   });
 
   it("renders a real NO DATA stamp, never a guessed number, when a field is genuinely null", async () => {

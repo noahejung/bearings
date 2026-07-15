@@ -26,7 +26,6 @@ export function TransitCard({ transit }: { transit: Transit }) {
     <article className="field field--wide" aria-labelledby="transit-heading">
       <header className="field__head">
         <div>
-          <span className="field__code">§01·TRN</span>
           <h2 className="field__title" id="transit-heading">
             Getting around
           </h2>

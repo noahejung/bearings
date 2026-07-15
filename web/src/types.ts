@@ -119,10 +119,10 @@ export interface FactcheckResult {
   claims: Claim[];
 }
 
-// Mirrors GET /api/map exactly (bearings/mapgeo.py's map_geometry()). See
-// that module's own docstring for exactly which base-map layers are real
-// (subway, stations, per-cell noise density) and which are a stated,
-// reasoned gap (streets, buildings) rather than a silent one.
+// Mirrors GET /api/map exactly (bearings/mapgeo.py's map_geometry()). Every
+// layer here is real, baked from public records -- see that module's own
+// docstring for the building-footprint / street-centreline build-time-bake
+// pipeline (sources/buildings.py, sources/streets.py).
 export interface MapSubject {
   lat: number;
   lng: number;
@@ -152,9 +152,22 @@ export interface MapCell {
   value: number;
 }
 
+export interface MapBuilding {
+  bbl: string | null;
+  coords: [number, number][]; // [lat, lng], exterior ring
+}
+
+export interface MapStreet {
+  physicalid: string;
+  coords: [number, number][]; // [lat, lng]
+  rank: 0 | 1 | 2 | 3; // 3 = highway, 0 = local -- see sources/streets.py
+}
+
 export interface MapGeometry {
   subject: MapSubject;
   bbox: MapBbox;
+  buildings: MapBuilding[];
+  streets: MapStreet[];
   subway_lines: MapLine[];
   stations: MapStation[];
   cells: MapCell[];

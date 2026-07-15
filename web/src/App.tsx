@@ -109,18 +109,9 @@ export default function App() {
         )}
       </main>
 
-      <div className="stripe" />
       <footer className="footer">
-        <p>
-          Built on public data. Every number here traces back to a source you can click.
-          <span className="footer__rule">Report the data — never the verdict.</span>
-        </p>
+        <p>Built on public data. Every number here traces back to a source you can click.</p>
       </footer>
-      <div className="band band--foot">
-        <span>NO LISTINGS · NO REVIEWS · NO NAMES · NO REAL-TIME</span>
-        <span className="band__steel">Made in the Peoples Bureau</span>
-        <span>{`BRG—${new Date().getFullYear()}`}</span>
-      </div>
     </div>
   );
 }

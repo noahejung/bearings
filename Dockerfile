@@ -122,6 +122,18 @@ COPY --from=frontend-build /app/web/dist ./web/dist
 # ----------------------------------------------------------------------
 RUN uv run python -c "from bearings import profile; profile.warm_caches()"
 
+# Same build-time-bake rationale as above, for the map's building-footprint
+# and street-centreline base layers (src/bearings/mapgeo.py's own module
+# docstring, sources/buildings.py, sources/streets.py). Real cost the
+# first time: ~1.08M building footprints and 122k street-centreline
+# segments paginated over Socrata, confirmed live 2026-07-14 at roughly
+# 4 minutes combined -- paid once here, at build time, never in the
+# request path. Result: data/derived/buildings.parquet and
+# data/derived/streets.parquet, sliced by a fast bbox query (DuckDB
+# Parquet row-group pruning on precomputed min/max lat/lng columns) on
+# every real /api/map request.
+RUN uv run python -c "from bearings import mapgeo; mapgeo.warm_caches()"
+
 ENV PATH="/app/.venv/bin:$PATH"
 EXPOSE 8000
 

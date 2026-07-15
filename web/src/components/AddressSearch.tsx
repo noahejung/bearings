@@ -34,7 +34,6 @@ export function AddressSearch({
     <section className={`search${compact ? " search--compact" : ""}`}>
       {!compact && (
         <div className="search__intro">
-          <p className="search__kicker">A field report on daily life, built from public records</p>
           <h2 className="search__headline">
             What's it actually like <em>there?</em>
           </h2>
