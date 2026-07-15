@@ -21,6 +21,16 @@ SOURCE = {
     "url": "http://web.mta.info/developers/data/nyct/subway/google_transit.zip",
 }
 
+# Shared by both /api/profile (api.py's _to_contract) and the per-cell
+# precompute (cellprofile.py) -- one string, cited from one place, per this
+# codebase's own convention for shared copy (BASEMAP_NOTE, TRANSIT_CAVEAT
+# used to be an api.py-local literal only the address-level endpoint saw).
+TRANSIT_CAVEAT = (
+    "In-vehicle time plus a nominal transfer penalty. Excludes the walk "
+    "from your door and the wait on the platform. Treat as a floor, not "
+    "a door-to-door estimate."
+)
+
 WALK_SPEED_MPS = 1.35        # ~4.9 km/h, a normal walking pace
 TRANSFER_PENALTY_S = 240     # 4 min: walk between platforms + wait for a train
 TRANSFER_MAX_M = 200.0       # stations closer than this are considered connected

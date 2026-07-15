@@ -69,3 +69,20 @@ def points_in_bbox(bbox: dict) -> pd.DataFrame:
     return pd.DataFrame(
         {"lat": df["latitude"].astype(float), "lng": df["longitude"].astype(float)}
     )
+
+
+def citywide_points() -> pd.DataFrame:
+    """Every living street tree citywide, as (lat, lng) -- for the per-cell
+    precompute bake (bearings.cellprofile), which needs the whole dataset,
+    not one bbox-scoped page. Unlike points_in_bbox() (capped at a single
+    50k-row Socrata page, correct for a k=3-disk-sized live map request),
+    this pages through the full dataset via socrata.fetch()'s own built-in
+    pagination -- no limit cap. Confirmed live 2026-07-15: 652,173 living
+    trees citywide, a one-time cost of roughly a minute, paid at build
+    time, never in a request path."""
+    df = socrata.fetch("trees", select="latitude,longitude", where="status='Alive'")
+    if df.empty:
+        return pd.DataFrame({"lat": pd.Series(dtype=float), "lng": pd.Series(dtype=float)})
+    return pd.DataFrame(
+        {"lat": df["latitude"].astype(float), "lng": df["longitude"].astype(float)}
+    )

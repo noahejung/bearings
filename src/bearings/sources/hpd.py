@@ -11,6 +11,8 @@ the zero-padded BBL string, so the padding has to come back off.
 class C is *immediately hazardous* -- the number that matters.
 `violationstatus` is "Open" or "Close" (confirmed live -- not "Closed")."""
 
+import pandas as pd
+
 from bearings.sources import socrata
 
 SOURCE = {"name": "NYC HPD", "url": "https://data.cityofnewyork.us/d/wvxf-dwi5"}
@@ -46,3 +48,30 @@ def open_violations(bbl: str) -> dict:
     return {
         key: int(counts.get(cls, 0)) for cls, key in _KEY_FOR_CLASS.items()
     }
+
+
+def citywide_open_class_c_counts() -> pd.DataFrame:
+    """Every (boroid, block, lot) citywide with at least one open Class C
+    ("immediately hazardous") violation, and how many -- for the per-cell
+    precompute bake (bearings.cellprofile), which aggregates HPD's serious
+    housing-hazard signal to the cell level. Class C only (not A/B): see
+    this module's own docstring -- "the number that matters".
+
+    Fetches the raw open-Class-C violation rows (confirmed live 2026-07-15:
+    581,733 rows, ~40s across ~12 Socrata pages) and aggregates client-side
+    with pandas, rather than a server-side SoQL $group query -- a live
+    probe found Socrata's own $group+$order aggregate on this dataset times
+    out past 60s (no index on boroid/block/lot), while a bare $group with
+    no $order returns in under a second but with an unstable row order that
+    cannot be paginated reliably. Paging the raw rows (each page is fast
+    and independently correct regardless of ordering) and counting in
+    pandas sidesteps both problems.
+    """
+    df = socrata.fetch(
+        "hpd_violations",
+        select="boroid,block,lot",
+        where="class='C' AND violationstatus='Open'",
+    )
+    if df.empty:
+        return pd.DataFrame({"boroid": [], "block": [], "lot": [], "count": []})
+    return df.groupby(["boroid", "block", "lot"]).size().reset_index(name="count")

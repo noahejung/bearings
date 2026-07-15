@@ -169,6 +169,21 @@ RUN uv run python -c "from bearings.sources import basemap; basemap.warm_cache()
 # whichever request happens to load the map first.
 RUN uv run python -c "from bearings import citywide; citywide.warm_caches()"
 
+# Per-cell (H3 res-9) block-level profile precompute -- SPEC-precompute-v2.md
+# Phase 1 (src/bearings/cellprofile.py). Real cost, confirmed live
+# 2026-07-15: five citywide dataset fetches (311 noise ~808k rows, street
+# trees ~652k, PLUTO ~857k, HPD open Class C violations ~582k raw rows --
+# all client-aggregated, no live geometry payload like buildings/streets
+# above) plus an in-process spatial join and nearest-station lookup over
+# ~7,000 real cells -- on the order of several minutes total, paid once
+# here, never in the request path. Depends on buildings.parquet,
+# pois.parquet/anchor_times.json, and citywide.json already existing (the
+# three RUN steps above) -- warm_caches() re-warms each defensively (a
+# no-op once already baked) so this step is safe to run standalone too.
+# Result: data/derived/cells/<res6-shard>.json (~22 shards) served flat by
+# GET /api/cell/{h3} -- see api.py.
+RUN uv run python -c "from bearings import cellprofile; cellprofile.warm_caches()"
+
 ENV PATH="/app/.venv/bin:$PATH"
 EXPOSE 8000
 

@@ -90,14 +90,29 @@ uv sync
 uv run uvicorn bearings.api:app --host 127.0.0.1 --port 8000
 ```
 
-Six endpoints:
+Seven endpoints:
 
 - `GET /api/health` -> `{"status": "ok", "warm": bool}`
-- `GET /api/profile?address=<str>` -> the full profile (transit, amenities, safety, quiet, green, building); every one of those six blocks carries its own `source`
+- `GET /api/profile?address=<str>` -> the full profile (transit, amenities, safety, quiet, green, building); every one of those six blocks carries its own `source`. Live compute, 3-10s (see "Precompute vs. live compute" below) -- kept as a fallback; the frontend has not yet been rewired to the faster path below (SPEC-precompute-v2.md Phase 2, not yet shipped).
 - `POST /api/factcheck` body `{"address": str, "listing_text": str}` -> claim-by-claim fact check of listing marketing copy against the real data
 - `GET /api/map?address=<str>` -> real map geometry for the neighbourhood around one address: real building footprints and street centrelines (NYC Open Data, baked at build time -- `src/bearings/sources/buildings.py` / `streets.py`), GTFS subway/PATH alignments and stations (each carrying its real served routes), and five real per-H3-cell metrics for the k=3 disk around the subject cell -- 311 noise, Overture daily-life amenity counts, living-street-tree counts, median PLUTO building age, and nearby-transit-station counts (see `src/bearings/mapgeo.py`'s own module docstring for the full per-metric breakdown). Feeds the navigable map's local overlay and metric dropdown (`web/src/components/MapView.tsx`).
 - `GET /api/citywide` -> address-independent map data, fetched once by the front end rather than once per address: every NTA neighbourhood label (262) and every NYPD precinct's boundary + CompStat crime total, plus each precinct's percentile position among all 78 (relative-to-NYC, not absolute -- see the "Known Simplifications" section below) -- see `src/bearings/citywide.py`.
+- `GET /api/cell/{h3}` -> a **precomputed** block-level profile for one real H3 res-9 cell (noise, amenities, trees, building age, transit incl. real per-cell commute to all four anchors, crime, aggregated open Class C HPD violations) -- a flat read against an already-baked shard, no live external calls, target well under 1s (see "Precompute vs. live compute" below and `src/bearings/cellprofile.py`'s own module docstring for exactly what's included and what's deliberately deferred). 404s for a cell this build never baked (open water, or not a real H3 index at all) -- never a fabricated empty profile.
 - `GET /tiles/nyc-basemap.pmtiles` (and the rest of `data/derived/`) -> the self-hosted PMTiles NYC basemap the map renders, served with Range-request support so MapLibre's `pmtiles.js` client only ever fetches the byte spans it needs, not the whole 99MB file -- see `src/bearings/sources/basemap.py`.
+
+### Precompute vs. live compute
+
+`/api/profile` computes everything live, per request -- geocode, POI lookup,
+Dijkstra-derived transit times, a live CompStat fetch. On Render's free tier
+(0.1 CPU) that is measured at 6-10s cold. `/api/cell/{h3}` instead reads a
+JSON blob baked once at build time (`bearings.cellprofile.warm_caches()`,
+run in the same Docker build step as the citywide crime bake) -- a flat
+dict lookup, no per-request compute at all. This is SPEC-precompute-v2.md's
+Phase 1: the fix for both "load a report in under a second" and "click any
+map cell to see its own report" is the same fix, because both just need a
+fast keyed lookup instead of a live compute. Phase 2 (rewiring the frontend
+to call this instead of `/api/profile`) has not shipped yet -- `/api/profile`
+stays live and unchanged in the meantime.
 
 `/api/factcheck` is the rule this whole project is built around, made
 concrete. One real claim from a live run against `1520 Sedgwick Ave, Bronx`
@@ -506,8 +521,13 @@ src/bearings/
                           # street hairlines, per-H3-cell 311 density
   citywide.py             # address-independent map data: NTA labels + precinct
                            # boundaries/crime, baked once, not once per address
+  cellprofile.py          # per-H3-cell block-level profile precompute (SPEC-
+                           # precompute-v2.md Phase 1) -- noise/amenities/trees/
+                           # building age/transit+commute/crime/HPD hazards,
+                           # baked once per real cell, served as a flat lookup
   api.py                # FastAPI wrapper: GET /api/profile, POST /api/factcheck,
-                        # GET /api/map, GET /api/citywide, GET /tiles/*
+                        # GET /api/map, GET /api/citywide, GET /api/cell/{h3},
+                        # GET /tiles/*
   cli.py                 # `bearings profile "<address>"`
   factcheck.py           # rule-based claim extraction + evidence lookup
 

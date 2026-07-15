@@ -33,6 +33,15 @@ name: CI
 # geocoder, but were never added to this list either -- a real gap, not
 # touched here since it's outside this dispatch's scope).
 #
+# Also excluded, added 2026-07-15: test_cellprofile.py (bearings.cellprofile,
+# SPEC-precompute-v2.md Phase 1) -- its own fixture geocodes the Empire State
+# Building address the same way test_mapgeo.py's does, so it chains through
+# the geocoder for the same reason. It is also, independently, the single
+# heaviest test file in this repo on a cold data/ directory (five full
+# citywide dataset fetches -- 311 noise, street trees, PLUTO, HPD -- a real
+# multi-minute bake, see cellprofile.py's own module docstring), which alone
+# would argue against a CI job even if it didn't touch the geocoder.
+#
 # DO NOT "fix" this by adding the excluded files back in. If you need to
 # verify the geocoder-chained paths, run them locally:
 #   uv run pytest tests/test_geocode.py tests/test_profile.py tests/test_api.py tests/test_factcheck.py

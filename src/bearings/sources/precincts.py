@@ -10,6 +10,7 @@ from functools import lru_cache
 
 import duckdb
 import httpx
+import pandas as pd
 
 from bearings import config, staleness
 
@@ -49,6 +50,43 @@ def precinct_for(lat: float, lng: float) -> int | None:
         [lng, lat],  # note: ST_Point takes (x, y) = (lng, lat)
     ).fetchone()
     return int(row[0]) if row else None
+
+
+def precincts_for_points(points: list[tuple[str, float, float]]) -> dict[str, int | None]:
+    """Batched point-in-polygon: {key: precinct | None} for every (key, lat,
+    lng) in `points`, in ONE spatial join instead of one precinct_for()
+    call per point -- built for the per-cell precompute bake (bearings.
+    cellprofile), which needs this for ~7,000 cell centroids at once.
+
+    Registers `points` as a real DuckDB-visible pandas DataFrame
+    (`con.register()`) rather than passing the three columns through
+    positional `unnest($1), unnest($2), unnest($3)` parameters -- a live
+    probe found the unnest form silently drops/merges a handful of rows
+    (6,997 rows back for 7,017 real distinct input keys, no error), while
+    `register()` returns exactly one row per input key, every time, and
+    runs roughly 20x faster besides (DuckDB's join planner treats a
+    registered relation very differently from three parallel array
+    parameters). A point outside every precinct polygon (open water, a gap
+    at simplified boundary edges, Rikers Island) maps to `None` -- never a
+    guessed nearest precinct.
+    """
+    if not points:
+        return {}
+    con = _con()
+    df = pd.DataFrame(points, columns=["key", "lat", "lng"])
+    con.register("_pts", df)
+    try:
+        rows = con.execute(
+            """
+            SELECT _pts.key, MIN(pr.precinct) AS precinct
+            FROM _pts
+            LEFT JOIN precincts pr ON ST_Contains(pr.geom, ST_Point(_pts.lng, _pts.lat))
+            GROUP BY _pts.key
+            """
+        ).fetchall()
+    finally:
+        con.unregister("_pts")
+    return {key: (int(pct) if pct is not None else None) for key, pct in rows}
 
 
 def all_precinct_numbers() -> list[int]:

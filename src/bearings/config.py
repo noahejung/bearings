@@ -121,6 +121,11 @@ NTA_CACHE_MAX_AGE_S = 365 * 86400  # NTA boundaries are redrawn once a decade
 # a long-lived local dev/ directory still gets a loud nudge eventually.
 BASEMAP_CACHE_MAX_AGE_S = 30 * 86400
 CITYWIDE_CACHE_MAX_AGE_S = 10 * 86400  # matches COMPSTAT_CACHE_MAX_AGE_S below
+# Per-cell profile precompute (bearings.cellprofile) -- bundles crime, so
+# the same cadence as CITYWIDE_CACHE_MAX_AGE_S/COMPSTAT_CACHE_MAX_AGE_S is
+# the binding freshness constraint (noise/trees/PLUTO/HPD all change slower
+# than weekly CompStat republishing).
+CELL_PROFILE_CACHE_MAX_AGE_S = 10 * 86400
 # Building footprints and street centrelines change rarely (new construction,
 # demolitions, occasional street re-mapping) -- same 30-day slack as the POI
 # table, which is baked from a similarly-official, similarly-infrequent source.

@@ -5,9 +5,12 @@ app's startup (cache warm-up) once for the module and shuts it down at the
 end -- exactly the boot path the real server takes, just synchronous.
 """
 
+import time
+
 import pytest
 from fastapi.testclient import TestClient
 
+from bearings import cells, geocode
 from bearings.api import app
 
 EMPIRE_STATE = "350 5th Ave, Manhattan"
@@ -241,6 +244,62 @@ def test_citywide_crime_is_shaded_relative_to_the_city(client):
     for p in with_crime:
         assert 0.0 <= p["crime"]["crime_percentile"] <= 100.0
     assert len(body["crime_caveat"]) > 40
+
+
+def test_cell_returns_the_precomputed_block_level_profile(client):
+    loc = geocode.geocode(EMPIRE_STATE)
+    h3 = cells.cell_for(loc.lat, loc.lng)
+    resp = client.get(f"/api/cell/{h3}")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["h3"] == h3
+    assert set(body) == {
+        "h3",
+        "shard",
+        "centroid",
+        "noise",
+        "amenities",
+        "trees",
+        "building_age",
+        "transit",
+        "safety",
+        "housing_hazards",
+    }
+    # A genuinely dense Midtown cell -- real, non-trivial signal, not just
+    # structural zeros (same fixture-address reasoning test_mapgeo.py and
+    # test_cellprofile.py already use).
+    assert body["noise"]["complaints_12mo"] > 0
+    assert body["safety"]["precinct"] == 14
+
+
+def test_cell_is_fast_a_pure_lookup_not_a_live_compute(client):
+    # The whole point of SPEC-precompute-v2.md's Phase 1: this must be a
+    # flat read against an already-baked shard, not a live external call --
+    # a real, timed regression guard, not just an assumption. Generous
+    # relative to the sub-second production target (this dev machine's own
+    # /api/profile is 3-10s live) so this stays robust to slow CI/dev
+    # hardware without ever tolerating a live-compute-shaped 1s+ response.
+    loc = geocode.geocode(EMPIRE_STATE)
+    h3 = cells.cell_for(loc.lat, loc.lng)
+    start = time.monotonic()
+    resp = client.get(f"/api/cell/{h3}")
+    elapsed = time.monotonic() - start
+    assert resp.status_code == 200
+    assert elapsed < 2.0
+
+
+def test_cell_unknown_h3_is_404_not_500(client):
+    # Real syntax, no baked profile (well off Rockaway, open ocean -- see
+    # test_cellprofile.py's own ocean fixture).
+    ocean_cell = cells.cell_for(40.40, -73.75)
+    resp = client.get(f"/api/cell/{ocean_cell}")
+    assert resp.status_code == 404
+    assert "detail" in resp.json()
+
+
+def test_cell_garbage_h3_string_is_404_not_500(client):
+    resp = client.get("/api/cell/not-a-real-h3-index")
+    assert resp.status_code == 404
 
 
 def test_tiles_serves_the_real_basemap_archive_with_range_support(client):

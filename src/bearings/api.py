@@ -24,7 +24,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from bearings import citywide, config, factcheck, geocode, mapgeo, profile, transit
+from bearings import cellprofile, citywide, config, factcheck, geocode, mapgeo, profile, transit
 from bearings.sources import basemap, compstat, overture
 
 logging.basicConfig(
@@ -39,12 +39,6 @@ logger = logging.getLogger("bearings.api")
 # contract, missing and zero must never be confused. Filled in explicitly
 # below so every response carries all eight, real zeros included.
 AMENITY_CATEGORIES = sorted(set(overture.CATEGORY_MAP.values()))
-
-TRANSIT_CAVEAT = (
-    "In-vehicle time plus a nominal transfer penalty. Excludes the walk "
-    "from your door and the wait on the platform. Treat as a floor, not "
-    "a door-to-door estimate."
-)
 
 # Mutable, not a constant: flips to True once warm_up() finishes. A plain
 # module-level dict rather than a bare global so api.py's own code and its
@@ -62,7 +56,7 @@ def _to_contract(prof: dict) -> dict:
     carry one each). Per SourceTag.tsx's own non-negotiable: a stat without
     a citation is a bug."""
     transit_block = dict(prof["transit"])
-    transit_block["caveat"] = TRANSIT_CAVEAT
+    transit_block["caveat"] = transit.TRANSIT_CAVEAT
     transit_block["source"] = dict(transit.SOURCE)
 
     # Nested (not flat) deliberately: every value in `counts` is a real int
@@ -110,6 +104,9 @@ async def lifespan(_app: FastAPI):
 
     logger.info("  citywide map data (neighbourhood labels, precinct crime)...")
     citywide.warm_caches()
+
+    logger.info("  per-cell profiles (block-level report precompute, GET /api/cell/{h3})...")
+    cellprofile.warm_caches()
 
     _state["warm"] = True
     logger.info("all caches warm in %.1fs -- ready to serve", time.monotonic() - start)
@@ -171,6 +168,22 @@ def get_map(address: str = Query(..., min_length=1)) -> dict:
     except geocode.GeocodeError as e:
         raise HTTPException(status_code=422, detail=str(e)) from e
     return mapgeo.map_geometry(loc.lat, loc.lng, loc.bbl)
+
+
+@app.get("/api/cell/{h3}")
+def get_cell(h3: str) -> dict:
+    """A precomputed block-level profile for one real H3 res-9 cell -- a
+    pure lookup against the baked shard (bearings.cellprofile), no live
+    external calls, no per-request compute. This is the fast path
+    SPEC-precompute-v2.md's Phase 1 exists to add: /api/profile is a live
+    6-10s compute; this is a flat JSON read, target well under 1s. 404s for
+    an h3 string that isn't one of this build's real cells (see
+    cellprofile.py's module docstring for how "real" is decided) -- never a
+    fabricated empty-but-200 profile."""
+    prof = cellprofile.profile_for(h3)
+    if prof is None:
+        raise HTTPException(status_code=404, detail=f"no baked profile for cell {h3!r}")
+    return prof
 
 
 @app.get("/api/citywide")
