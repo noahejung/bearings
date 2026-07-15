@@ -284,7 +284,7 @@ describe("App (full mount)", () => {
     expect(screen.getByRole("heading", { name: /precinct/i })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: /311 noise complaints/i })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: /living street trees/i })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: /what could exist here/i })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: /building age and violations/i })).toBeInTheDocument();
 
     // Real values actually reached the DOM, not just the field chrome.
     expect(screen.getByText("34 St-Herald Sq")).toBeInTheDocument();

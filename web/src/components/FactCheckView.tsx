@@ -63,11 +63,10 @@ export function FactCheckView({
           Check a listing's claims against the record above.
         </h2>
         <p className="factcheck__lede">
-          Every marketing phrase gets matched to a predicate and checked against the same
-          data behind the report above. Four outcomes are possible — confirmed,
-          contradicted, no record, or genuinely unfalsifiable. That last one isn't a
-          failure: some claims really can't be checked against any dataset, and saying so
-          plainly is the honest answer.
+          Every marketing phrase is matched to a predicate and checked against the same
+          data behind the report above. Four outcomes are possible: confirmed,
+          contradicted, no record on file, or unfalsifiable — a claim that no dataset
+          here can check.
         </p>
       </header>
 

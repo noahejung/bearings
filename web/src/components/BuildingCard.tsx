@@ -24,7 +24,7 @@ export function BuildingCard({ building }: { building: Building }) {
       <header className="field__head">
         <div>
           <h2 className="field__title" id="building-heading">
-            What could exist here
+            Building age and violations
           </h2>
         </div>
         <Stamp variant={hasRecord ? "confirmed" : "no_data"} compact />
