@@ -35,7 +35,7 @@ export function AddressSearch({
       {!compact && (
         <div className="search__intro">
           <h2 className="search__headline">
-            What's it actually like <em>there?</em>
+            See what <em>public records</em> say about daily life at an address.
           </h2>
           <p className="search__sub">
             Real train times, not distance to the platform. 311 complaints, tree counts,

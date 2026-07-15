@@ -14,10 +14,8 @@ export function Header({ cell }: { cell?: string | null }) {
         <span>{cell ? `H3 · ${cell}` : "—"}</span>
       </div>
       <a className="masthead" href="/">
-        <h1 className="masthead__word">
-          Bearings<sup>™</sup>
-        </h1>
-        <p className="masthead__tag">Get your bearings before you sign</p>
+        <h1 className="masthead__word">Bearings</h1>
+        <p className="masthead__tag">Enter a New York City address to see what public records say about it.</p>
       </a>
     </>
   );

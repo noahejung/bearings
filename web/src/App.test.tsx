@@ -153,7 +153,7 @@ describe("App (full mount)", () => {
     expect(screen.getByLabelText(/H3 cell map/i)).toBeInTheDocument();
 
     // The fact-check section is present and wired to the same address.
-    expect(screen.getByRole("heading", { name: /paste a listing/i })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: /check a listing/i })).toBeInTheDocument();
 
     // NO-LARP regression (VISUAL.md §1, 2026-07-14): the fictional bureau,
     // catalogue codes, and refusals line must never come back.

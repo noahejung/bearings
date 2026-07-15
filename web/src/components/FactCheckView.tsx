@@ -60,7 +60,7 @@ export function FactCheckView({
       <header className="report__head">
         <p className="report__kicker mono">The fact-check</p>
         <h2 className="report__title" id="factcheck-heading">
-          Paste a listing. We'll pull the record on every claim.
+          Check a listing's claims against the record above.
         </h2>
         <p className="factcheck__lede">
           Every marketing phrase gets matched to a predicate and checked against the same
