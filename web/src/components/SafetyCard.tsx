@@ -1,4 +1,4 @@
-import { crimeRelativeLabel, formatPercentile, ordinalSuffix } from "../lib/crime";
+import { crimeRelativeLabel, formatPercentile } from "../lib/crime";
 import type { Safety } from "../types";
 import { SourceTag } from "./SourceTag";
 import { Stamp } from "./Stamp";
@@ -36,9 +36,9 @@ export function SafetyCard({ safety }: { safety: Safety }) {
   const hasData = typeof safety.precinct === "number";
 
   const rows: Row[] = [
-    { label: "Robbery, YTD", ytd: safety.robbery_ytd, pct: safety.robbery_pct },
-    { label: "Felony assault, YTD", ytd: safety.felony_assault_ytd, pct: safety.felony_assault_pct },
-    { label: "Total major crime, YTD", ytd: safety.total_ytd, pct: safety.total_pct },
+    { label: "Robbery, so far this year", ytd: safety.robbery_ytd, pct: safety.robbery_pct },
+    { label: "Felony assault, so far this year", ytd: safety.felony_assault_ytd, pct: safety.felony_assault_pct },
+    { label: "Total major crime, so far this year", ytd: safety.total_ytd, pct: safety.total_pct },
   ];
 
   return (
@@ -46,14 +46,14 @@ export function SafetyCard({ safety }: { safety: Safety }) {
       <header className="field__head">
         <div>
           <h2 className="field__title" id="safety-heading">
-            {hasData ? `${safety.precinct}${ordinalSuffix(safety.precinct!)} Precinct` : "Precinct crime"}
+            Crime near here
           </h2>
         </div>
         <Stamp variant={hasData ? "confirmed" : "no_data"} compact />
       </header>
 
       {!hasData ? (
-        <p className="field__empty">No NYPD precinct match for this location.</p>
+        <p className="field__empty">We don&rsquo;t have crime data for this address yet.</p>
       ) : (
         <>
           {typeof safety.crime_percentile === "number" && (
@@ -62,8 +62,8 @@ export function SafetyCard({ safety }: { safety: Safety }) {
                 {crimeRelativeLabel(safety.crime_percentile)}
               </span>
               <span className="safety-relative__detail">
-                {formatPercentile(safety.crime_percentile)} for major-crime volume, among all NYC
-                precincts.
+                Ranks {formatPercentile(safety.crime_percentile)} for reported major crime,
+                compared with the rest of New York City.
               </span>
             </p>
           )}
@@ -81,9 +81,9 @@ export function SafetyCard({ safety }: { safety: Safety }) {
             </tbody>
           </table>
           <p className="field__provenance">
-            NYPD CompStat, week ending {safety.week_ending} · robbery and felony assault only —
-            not a comprehensive crime picture, and "total" folds in categories not broken out
-            individually.
+            NYPD crime data, week ending {safety.week_ending} · robbery and felony assault only —
+            not a full picture of crime, and the "total" also includes other crime categories not
+            listed separately here.
             {safety.crime_caveat && (
               <>
                 <br />

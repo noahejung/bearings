@@ -73,7 +73,7 @@ export default function App() {
 
   return (
     <div className="wrap">
-      <Header cell={profile?.cell} />
+      <Header address={profile?.address} />
 
       <main>
         <AddressSearch

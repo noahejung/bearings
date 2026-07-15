@@ -81,8 +81,8 @@ export function TransitCard({ transit }: { transit: Transit }) {
         {transit.caveat}
       </p>
       <p className="field__provenance">
-        MTA GTFS + PATH GTFS · median weekday 08:00 departure · one-to-all Dijkstra from four
-        fixed anchors.
+        Real MTA and PATH train schedules · typical weekday 8am departure · fastest calculated
+        route to four key destinations in the city.
         <br />
         <SourceTag source={transit.source} />
       </p>

@@ -68,6 +68,6 @@ describe("report cards cite a real source", () => {
   it("SafetyCard renders no citation (and does not crash) when there is no precinct match", () => {
     render(<SafetyCard safety={SAFETY_NO_MATCH} />);
     expect(screen.queryByRole("link")).not.toBeInTheDocument();
-    expect(screen.getByText(/No NYPD precinct match/)).toBeInTheDocument();
+    expect(screen.getByText(/We don.t have crime data/i)).toBeInTheDocument();
   });
 });

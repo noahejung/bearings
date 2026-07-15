@@ -42,9 +42,9 @@ export function AmenitiesCard({ amenities }: { amenities: Amenities }) {
         ))}
       </ul>
       <p className="field__provenance">
-        Overture Maps Places, current release · counted within the address's H3 cell and its
-        immediate neighbours (a hex disk, not the real walkable street network — can over- or
-        under-count near rivers, parks, or highways).
+        Overture Maps Places, current release · counted in this block and the blocks right
+        around it, as the crow flies rather than actual walking routes — can over- or
+        under-count near rivers, parks, or highways.
         <br />
         <SourceTag source={amenities.source} />
       </p>

@@ -53,11 +53,11 @@ interface MetricDef {
 
 const METRICS: MetricDef[] = [
   { id: "none", label: "Off", resolution: "none", status: "ship" },
-  { id: "noise", label: "311 noise complaints", resolution: "cell", status: "ship", cellField: "noise" },
-  { id: "crime", label: "Major crime (CompStat, per precinct)", resolution: "precinct", status: "ship" },
+  { id: "noise", label: "Noise complaints", resolution: "cell", status: "ship", cellField: "noise" },
+  { id: "crime", label: "Major crime (by police area)", resolution: "precinct", status: "ship" },
   {
     id: "amenities",
-    label: "Grocery & daily-life amenities",
+    label: "Grocery & everyday places",
     resolution: "cell",
     status: "ship",
     cellField: "amenities",
@@ -65,14 +65,14 @@ const METRICS: MetricDef[] = [
   { id: "trees", label: "Living street trees", resolution: "cell", status: "ship", cellField: "trees" },
   {
     id: "building_age",
-    label: "Building age (median per cell)",
+    label: "Building age (typical for the block)",
     resolution: "cell",
     status: "ship",
     cellField: "building_age_years",
   },
   {
     id: "transit_access",
-    label: "Transit access (proxy, not commute time)",
+    label: "Transit access (an estimate, not exact commute time)",
     resolution: "cell",
     status: "proxy",
     cellField: "transit_access",
@@ -83,7 +83,7 @@ const METRICS: MetricDef[] = [
     resolution: "none",
     status: "disabled",
     reason:
-      "FEMA's flood-zone service answers one point at a time, with no bounding-box query, and fails on a real share of live requests -- not reliable enough to shade a map with.",
+      "The federal government's flood-risk map can only be checked one address at a time, and it fails on enough real requests that it isn't reliable enough to shade a whole map with.",
   },
   {
     id: "rodents",
@@ -91,30 +91,30 @@ const METRICS: MetricDef[] = [
     resolution: "none",
     status: "disabled",
     reason:
-      "Only inspected buildings appear in this dataset -- a quiet cell could mean no rodents, or could mean nobody filed a complaint there. No honest citywide surface exists.",
+      "Only inspected buildings show up in this data — a quiet-looking block could mean no rodents, or could just mean nobody filed a complaint there. There's no fair way to show this across the whole city yet.",
   },
   {
     id: "heat",
     label: "Heat / hot-water complaints",
     resolution: "none",
     status: "disabled",
-    reason: "Per-building complaint data, not a census of buildings -- the same gap as rodent inspections above.",
+    reason: "This is complaint data for individual buildings, not a full survey of every building — the same gap as the rodent data above.",
   },
   {
     id: "bedbugs",
     label: "Bedbug filings",
     resolution: "none",
     status: "disabled",
-    reason: "Annual filings are per-building and voluntary -- absence of a filing is not evidence of absence.",
+    reason: "Landlords file these once a year, and it's voluntary — no filing doesn't mean no bedbugs, just that nobody reported one.",
   },
 ];
 
 // Label + unit for each cell metric's hover readout.
 const CELL_METRIC_READOUT: Record<string, { label: string; unit: string }> = {
-  noise: { label: "311 noise · trailing 12mo", unit: "calls" },
-  amenities: { label: "Grocery & daily-life amenities · in this cell", unit: "places" },
-  trees: { label: "Living street trees · in this cell", unit: "trees" },
-  building_age: { label: "Median building year built", unit: "" },
+  noise: { label: "Noise complaints · last 12 months", unit: "calls" },
+  amenities: { label: "Grocery & everyday places · in this block", unit: "places" },
+  trees: { label: "Living street trees · in this block", unit: "trees" },
+  building_age: { label: "Typical building year built", unit: "" },
   transit_access: { label: "Subway/PATH stations within ~6min walk", unit: "stations" },
 };
 
@@ -305,18 +305,19 @@ function CellReadout({ cell, metric, source }: { cell: HoveredCell; metric: Metr
         <>
           <dt>Relative to this neighbourhood</dt>
           <dd className="small">
-            {Math.round(cell.percentile)}
-            {ordinalSuffix(Math.round(cell.percentile))} percentile among the cells shown here -- not citywide.
+            Ranks {Math.round(cell.percentile)}
+            {ordinalSuffix(Math.round(cell.percentile))} out of 100 among the blocks shown here —
+            not compared to the rest of the city.
           </dd>
         </>
       )}
-      <dt>Cell area</dt>
+      <dt>Area of this block</dt>
       <dd className="small">0.105 km²</dd>
       {cell.isSubject && (
         <>
           <dt>Status</dt>
           <dd className="small" style={{ color: RED }}>
-            SUBJECT CELL
+            THIS ADDRESS&rsquo;S BLOCK
           </dd>
         </>
       )}
@@ -324,7 +325,7 @@ function CellReadout({ cell, metric, source }: { cell: HoveredCell; metric: Metr
         <>
           <dt>Note</dt>
           <dd className="small">
-            A proxy, not a claim about commute time -- see the metric picker's own description.
+            An estimate, not an exact commute time — see the note above for what this measures.
           </dd>
         </>
       )}
@@ -349,9 +350,9 @@ function PrecinctReadout({
 }) {
   return (
     <dl>
-      <dt>NYPD Precinct</dt>
+      <dt>Police area</dt>
       <dd>{precinct.precinct}</dd>
-      <dt>Major crime, citywide</dt>
+      <dt>Crime here, compared to the city</dt>
       <dd>
         {precinct.crimePercentile === null ? (
           <span style={{ fontSize: 13, fontStyle: "italic", color: STEEL }}>NO DATA</span>
@@ -361,10 +362,10 @@ function PrecinctReadout({
       </dd>
       {precinct.crimePercentile !== null && (
         <>
-          <dt>Percentile · YTD count</dt>
+          <dt>Rank · crimes so far this year</dt>
           <dd className="small">
             {formatPercentile(precinct.crimePercentile)} · {precinct.totalYtd?.toLocaleString()} major
-            crimes YTD
+            crimes so far this year
           </dd>
         </>
       )}
@@ -671,7 +672,7 @@ export function MapView({ address }: { address: string }) {
       for (const p of visible) {
         const el = document.createElement("div");
         el.className = "maplabel maplabel--precinct";
-        el.textContent = `Precinct ${p.precinct}`;
+        el.textContent = `Police area ${p.precinct}`;
         labelMarkersRef.current.push(
           new maplibregl.Marker({ element: el, anchor: "center" }).setLngLat([p.lng, p.lat]).addTo(map),
         );
@@ -689,18 +690,18 @@ export function MapView({ address }: { address: string }) {
 
   const legend = useMemo(
     () => [
-      { swatch: { background: STEEL, opacity: 0.34 }, label: "Building footprint" },
-      { swatch: { background: INK, height: 2 }, label: "Street, by road class" },
-      { swatch: { background: RED }, label: "Subway / PATH — real alignment" },
+      { swatch: { background: STEEL, opacity: 0.34 }, label: "Buildings" },
+      { swatch: { background: INK, height: 2 }, label: "Streets, by size" },
+      { swatch: { background: RED }, label: "Subway & PATH lines" },
       {
         swatch: { border: `1px solid ${INK}`, background: "none" },
-        label: "H3 res-9 cell · 0.105 km² · subject in red",
+        label: "Map block · about 0.105 km² · this address's block in red",
       },
       ...(activeMetric.resolution === "precinct"
         ? [
             {
               swatch: { background: RED, opacity: 0.34 },
-              label: "Precinct fill · percentile vs. NYC, median neutral",
+              label: "Crime shading · compared with the rest of NYC, an average area is neutral",
             },
           ]
         : []),
@@ -708,7 +709,7 @@ export function MapView({ address }: { address: string }) {
         ? [
             {
               swatch: { background: RED, opacity: 0.34 },
-              label: `${activeMetric.label} · percentile within this neighbourhood`,
+              label: `${activeMetric.label} · relative to the surrounding blocks`,
             },
           ]
         : []),
@@ -736,13 +737,13 @@ export function MapView({ address }: { address: string }) {
           ))}
         </select>
         {activeMetric.status === "proxy" && (
-          <span className="mapfield__metricnote small">Proxy, not a claim about commute time.</span>
+          <span className="mapfield__metricnote small">An estimate, not an exact commute time.</span>
         )}
       </div>
       {METRICS.some((m) => m.status === "disabled") && (
         <p className="mapfield__note mono">
-          Greyed options have no honest citywide value this report can compute yet — hover an option for the
-          real reason.
+          Greyed-out options don&rsquo;t have reliable data for the whole city yet — hover one for
+          the real reason.
         </p>
       )}
 
@@ -753,7 +754,7 @@ export function MapView({ address }: { address: string }) {
               ref={containerRef}
               className="mapfield__map"
               role="img"
-              aria-label="Navigable map of New York City, centred on the neighbourhood around the searched address, with real building footprints, streets, subway alignments, and H3 noise cells"
+              aria-label="Navigable map of New York City, centred on the neighbourhood around the searched address, with real building outlines, streets, subway lines, and noise data by block"
             />
           </div>
           <div className="mapfield__legend">
@@ -769,18 +770,18 @@ export function MapView({ address }: { address: string }) {
         </div>
 
         <div className="readout">
-          <h3>Map readout</h3>
+          <h3>What&rsquo;s here</h3>
           {activeCellReadout ? (
             <CellReadout cell={hoveredCell} metric={activeMetric} source={cellMetricSource} />
           ) : activePrecinctReadout ? (
             <PrecinctReadout precinct={hoveredPrecinct} source={crimeSource} caveat={crimeCaveat} />
           ) : (
             <p className="readout__empty">
-              Hover a cell{citywide ? " or precinct" : ""}.
+              Hover a block{citywide ? " or area" : ""}.
               <br />
               <br />
-              Pan and zoom the map freely — the base layer covers all of NYC. The
-              highlighted neighbourhood is the one around your searched address.
+              Pan and zoom freely — the map covers all of New York City. The highlighted area is
+              the neighborhood around your searched address.
             </p>
           )}
         </div>

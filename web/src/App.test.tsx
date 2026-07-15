@@ -287,15 +287,23 @@ describe("App (full mount)", () => {
     fireEvent.change(input, { target: { value: ADDRESS } });
     fireEvent.click(screen.getByRole("button", { name: /pull the record/i }));
 
-    await waitFor(() => expect(screen.getByText(PROFILE.address)).toBeInTheDocument());
+    // The address now legitimately appears twice once a profile loads --
+    // once in the header band (VISUAL.md §1's 2026-07-15 newcomer addendum
+    // replaced the internal H3 identifier there with the address itself)
+    // and once as the report's own heading -- so this asserts on the
+    // heading specifically rather than plain text, which would now match
+    // both nodes.
+    await waitFor(() =>
+      expect(screen.getByRole("heading", { name: PROFILE.address })).toBeInTheDocument(),
+    );
 
     // The six real report fields, named by their own heading -- VISUAL.md
     // §1's NO-LARP rule cut the invented "§0X·XXX" section codes, so the
     // metric's own label is the only thing that identifies it now.
     expect(screen.getByRole("heading", { name: /getting around/i })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: /within a 10-minute walk/i })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: /precinct/i })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: /311 noise complaints/i })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: /crime near here/i })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: /noise complaints/i })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: /living street trees/i })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: /building age and violations/i })).toBeInTheDocument();
 
@@ -308,8 +316,8 @@ describe("App (full mount)", () => {
     // (VISUAL.md §5, 2026-07-15): the safety card's headline is the
     // citywide framing, and the raw count (200) survives only as a
     // secondary line in the table below it.
-    expect(screen.getByText(/More major crimes reported than most NYC precincts/i)).toBeInTheDocument();
-    expect(screen.getByText(/92nd percentile citywide/i)).toBeInTheDocument();
+    expect(screen.getByText(/More major crimes reported than most of New York City/i)).toBeInTheDocument();
+    expect(screen.getByText(/92nd out of 100/i)).toBeInTheDocument();
 
     // The map field rendered with the real fetched geometry, not stuck loading
     // -- MapView.tsx now drives a real maplibre-gl map (mocked above only
@@ -330,18 +338,17 @@ describe("App (full mount)", () => {
     const metricSelect = screen.getByLabelText(/shade the map by/i) as HTMLSelectElement;
     expect(metricSelect.value).toBe("none");
     const options = Array.from(metricSelect.options);
-    expect(options.find((o) => /311 noise/i.test(o.text))?.disabled).toBe(false);
+    expect(options.find((o) => /noise complaints/i.test(o.text))?.disabled).toBe(false);
     const floodOption = options.find((o) => /flood zone/i.test(o.text));
     expect(floodOption?.disabled).toBe(true);
-    expect(floodOption?.title).toMatch(/no bounding-box query/i);
+    expect(floodOption?.title).toMatch(/one address at a time/i);
     const rodentOption = options.find((o) => /rodent/i.test(o.text));
     expect(rodentOption?.disabled).toBe(true);
 
-    // The raw H3 index string is gone from the map's hover readout
-    // specifically (the report header above still legitimately shows
-    // "H3 {cell}" as a real identifier -- a different context the dispatch
-    // did not ask to change; only "the readout" was in scope).
-    const readoutPanel = screen.getByText(/Map readout/i).closest(".readout");
+    // The raw H3 index string is gone from both the header band and the
+    // map's hover readout (VISUAL.md §1's 2026-07-15 newcomer addendum --
+    // the header now shows the loaded address, not an internal cell ID).
+    const readoutPanel = screen.getByText(/What.s here/i).closest(".readout");
     expect(readoutPanel?.textContent).not.toMatch(/892a/);
 
     // The fact-check section is present and wired to the same address.
@@ -388,10 +395,18 @@ describe("App (full mount)", () => {
     fireEvent.change(screen.getByPlaceholderText(/5TH AVE/i), { target: { value: ADDRESS } });
     fireEvent.click(screen.getByRole("button", { name: /pull the record/i }));
 
-    await waitFor(() => expect(screen.getByText(PROFILE.address)).toBeInTheDocument());
+    // The address now legitimately appears twice once a profile loads --
+    // once in the header band (VISUAL.md §1's 2026-07-15 newcomer addendum
+    // replaced the internal H3 identifier there with the address itself)
+    // and once as the report's own heading -- so this asserts on the
+    // heading specifically rather than plain text, which would now match
+    // both nodes.
+    await waitFor(() =>
+      expect(screen.getByRole("heading", { name: PROFILE.address })).toBeInTheDocument(),
+    );
 
-    expect(screen.getByText(/No PLUTO\/HPD record/)).toBeInTheDocument();
-    expect(screen.getByText(/No NYPD precinct match/)).toBeInTheDocument();
+    expect(screen.getByText(/We don.t have property records/i)).toBeInTheDocument();
+    expect(screen.getByText(/We don.t have crime data/i)).toBeInTheDocument();
     // At least one real "NO DATA" stamp rendered -- the dashed steel gap,
     // never a silently-guessed zero.
     expect(screen.getAllByText("NO DATA").length).toBeGreaterThan(0);

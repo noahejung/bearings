@@ -31,7 +31,7 @@ export function BuildingCard({ building }: { building: Building }) {
       </header>
 
       {!hasRecord || violations === null ? (
-        <p className="field__empty">No PLUTO/HPD record for this lot.</p>
+        <p className="field__empty">We don&rsquo;t have property records for this address yet.</p>
       ) : (
         <>
           <p className="building__note">{building.era_note}</p>
@@ -45,28 +45,29 @@ export function BuildingCard({ building }: { building: Building }) {
               <span className="violation__count">
                 <Stat value={violations.class_a} />
               </span>
-              <span className="violation__label">Class A</span>
+              <span className="violation__label">Minor problems</span>
             </div>
             <div className="violation">
               <span className="violation__count">
                 <Stat value={violations.class_b} />
               </span>
-              <span className="violation__label">Class B</span>
+              <span className="violation__label">Hazardous problems</span>
             </div>
             <div className={`violation${violations.class_c > 0 ? " violation--flag" : ""}`}>
               <span className="violation__count">
                 <Stat value={violations.class_c} />
               </span>
               <span className="violation__label">
-                Class C{violations.class_c > 0 && <em> — immediately hazardous</em>}
+                Serious safety problems
+                {violations.class_c > 0 && <em> — flagged by the city, not fixed yet</em>}
               </span>
             </div>
           </div>
         </>
       )}
       <p className="field__provenance">
-        NYC PLUTO + HPD Housing Maintenance Code Violations, current release · open violations
-        by class.
+        New York City property and building-safety records, current release · open safety issues
+        by severity.
         <br />
         <SourceTag source={building.source} />
       </p>

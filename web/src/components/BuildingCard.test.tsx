@@ -31,11 +31,11 @@ describe("BuildingCard", () => {
   it("renders violation counts when a PLUTO/HPD record exists", () => {
     render(<BuildingCard building={WITH_RECORD} />);
     expect(screen.getByText("1931")).toBeInTheDocument();
-    expect(screen.getByText(/immediately hazardous/)).toBeInTheDocument();
+    expect(screen.getByText(/flagged by the city, not fixed yet/)).toBeInTheDocument();
   });
 
   it("does not crash and shows a real fallback when hpd_open_violations is null", () => {
     render(<BuildingCard building={NO_RECORD} />);
-    expect(screen.getByText(/No PLUTO\/HPD record/)).toBeInTheDocument();
+    expect(screen.getByText(/We don.t have property records/i)).toBeInTheDocument();
   });
 });

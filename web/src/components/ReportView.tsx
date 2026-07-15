@@ -15,10 +15,6 @@ export function ReportView({ profile }: { profile: Profile }) {
         <h2 className="report__title" id="report-heading">
           {profile.address}
         </h2>
-        <p className="report__meta">
-          {profile.location.lat.toFixed(5)}, {profile.location.lng.toFixed(5)} · H3 {profile.cell}
-          {profile.location.bbl && <> · BBL {profile.location.bbl}</>}
-        </p>
       </header>
 
       <MapView address={profile.address} />

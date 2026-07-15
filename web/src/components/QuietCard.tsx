@@ -10,7 +10,7 @@ export function QuietCard({ quiet }: { quiet: Quiet }) {
       <header className="field__head">
         <div>
           <h2 className="field__title" id="quiet-heading">
-            311 noise complaints
+            Noise complaints
           </h2>
         </div>
         <Stamp variant={hasData ? "confirmed" : "no_data"} compact />
@@ -19,7 +19,8 @@ export function QuietCard({ quiet }: { quiet: Quiet }) {
         <Stat value={quiet.noise_complaints_12mo} />
       </p>
       <p className="field__provenance">
-        NYC 311, trailing 12 months · within a 5-minute walk (400m radius).
+        Noise complaints neighbors reported to the city, trailing 12 months · within a 5-minute
+        walk (400m radius).
         <br />
         <SourceTag source={quiet.source} />
       </p>
