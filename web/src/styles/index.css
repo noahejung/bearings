@@ -1137,7 +1137,8 @@ body {
   flex-wrap: wrap;
 }
 
-.mapfield__controls span {
+.mapfield__controls span,
+.mapfield__controls label {
   font-family: var(--font-mono);
   font-size: 0.66rem;
   letter-spacing: 0.14em;
@@ -1159,6 +1160,27 @@ body {
 .mapfield__toggle[aria-pressed="true"] {
   background: var(--ink);
   color: var(--bone);
+}
+
+/* The metric dropdown (VISUAL.md §5, REVISED 2026-07-15) -- replaces the
+   old hardcoded noise/crime toggle buttons above. Disabled <option>s (the
+   "Disabled, with a reason" triage bucket) render greyed by the browser's
+   own native styling; this rule only sets the trigger's own chrome. */
+.mapfield__select {
+  border: 1.5px solid var(--ink);
+  background: var(--bone);
+  color: var(--ink);
+  padding: 0.4rem 0.6rem;
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  letter-spacing: 0.02em;
+}
+
+.mapfield__metricnote {
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  color: var(--steel);
+  font-style: italic;
 }
 
 .mapfield__stage {

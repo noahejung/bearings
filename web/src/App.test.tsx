@@ -204,7 +204,11 @@ const MAP_GEOMETRY = {
   stations: [{ name: "34 St-Herald Sq", lat: 40.7497, lng: -73.9877, routes: ["B", "D", "F", "M"] }],
   cells: Array.from({ length: 37 }, (_, i) => ({
     h3: i === 0 ? "892a100d2d7ffff" : `892a100d2d7ff${i.toString().padStart(2, "0")}`,
-    value: i === 0 ? 42 : i,
+    noise: i === 0 ? 42 : i,
+    amenities: i === 0 ? 12 : i % 5,
+    trees: i === 0 ? 8 : i % 4,
+    building_age_years: i === 3 ? null : 1930 + i,
+    transit_access: i === 0 ? 3 : i % 2,
   })),
   basemap_note: "Every layer is real, drawn from public records...",
   sources: {
@@ -213,6 +217,10 @@ const MAP_GEOMETRY = {
     cells: { name: "NYC 311", url: "https://data.cityofnewyork.us/d/erm2-nwe9" },
     buildings: { name: "NYC Building Footprints", url: "https://data.cityofnewyork.us/d/5zhs-2jue" },
     streets: { name: "NYC Street Centerline (CSCL)", url: "https://data.cityofnewyork.us/d/inkn-q76z" },
+    amenities: { name: "Overture Maps Places", url: "https://docs.overturemaps.org/guides/places/" },
+    trees: { name: "NYC Street Tree Census", url: "https://data.cityofnewyork.us/d/uvpi-gqnh" },
+    building_age: { name: "NYC PLUTO", url: "https://data.cityofnewyork.us/d/64uk-42ks" },
+    transit_access: { name: "MTA GTFS + PATH GTFS", url: "http://web.mta.info/developers/data/nyct/subway/google_transit.zip" },
   },
 };
 
@@ -313,11 +321,21 @@ describe("App (full mount)", () => {
     await waitFor(() => expect(screen.getByTitle(/34 St-Herald Sq/i)).toBeInTheDocument());
     expect(screen.getByLabelText(/Navigable map of New York City/i)).toBeInTheDocument();
 
-    // The heat-map toggle is real UI, off by default (VISUAL.md §5).
-    const noiseToggle = screen.getByRole("button", { name: /311 noise/i });
-    expect(noiseToggle).toHaveAttribute("aria-pressed", "false");
-    const offToggle = screen.getByRole("button", { name: /^off$/i });
-    expect(offToggle).toHaveAttribute("aria-pressed", "true");
+    // The metric dropdown is real UI, off by default (VISUAL.md §5's
+    // metric-dropdown revision -- replaces the old hardcoded noise/crime
+    // toggle buttons). Every "ship"/"proxy" metric is selectable; every
+    // "disabled" one (flood, rodents, heat, bedbugs) is a real, greyed,
+    // non-selectable <option> with its own reason -- never silently
+    // omitted from the picker.
+    const metricSelect = screen.getByLabelText(/shade the map by/i) as HTMLSelectElement;
+    expect(metricSelect.value).toBe("none");
+    const options = Array.from(metricSelect.options);
+    expect(options.find((o) => /311 noise/i.test(o.text))?.disabled).toBe(false);
+    const floodOption = options.find((o) => /flood zone/i.test(o.text));
+    expect(floodOption?.disabled).toBe(true);
+    expect(floodOption?.title).toMatch(/no bounding-box query/i);
+    const rodentOption = options.find((o) => /rodent/i.test(o.text));
+    expect(rodentOption?.disabled).toBe(true);
 
     // The raw H3 index string is gone from the map's hover readout
     // specifically (the report header above still legitimately shows

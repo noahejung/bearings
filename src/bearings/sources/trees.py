@@ -12,6 +12,8 @@ always filters with a lat/lng bounding box rather than `within_circle`
 
 import math
 
+import pandas as pd
+
 from bearings.sources import socrata
 
 SOURCE = {
@@ -45,3 +47,25 @@ def near(lat: float, lng: float, radius_m: float = 400) -> int:
     if df.empty:
         return 0
     return int(df.iloc[0]["count"])
+
+
+def points_in_bbox(bbox: dict) -> pd.DataFrame:
+    """Every living street tree's raw (lat, lng) inside a `{"south",
+    "north", "west", "east"}` box -- for bucketing into H3 cells
+    (mapgeo.py's per-cell street-tree-density metric), unlike `near()`
+    above which only ever returns a single radius count. Same lat/lng
+    bounding-box filter as `near()` (no Socrata Point column on this
+    dataset -- see module docstring), just parameterised by an explicit
+    box instead of a point+radius.
+    """
+    where = (
+        f"status='Alive' "
+        f"AND latitude > {bbox['south']} AND latitude < {bbox['north']} "
+        f"AND longitude > {bbox['west']} AND longitude < {bbox['east']}"
+    )
+    df = socrata.fetch("trees", select="latitude,longitude", where=where, limit=50_000)
+    if df.empty:
+        return pd.DataFrame({"lat": pd.Series(dtype=float), "lng": pd.Series(dtype=float)})
+    return pd.DataFrame(
+        {"lat": df["latitude"].astype(float), "lng": df["longitude"].astype(float)}
+    )

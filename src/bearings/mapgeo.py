@@ -27,16 +27,69 @@ GTFS shapes.txt (local, already-cached zips, cheap for any address) and 311
 noise complaints (a single bounding-box Socrata call, not one call per
 cell) round out the picture, bucketed into real H3 cells with the same
 `h3` library the rest of the pipeline uses.
+
+**Per-cell metric dropdown (VISUAL.md §5, REVISED 2026-07-15).** Every cell
+in the k=3 disk now carries five real metrics, not just noise -- the
+heat-map toggle became a metric dropdown, and each metric it offers must be
+an honestly-computed value for the area it shades, never a fabricated
+citywide surface (see this module's own per-metric functions below for
+what each one measures and where its number comes from):
+
+  - `noise`: real 311 noise-complaint counts (unchanged from before).
+  - `amenities`: real Overture POI counts (the same eight daily-life
+    categories `api.py`'s report card already uses -- grocery, cafe, bar,
+    restaurant, pharmacy, gym, park, laundry), read straight from the
+    already-baked `data/derived/pois.parquet` (a local groupby, no new
+    live fetch -- `cell` is already a column on that Parquet file).
+  - `trees`: real living-street-tree counts (`sources/trees.py`'s
+    `points_in_bbox()`, bucketed by cell the same way noise is).
+  - `building_age_years`: the real median PLUTO `yearbuilt` of every lot
+    in a cell, or `None` if no PLUTO lot with a recorded year falls in
+    that cell -- never a fabricated single-lot answer standing in for a
+    whole cell, and never a guessed year where PLUTO's own `yearbuilt=0`
+    sentinel (not recorded) is all that's on record.
+  - `transit_access`: a labelled PROXY, not a claim about commute time --
+    the count of real subway/PATH stations within `TRANSIT_ACCESS_RADIUS_M`
+    of the cell's own centroid. There is no citywide "time to destination"
+    value (a commute is always time *to somewhere*), so this offers the one
+    citywide-honest substitute: how much real transit infrastructure sits
+    within a normal walk of this specific cell.
+
+None of these five are a build-time bake (unlike the crime/precinct
+choropleth in citywide.py) -- every one is computed live, per request,
+scoped to the k=3 disk around whichever address was searched, the same way
+noise already was. This keeps Docker build time and image size completely
+unaffected (the dispatch's own stated concern for building age/flood) at
+the cost of a few real seconds of per-request Socrata/Parquet work, already
+the existing tradeoff for noise.
+
+**Flood zone and the sparse per-building datasets (heat, rodents, bedbugs)
+are deliberately NOT here.** FEMA's NFHL is a single-point-at-a-time
+ArcGIS service with no bounding-box query capability and a live-confirmed
+~30-50% transient-failure rate (see `sources/flood.py`'s own docstring) --
+querying it once per cell (up to 37 real external calls per map load, each
+with its own retry-with-backoff) is neither fast enough for a live request
+nor reliable enough to bake citywide without the failure rate ballooning
+build time unpredictably. Heat/rodent/bedbug complaint data is per-building
+and voluntarily filed -- a quiet cell there could mean "no problem" or
+could mean "nobody filed a complaint here," which is exactly the kind of
+surface this project's own rule against fabricated citywide data forbids
+shading a map with. The frontend dropdown shows all of these, greyed out,
+with their real reason stated plainly -- never silently omitted.
 """
 
 import math
+import statistics
 from datetime import datetime, timedelta, timezone
 
+import duckdb
 import h3
 import pandas as pd
 
 from bearings import cells, config, transit
-from bearings.sources import basemap, buildings, gtfs, socrata, streets
+from bearings.sources import basemap, buildings, gtfs, overture, pluto, socrata, streets
+from bearings.sources import trees as trees_source
+from bearings.transit import _haversine_m
 
 # Matches the approved prototype's k=3 disk (37 cells) and its ~700m
 # half-width box -- see the dispatch's scratchpad bearings-map.html /
@@ -44,6 +97,20 @@ from bearings.sources import basemap, buildings, gtfs, socrata, streets
 MAP_DISK_K = 3
 BBOX_RADIUS_M = 700.0
 _NOISE_WINDOW_DAYS = 365
+
+# The same eight daily-life categories api.py's report card already sums
+# (overture.CATEGORY_MAP's own value set -- never the ~93%-of-NYC "other"
+# bucket that map never had a real bucket of its own).
+AMENITY_CATEGORIES = sorted(set(overture.CATEGORY_MAP.values()))
+
+# "Convenient walk" radius for the transit-access proxy metric -- roughly
+# 6 minutes at transit.WALK_SPEED_MPS, deliberately smaller than profile.py's
+# STATION_SEARCH_M=1200 (that one finds "the nearest 3 stations from a
+# single point, however far"; this one asks "how much real transit sits
+# within an easy walk of this specific cell").
+TRANSIT_ACCESS_RADIUS_M = 500.0
+
+_POIS_PATH = config.DERIVED_DIR / "pois.parquet"
 
 BASEMAP_NOTE = (
     "The base map is a self-hosted PMTiles extract of the Protomaps daily "
@@ -53,9 +120,10 @@ BASEMAP_NOTE = (
     "computed from public records: building footprints and street "
     "centrelines (NYC Open Data, baked once at build time -- see "
     "sources/buildings.py and sources/streets.py), subway/PATH alignments "
-    "and route labels (GTFS shapes.txt), and per-cell density (real NYC "
-    "311 noise counts). Every line on this sheet was computed from a "
-    "dataset this report also cites."
+    "and route labels (GTFS shapes.txt), and five real per-cell metrics -- "
+    "311 noise, Overture daily-life amenity counts, living street trees, "
+    "median PLUTO building age, and nearby-transit-station counts. Every "
+    "line on this sheet was computed from a dataset this report also cites."
 )
 
 SOURCES = {
@@ -64,6 +132,10 @@ SOURCES = {
     "cells": {"name": "NYC 311", "url": "https://data.cityofnewyork.us/d/erm2-nwe9"},
     "buildings": dict(buildings.SOURCE),
     "streets": dict(streets.SOURCE),
+    "amenities": dict(overture.SOURCE),
+    "trees": dict(trees_source.SOURCE),
+    "building_age": dict(pluto.SOURCE),
+    "transit_access": dict(transit.SOURCE),
 }
 
 
@@ -121,18 +193,26 @@ def _stations_in_bbox(bbox: dict) -> list[dict]:
     ]
 
 
-def _cell_values(subject_cell: str, bbox: dict) -> list[dict]:
-    """Real 311 noise-complaint counts, one per H3 cell in the k=3 disk
-    around the subject cell -- a single bounding-box query over the whole
-    visible area, then bucketed by cell in Python, rather than 37 separate
-    per-cell radius queries. Every cell in the disk gets a real int (a
-    true zero when the query found nothing there), never a missing key --
-    the disk is enumerated first and only then filled in from the query
-    results, so an unqueried cell is structurally impossible.
+def _bucket_points_by_cell(
+    ring: list[str], points: list[tuple[float, float]]
+) -> dict[str, list[tuple[float, float]]]:
+    """Every point placed into its H3 res-9 cell, restricted to cells in
+    `ring` -- the disk is enumerated first (so every ring cell starts with
+    an empty, real list) and only then filled in, the same "structurally
+    impossible to miss a cell" shape the original noise-only bucketer used.
     """
-    ring = cells.neighbors(subject_cell, k=MAP_DISK_K)
-    counts: dict[str, int] = {c: 0 for c in ring}
+    by_cell: dict[str, list[tuple[float, float]]] = {c: [] for c in ring}
+    for lat, lng in points:
+        cell = h3.latlng_to_cell(lat, lng, config.H3_RES)
+        if cell in by_cell:
+            by_cell[cell].append((lat, lng))
+    return by_cell
 
+
+def _noise_cell_counts(ring: list[str], bbox: dict) -> dict[str, int]:
+    """Real 311 noise-complaint counts, one per H3 cell in `ring` -- a
+    single bounding-box query over the whole visible area, then bucketed by
+    cell in Python, rather than one query per cell."""
     cutoff = (datetime.now(timezone.utc) - timedelta(days=_NOISE_WINDOW_DAYS)).strftime(
         "%Y-%m-%dT%H:%M:%S"
     )
@@ -143,27 +223,143 @@ def _cell_values(subject_cell: str, bbox: dict) -> list[dict]:
         f"{bbox['south']}, {bbox['east']})"
     )
     df = socrata.fetch("311", select="latitude,longitude", where=where, limit=50_000)
-
+    points: list[tuple[float, float]] = []
     for row in df.itertuples():
         try:
-            plat, plng = float(row.latitude), float(row.longitude)
+            points.append((float(row.latitude), float(row.longitude)))
         except (TypeError, ValueError):
             continue
-        cell = h3.latlng_to_cell(plat, plng, config.H3_RES)
-        if cell in counts:
-            counts[cell] += 1
+    by_cell = _bucket_points_by_cell(ring, points)
+    return {c: len(pts) for c, pts in by_cell.items()}
 
-    return [{"h3": c, "value": v} for c, v in counts.items()]
+
+def _amenity_cell_counts(ring: list[str]) -> dict[str, int]:
+    """Real Overture daily-life-category POI counts per H3 cell, read
+    straight from the already-baked data/derived/pois.parquet -- `cell` is
+    already a column on that Parquet file (overture.fetch_pois() computes
+    it via cells.cell_for() at bake time), so this is a local groupby, not
+    a live fetch or a spatial join. Requires profile.warm_caches() to have
+    baked the Parquet file first (api.py's lifespan startup runs it before
+    mapgeo.warm_caches() -- see this module's docstring); raises a loud
+    FileNotFoundError otherwise, matching buildings.py/streets.py's own
+    not-baked-yet guard rather than silently returning all zeros."""
+    if not _POIS_PATH.exists():
+        raise FileNotFoundError(
+            f"{_POIS_PATH} has not been baked yet -- call bearings.profile."
+            "warm_caches() first (api.py's startup handler does this before "
+            "mapgeo.warm_caches() runs)."
+        )
+    con = duckdb.connect()
+    try:
+        placeholders = ",".join("?" for _ in ring)
+        cat_placeholders = ",".join("?" for _ in AMENITY_CATEGORIES)
+        rows = con.execute(
+            f"""
+            SELECT cell, count(*) AS n
+            FROM read_parquet('{_POIS_PATH.as_posix()}')
+            WHERE cell IN ({placeholders}) AND category IN ({cat_placeholders})
+            GROUP BY cell
+            """,
+            [*ring, *AMENITY_CATEGORIES],
+        ).fetchall()
+    finally:
+        con.close()
+    counts = {c: 0 for c in ring}
+    for cell, n in rows:
+        counts[cell] = int(n)
+    return counts
+
+
+def _tree_cell_counts(ring: list[str], bbox: dict) -> dict[str, int]:
+    """Real living-street-tree counts per H3 cell -- one bbox query over
+    the whole visible area (sources/trees.py's points_in_bbox()), bucketed
+    the same way noise is."""
+    pts = trees_source.points_in_bbox(bbox)
+    points = list(zip(pts["lat"], pts["lng"], strict=True))
+    by_cell = _bucket_points_by_cell(ring, points)
+    return {c: len(v) for c, v in by_cell.items()}
+
+
+def _building_age_by_cell(ring: list[str], bbox: dict) -> dict[str, float | None]:
+    """The real median PLUTO `yearbuilt` of every lot in a cell, or `None`
+    if no lot with a recorded year falls in that cell -- a cell median, not
+    a single lot's year standing in for the whole cell, and never a guessed
+    year where PLUTO's own yearbuilt=0 sentinel is all that's on record
+    (sources/pluto.py's points_in_bbox() already excludes it).
+
+    Deliberately does NOT reuse `_bucket_points_by_cell()` (which buckets
+    bare (lat, lng) tuples): two distinct PLUTO lots can share the exact
+    same rounded coordinate, and a (lat, lng) -> year lookup dict would
+    silently collapse them to whichever year happened to be inserted last.
+    Keeping (lat, lng, year_built) together end to end avoids that.
+    """
+    pts = pluto.points_in_bbox(bbox)
+    years_by_cell: dict[str, list[int]] = {c: [] for c in ring}
+    for lat, lng, year in zip(pts["lat"], pts["lng"], pts["year_built"], strict=True):
+        cell = h3.latlng_to_cell(lat, lng, config.H3_RES)
+        if cell in years_by_cell:
+            years_by_cell[cell].append(int(year))
+    return {
+        c: (float(statistics.median(years)) if years else None)
+        for c, years in years_by_cell.items()
+    }
+
+
+def _transit_access_by_cell(ring: list[str], stations: list[dict]) -> dict[str, int]:
+    """A labelled PROXY for transit access, not a commute-time claim: the
+    count of real subway/PATH stations within TRANSIT_ACCESS_RADIUS_M of
+    each cell's own centroid -- reuses the station list already fetched for
+    this bbox, no new query."""
+    out: dict[str, int] = {}
+    for c in ring:
+        lat, lng = cells.centroid(c)
+        out[c] = sum(
+            1
+            for s in stations
+            if _haversine_m((lat, lng), (s["lat"], s["lng"])) <= TRANSIT_ACCESS_RADIUS_M
+        )
+    return out
+
+
+def _cell_metrics(subject_cell: str, bbox: dict, stations: list[dict]) -> list[dict]:
+    """Five real per-cell metrics for the k=3 disk around the subject cell
+    -- see the module docstring for what each one measures, where its
+    number comes from, and why flood/heat/rodents/bedbugs are NOT here.
+    Every cell in the disk gets a real value for every metric (an int, or
+    `None` for building_age_years when genuinely no record exists) -- the
+    disk is enumerated first in every helper above, so a missing key is
+    structurally impossible.
+    """
+    ring = cells.neighbors(subject_cell, k=MAP_DISK_K)
+    noise = _noise_cell_counts(ring, bbox)
+    amenities = _amenity_cell_counts(ring)
+    tree_counts = _tree_cell_counts(ring, bbox)
+    building_age = _building_age_by_cell(ring, bbox)
+    transit_access = _transit_access_by_cell(ring, stations)
+    return [
+        {
+            "h3": c,
+            "noise": noise[c],
+            "amenities": amenities[c],
+            "trees": tree_counts[c],
+            "building_age_years": building_age[c],
+            "transit_access": transit_access[c],
+        }
+        for c in ring
+    ]
 
 
 def map_geometry(lat: float, lng: float, bbl: str | None) -> dict:
     """Everything the map component needs for the neighbourhood around one
-    point: real subway/PATH lines, real stations, and real per-cell noise
-    density for the k=3 H3 disk -- see the module docstring for what is
-    deliberately NOT included (streets, buildings) and why.
+    point: real subway/PATH lines, real stations, real building/street
+    mass, and five real per-cell metrics (noise, amenities, trees,
+    building age, transit access) for the k=3 H3 disk -- see the module
+    docstring for the full per-metric breakdown and what is deliberately
+    NOT included (flood, heat, rodents, bedbugs) and why.
     """
     subject_cell = cells.cell_for(lat, lng)
     bbox = _bbox_for(lat, lng, radius_m=BBOX_RADIUS_M)
+    stations = _stations_in_bbox(bbox)
 
     return {
         "subject": {"lat": lat, "lng": lng, "bbl": bbl, "cell": subject_cell},
@@ -171,8 +367,8 @@ def map_geometry(lat: float, lng: float, bbl: str | None) -> dict:
         "buildings": buildings.footprints_in_bbox(bbox),
         "streets": streets.segments_in_bbox(bbox),
         "subway_lines": _subway_lines(bbox),
-        "stations": _stations_in_bbox(bbox),
-        "cells": _cell_values(subject_cell, bbox),
+        "stations": stations,
+        "cells": _cell_metrics(subject_cell, bbox, stations),
         "basemap_note": BASEMAP_NOTE,
         "sources": SOURCES,
     }

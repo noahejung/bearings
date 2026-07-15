@@ -10,7 +10,7 @@ layer have a real, non-trivial signal to assert against -- not just zeros.
 
 import pytest
 
-from bearings import geocode, mapgeo
+from bearings import geocode, mapgeo, profile
 
 EMPIRE_STATE = "350 5th Ave, Manhattan"
 QUIET_RIVERDALE = "3220 Netherland Ave, Bronx"
@@ -20,6 +20,11 @@ QUIET_RIVERDALE = "3220 Netherland Ave, Bronx"
 def warmed():
     # Real bake the first time this runs in a fresh data/ directory (see
     # sources/buildings.py / sources/streets.py); a fast no-op after that.
+    # profile.warm_caches() bakes data/derived/pois.parquet, which
+    # mapgeo._amenity_cell_counts() reads directly -- mirrors api.py's own
+    # lifespan startup order (profile.warm_caches() runs before
+    # mapgeo.warm_caches() there too), not a new dependency.
+    profile.warm_caches()
     mapgeo.warm_caches()
 
 
@@ -107,18 +112,26 @@ def test_cells_cover_the_full_k3_disk_and_include_the_subject_cell(geo):
     assert geo["subject"]["cell"] in h3_indices
 
 
-def test_cell_values_are_real_ints_not_none(geo):
-    # Every cell was actually queried -- a real 0 is a valid value, but
-    # every entry must be an int, never a missing/None placeholder.
+def test_every_cell_carries_all_five_real_metrics(geo):
+    # Every cell was actually queried for every metric -- a real 0 (or,
+    # for building_age_years only, a real None when no PLUTO lot with a
+    # recorded year falls in that cell) is a valid value, but no metric
+    # may ever be a missing key (VISUAL.md §5's metric-dropdown revision:
+    # noise, amenities, trees, building age, transit access).
     for c in geo["cells"]:
-        assert isinstance(c["value"], int)
+        assert set(c) == {"h3", "noise", "amenities", "trees", "building_age_years", "transit_access"}
+        assert isinstance(c["noise"], int)
+        assert isinstance(c["amenities"], int)
+        assert isinstance(c["trees"], int)
+        assert isinstance(c["transit_access"], int)
+        assert c["building_age_years"] is None or isinstance(c["building_age_years"], float)
 
 
 def test_a_dense_noisy_address_has_at_least_one_loud_cell(geo):
     # Guards against the "only ever observes zeros" trap: at least one
     # cell in this genuinely loud neighbourhood must carry a real,
     # non-trivial count -- not just structurally-present zeros everywhere.
-    assert max(c["value"] for c in geo["cells"]) > 20
+    assert max(c["noise"] for c in geo["cells"]) > 20
 
 
 def test_a_quiet_address_has_real_low_or_zero_cells():
@@ -129,8 +142,45 @@ def test_a_quiet_address_has_real_low_or_zero_cells():
     # 400m radius, vs. Empire State's 1,297) -- most res-9 cells here
     # (0.105 km^2 each, much smaller than that 400m radius) should carry
     # single-digit or zero counts.
-    values = [c["value"] for c in geo["cells"]]
+    values = [c["noise"] for c in geo["cells"]]
     assert min(values) == 0 or sorted(values)[len(values) // 2] < 20
+
+
+# --- the four new per-cell metrics (VISUAL.md §5, REVISED 2026-07-15) ---
+
+
+def test_dense_midtown_block_has_real_nontrivial_amenity_density(geo):
+    # Empire State's own 700m disk carries hundreds of real Overture POIs
+    # across the eight daily-life categories (confirmed live 2026-07-15:
+    # ~692 in a comparable box) -- guards against the "only ever zeros"
+    # trap the same way the noise test above does.
+    assert sum(c["amenities"] for c in geo["cells"]) > 100
+
+
+def test_dense_midtown_block_has_real_nontrivial_tree_density(geo):
+    # Confirmed live 2026-07-15: 830 living trees in a comparable box.
+    assert sum(c["trees"] for c in geo["cells"]) > 100
+
+
+def test_building_age_is_a_real_median_not_fabricated_for_empty_cells(geo):
+    with_age = [c for c in geo["cells"] if c["building_age_years"] is not None]
+    without_age = [c for c in geo["cells"] if c["building_age_years"] is None]
+    # A dense Midtown block must have real PLUTO coverage in most cells --
+    # but at least allowing that some genuinely have no lot centred there
+    # (e.g. a cell that's mostly street/park) keeps this an honest test,
+    # not one that would break the first time a real gap appears.
+    assert len(with_age) > 20
+    for c in with_age:
+        assert 1600 < c["building_age_years"] <= 2026
+    # None is a real "no record for this cell", never a fabricated 0/1900.
+    assert all(c["building_age_years"] is None for c in without_age)
+
+
+def test_transit_access_is_nonzero_near_a_dense_transit_address(geo):
+    # Empire State's own disk sits on top of several real subway stations
+    # (see test_finds_real_stations_near_a_dense_transit_address above) --
+    # at least one cell in the disk must show a real, nonzero station count.
+    assert max(c["transit_access"] for c in geo["cells"]) > 0
 
 
 def test_basemap_note_is_present_and_does_not_claim_an_absence(geo):

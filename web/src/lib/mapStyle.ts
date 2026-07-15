@@ -87,19 +87,30 @@ export function buildMapStyle(tilesUrl: string): StyleSpecification {
         paint: { "fill-color": STEEL, "fill-opacity": 0.5 },
       },
       {
+        // Level-of-detail by zoom (VISUAL.md §5, REVISED 2026-07-15):
+        // "Zoomed out (city): arterials ... Minor streets ... hidden.
+        // Zooming in: residential streets fade in." `minzoom` drops minor
+        // roads from the tile request entirely below city scale (not just
+        // low opacity -- a real LOD cut, the same mechanism every slippy
+        // map uses); the opacity ramp then fades them in over the next two
+        // zoom levels rather than popping in at full strength.
         id: "roads-minor",
         type: "line",
         source: "basemap",
         "source-layer": "roads",
         filter: ["in", ["get", "kind"], ["literal", ["minor_road", "path", "rail"]]],
+        minzoom: 12,
         layout: { "line-cap": "round", "line-join": "round" },
         paint: {
           "line-color": INK,
-          "line-opacity": 0.32,
-          "line-width": ["interpolate", ["linear"], ["zoom"], 10, 0.25, 16, 1],
+          "line-opacity": ["interpolate", ["linear"], ["zoom"], 12, 0, 13.5, 0.32],
+          "line-width": ["interpolate", ["linear"], ["zoom"], 12, 0.2, 16, 1],
         },
       },
       {
+        // Arterials/highways stay visible at every zoom this map allows
+        // (VISUAL.md: "Zoomed out (city): arterials ... visible") -- no
+        // minzoom cut, only the existing width ramp.
         id: "roads-major",
         type: "line",
         source: "basemap",

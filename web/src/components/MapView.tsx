@@ -5,9 +5,10 @@ import "maplibre-gl/dist/maplibre-gl.css";
 import { Protocol } from "pmtiles";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ApiError, getCitywide, getMapGeometry } from "../api";
-import { crimeRelativeLabel, formatPercentile } from "../lib/crime";
+import { crimeRelativeLabel, formatPercentile, ordinalSuffix } from "../lib/crime";
 import { buildMapStyle } from "../lib/mapStyle";
-import type { Citywide, MapGeometry } from "../types";
+import { percentileRank } from "../lib/relativeScale";
+import type { Citywide, MapCell, MapGeometry, Source } from "../types";
 import { colorFor } from "./RouteBullet";
 
 // VISUAL.md §5, REVISED 2026-07-15 -- MapLibre GL reading a self-hosted
@@ -24,13 +25,111 @@ const INK = "#111111";
 const RED = "#D7263D";
 const STEEL = "#8A8D8F";
 
-type HeatMode = "none" | "noise" | "crime";
+// The metric DROPDOWN (VISUAL.md §5, REVISED 2026-07-15), replacing the old
+// hardcoded noise/crime toggle. "Shading the whole map needs a citywide
+// value per area. Never fabricate a citywide surface" -- every entry here
+// is triaged, honestly, into one of three buckets:
+//   - "ship": a real, honestly-computed value backs every area shown.
+//   - "proxy": a real value, but standing in for something this codebase
+//     genuinely cannot compute (there is no citywide "commute time" --
+//     a commute is always time to somewhere -- so transit_access offers
+//     "how much real transit is within reach", named as access, not
+//     commute) -- see mapgeo.py's own module docstring.
+//   - "disabled": no honest citywide (or even honest per-cell-on-demand)
+//     surface can be built -- shown greyed, with the real reason, never
+//     silently hidden. Same rule this project already applies to NO_DATA
+//     gaps elsewhere in the report.
+type MetricStatus = "ship" | "proxy" | "disabled";
+type MetricResolution = "cell" | "precinct" | "none";
 
-const HEAT_MODES: { id: HeatMode; label: string }[] = [
-  { id: "none", label: "Off" },
-  { id: "noise", label: "311 noise (per cell)" },
-  { id: "crime", label: "CompStat crime (per precinct)" },
+interface MetricDef {
+  id: string;
+  label: string;
+  resolution: MetricResolution;
+  status: MetricStatus;
+  cellField?: keyof MapCell;
+  reason?: string; // only set (and only shown) for status === "disabled"
+}
+
+const METRICS: MetricDef[] = [
+  { id: "none", label: "Off", resolution: "none", status: "ship" },
+  { id: "noise", label: "311 noise complaints", resolution: "cell", status: "ship", cellField: "noise" },
+  { id: "crime", label: "Major crime (CompStat, per precinct)", resolution: "precinct", status: "ship" },
+  {
+    id: "amenities",
+    label: "Grocery & daily-life amenities",
+    resolution: "cell",
+    status: "ship",
+    cellField: "amenities",
+  },
+  { id: "trees", label: "Living street trees", resolution: "cell", status: "ship", cellField: "trees" },
+  {
+    id: "building_age",
+    label: "Building age (median per cell)",
+    resolution: "cell",
+    status: "ship",
+    cellField: "building_age_years",
+  },
+  {
+    id: "transit_access",
+    label: "Transit access (proxy, not commute time)",
+    resolution: "cell",
+    status: "proxy",
+    cellField: "transit_access",
+  },
+  {
+    id: "flood",
+    label: "Flood zone",
+    resolution: "none",
+    status: "disabled",
+    reason:
+      "FEMA's flood-zone service answers one point at a time, with no bounding-box query, and fails on a real share of live requests -- not reliable enough to shade a map with.",
+  },
+  {
+    id: "rodents",
+    label: "Rodent inspections",
+    resolution: "none",
+    status: "disabled",
+    reason:
+      "Only inspected buildings appear in this dataset -- a quiet cell could mean no rodents, or could mean nobody filed a complaint there. No honest citywide surface exists.",
+  },
+  {
+    id: "heat",
+    label: "Heat / hot-water complaints",
+    resolution: "none",
+    status: "disabled",
+    reason: "Per-building complaint data, not a census of buildings -- the same gap as rodent inspections above.",
+  },
+  {
+    id: "bedbugs",
+    label: "Bedbug filings",
+    resolution: "none",
+    status: "disabled",
+    reason: "Annual filings are per-building and voluntary -- absence of a filing is not evidence of absence.",
+  },
 ];
+
+// Label + unit for each cell metric's hover readout.
+const CELL_METRIC_READOUT: Record<string, { label: string; unit: string }> = {
+  noise: { label: "311 noise · trailing 12mo", unit: "calls" },
+  amenities: { label: "Grocery & daily-life amenities · in this cell", unit: "places" },
+  trees: { label: "Living street trees · in this cell", unit: "trees" },
+  building_age: { label: "Median building year built", unit: "" },
+  transit_access: { label: "Subway/PATH stations within ~6min walk", unit: "stations" },
+};
+
+function cellSourceFor(id: string, geo: MapGeometry | null): Source | undefined {
+  if (!geo) return undefined;
+  const key: Record<string, string> = {
+    noise: "cells",
+    amenities: "amenities",
+    trees: "trees",
+    building_age: "building_age",
+    transit_access: "transit_access",
+  };
+  const sourceKey = key[id];
+  return sourceKey ? geo.sources[sourceKey] : undefined;
+}
 
 // ---------------------------------------------------------------------------
 // GeoJSON builders -- pure functions from the API contract to what MapLibre
@@ -40,16 +139,43 @@ const HEAT_MODES: { id: HeatMode; label: string }[] = [
 // than leaving that inversion to be rediscovered per-consumer.
 // ---------------------------------------------------------------------------
 
-function cellsGeoJSON(geo: MapGeometry): FeatureCollection {
-  const maxValue = Math.max(1, ...geo.cells.map((c) => c.value));
+// `cellField` is the currently-selected cell metric's raw field (or `null`
+// when the metric picker is "Off", a precinct metric, or a disabled entry
+// -- every cell then gets w=0/hasValue=0, so the fill layer's data-driven
+// opacity naturally renders nothing without a separate visibility toggle).
+//
+// `w` is a PERCENTILE, not value/max (VISUAL.md §5: "Apply relative
+// scaling ... to any metric where absolute counts would mislead, not just
+// crime") -- computed via the same mean-rank method citywide.py's crime
+// percentile uses, but ranked only against the other cells in this k=3
+// disk (relativeScale.ts's own docstring states this distinction plainly:
+// this is neighbourhood-relative, not citywide-relative like crime).
+function cellsGeoJSON(geo: MapGeometry, cellField: keyof MapCell | null): FeatureCollection {
+  const population = cellField
+    ? geo.cells.map((c) => c[cellField]).filter((v): v is number => typeof v === "number")
+    : [];
   const features: Feature[] = geo.cells.map((c) => {
     const boundary = h3.cellToBoundary(c.h3) as [number, number][]; // [lat, lng]
     const ring: [number, number][] = boundary.map(([lat, lng]) => [lng, lat]);
     ring.push(ring[0]); // close the polygon ring
     const isSubject = c.h3 === geo.subject.cell;
+    const raw = cellField ? c[cellField] : null;
+    const hasValue = typeof raw === "number";
+    const w = hasValue && population.length > 0 ? percentileRank(population, raw) / 100 : 0;
     return {
       type: "Feature",
-      properties: { h3: c.h3, value: c.value, isSubject: isSubject ? 1 : 0, w: c.value / maxValue },
+      properties: {
+        h3: c.h3,
+        isSubject: isSubject ? 1 : 0,
+        hasValue: hasValue ? 1 : 0,
+        w,
+        percentile: hasValue && population.length > 0 ? percentileRank(population, raw) : null,
+        noise: c.noise,
+        amenities: c.amenities,
+        trees: c.trees,
+        building_age_years: c.building_age_years,
+        transit_access: c.transit_access,
+      },
       geometry: { type: "Polygon", coordinates: [ring] },
     };
   });
@@ -138,8 +264,13 @@ function roughDist(a: { lat: number; lng: number }, b: LngLat): number {
 
 interface HoveredCell {
   h3: string;
-  value: number;
   isSubject: boolean;
+  percentile: number | null;
+  noise: number;
+  amenities: number;
+  trees: number;
+  building_age_years: number | null;
+  transit_access: number;
 }
 
 interface HoveredPrecinct {
@@ -149,14 +280,36 @@ interface HoveredPrecinct {
   weekEnding: string | null;
 }
 
-function CellReadout({ cell, source }: { cell: HoveredCell; source?: { name: string; url: string } }) {
+function formatCellValue(metricId: string, raw: number): string {
+  if (metricId === "building_age") return String(Math.round(raw));
+  return raw.toLocaleString();
+}
+
+function CellReadout({ cell, metric, source }: { cell: HoveredCell; metric: MetricDef; source?: Source }) {
+  const info = CELL_METRIC_READOUT[metric.id];
+  const raw = metric.cellField ? cell[metric.cellField] : null;
   return (
     <dl>
-      <dt>311 noise · trailing 12mo</dt>
+      <dt>{info?.label ?? metric.label}</dt>
       <dd>
-        {cell.value}
-        <span style={{ fontSize: 11, color: STEEL, marginLeft: 6 }}>calls</span>
+        {typeof raw !== "number" ? (
+          <span style={{ fontSize: 13, fontStyle: "italic", color: STEEL }}>NO DATA</span>
+        ) : (
+          <>
+            {formatCellValue(metric.id, raw)}
+            {info?.unit && <span style={{ fontSize: 11, color: STEEL, marginLeft: 6 }}>{info.unit}</span>}
+          </>
+        )}
       </dd>
+      {cell.percentile !== null && (
+        <>
+          <dt>Relative to this neighbourhood</dt>
+          <dd className="small">
+            {Math.round(cell.percentile)}
+            {ordinalSuffix(Math.round(cell.percentile))} percentile among the cells shown here -- not citywide.
+          </dd>
+        </>
+      )}
       <dt>Cell area</dt>
       <dd className="small">0.105 km²</dd>
       {cell.isSubject && (
@@ -164,6 +317,14 @@ function CellReadout({ cell, source }: { cell: HoveredCell; source?: { name: str
           <dt>Status</dt>
           <dd className="small" style={{ color: RED }}>
             SUBJECT CELL
+          </dd>
+        </>
+      )}
+      {metric.status === "proxy" && (
+        <>
+          <dt>Note</dt>
+          <dd className="small">
+            A proxy, not a claim about commute time -- see the metric picker's own description.
           </dd>
         </>
       )}
@@ -242,7 +403,7 @@ export function MapView({ address }: { address: string }) {
   const citywideRef = useRef<Citywide | null>(null);
   citywideRef.current = citywide;
 
-  const [heatMode, setHeatMode] = useState<HeatMode>("none");
+  const [metricId, setMetricId] = useState<string>("none");
   const [hoveredCell, setHoveredCell] = useState<HoveredCell | null>(null);
   const [hoveredPrecinct, setHoveredPrecinct] = useState<HoveredPrecinct | null>(null);
 
@@ -311,12 +472,39 @@ export function MapView({ address }: { address: string }) {
       paint: { "line-color": INK, "line-width": 0.6, "line-opacity": 0.5 },
     });
 
+    // Level-of-detail by zoom (VISUAL.md §5, REVISED 2026-07-15) for this
+    // app's own local overlay layers, the same idea mapStyle.ts's roads
+    // already apply to the basemap: building mass and the hex grid only
+    // make visual sense once you're zoomed in enough to read individual
+    // shapes, and residential (rank 0) streets fade in before arterials.
+    const BUILDINGS_ZOOM_FADE: maplibregl.DataDrivenPropertyValueSpecification<number> = [
+      "interpolate",
+      ["linear"],
+      ["zoom"],
+      13,
+      0,
+      15,
+      0.34,
+    ];
+    // Subject cell always visible (VISUAL.md: "Subject cell always
+    // visible") -- every other cell fades in from zoom 12 to 14, which is
+    // also when the hex grid becomes "large enough to read".
+    const CELL_ZOOM_FADE: maplibregl.DataDrivenPropertyValueSpecification<number> = [
+      "interpolate",
+      ["linear"],
+      ["zoom"],
+      12,
+      0,
+      14,
+      1,
+    ];
+
     map.addSource("buildings", { type: "geojson", data: EMPTY_FC });
     map.addLayer({
       id: "buildings-fill",
       type: "fill",
       source: "buildings",
-      paint: { "fill-color": STEEL, "fill-opacity": 0.34 },
+      paint: { "fill-color": STEEL, "fill-opacity": BUILDINGS_ZOOM_FADE },
     });
 
     map.addSource("streets", { type: "geojson", data: EMPTY_FC });
@@ -327,8 +515,20 @@ export function MapView({ address }: { address: string }) {
       layout: { "line-cap": "round", "line-join": "round" },
       paint: {
         "line-color": INK,
-        "line-width": ["match", ["get", "rank"], 0, 0.6, 1, 0.9, 2, 1.4, 3, 2.0, 0.6],
-        "line-opacity": ["match", ["get", "rank"], 0, 0.35, 1, 0.55, 2, 0.75, 3, 0.9, 0.35],
+        "line-width": [
+          "*",
+          ["match", ["get", "rank"], 0, 0.6, 1, 0.9, 2, 1.4, 3, 2.0, 0.6],
+          ["interpolate", ["linear"], ["zoom"], 13, 0.7, 17, 1.4],
+        ],
+        // Residential (rank 0) streets fade in over zoom 13-15; every
+        // higher rank keeps its previous fixed opacity (already visible
+        // at any zoom this local overlay ever renders at).
+        "line-opacity": [
+          "case",
+          ["==", ["get", "rank"], 0],
+          ["interpolate", ["linear"], ["zoom"], 13, 0, 15, 0.35],
+          ["match", ["get", "rank"], 1, 0.55, 2, 0.75, 3, 0.9, 0.35],
+        ],
       },
     });
 
@@ -343,7 +543,10 @@ export function MapView({ address }: { address: string }) {
 
     // The H3 disk is the only STRONG ink on the sheet (VISUAL.md §5) --
     // thin outline (Noah, 2026-07-15: reduce stroke weight), subject cell
-    // red. Fill only carries a value when the noise heat-map is selected.
+    // red. Fill only carries a value when a cell-resolution metric is
+    // selected -- `hasValue`/`w` are computed once per metric selection
+    // in cellsGeoJSON() (effect 5b below), so this paint expression stays
+    // static regardless of which metric is active.
     map.addSource("cells", { type: "geojson", data: EMPTY_FC });
     map.addLayer({
       id: "cells-fill",
@@ -355,7 +558,9 @@ export function MapView({ address }: { address: string }) {
           "case",
           ["==", ["get", "isSubject"], 1],
           0,
-          ["interpolate", ["linear"], ["get", "w"], 0, 0.05, 1, 0.55],
+          ["==", ["get", "hasValue"], 1],
+          ["*", CELL_ZOOM_FADE, ["interpolate", ["linear"], ["get", "w"], 0, 0.08, 1, 0.6]],
+          0,
         ],
       },
     });
@@ -366,7 +571,7 @@ export function MapView({ address }: { address: string }) {
       paint: {
         "line-color": ["case", ["==", ["get", "isSubject"], 1], RED, INK],
         "line-width": ["case", ["==", ["get", "isSubject"], 1], 1.6, 0.6],
-        "line-opacity": ["case", ["==", ["get", "isSubject"], 1], 1, 0.45],
+        "line-opacity": ["case", ["==", ["get", "isSubject"], 1], 1, ["*", CELL_ZOOM_FADE, 0.45]],
       },
     });
 
@@ -376,8 +581,13 @@ export function MapView({ address }: { address: string }) {
       map.getCanvas().style.cursor = "crosshair";
       setHoveredCell({
         h3: f.properties.h3 as string,
-        value: f.properties.value as number,
         isSubject: f.properties.isSubject === 1,
+        percentile: (f.properties.percentile as number | null) ?? null,
+        noise: f.properties.noise as number,
+        amenities: f.properties.amenities as number,
+        trees: f.properties.trees as number,
+        building_age_years: (f.properties.building_age_years as number | null) ?? null,
+        transit_access: f.properties.transit_access as number,
       });
     };
     const onCellLeave = () => {
@@ -459,7 +669,6 @@ export function MapView({ address }: { address: string }) {
     const map = mapRef.current;
     if (!map || !mapReady || !geo) return;
 
-    (map.getSource("cells") as maplibregl.GeoJSONSource | undefined)?.setData(cellsGeoJSON(geo));
     (map.getSource("buildings") as maplibregl.GeoJSONSource | undefined)?.setData(buildingsGeoJSON(geo));
     (map.getSource("streets") as maplibregl.GeoJSONSource | undefined)?.setData(streetsGeoJSON(geo));
     (map.getSource("subway") as maplibregl.GeoJSONSource | undefined)?.setData(subwayGeoJSON(geo));
@@ -508,21 +717,22 @@ export function MapView({ address }: { address: string }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [citywide, mapReady]);
 
-  // ---- 7. heat-map toggle: which choropleth (if any) is visible. ----
+  // ---- 7. metric picker: recompute the cell percentiles for whichever
+  // metric is selected, and toggle the precinct choropleth's visibility.
+  // cells-fill's paint expression (effect 2) is static -- it already reads
+  // per-feature `hasValue`/`w`, which is what changes here, not the
+  // expression itself.
   useEffect(() => {
     const map = mapRef.current;
-    if (!map || !mapReady) return;
-    const precinctVisible = heatMode === "crime" ? "visible" : "none";
+    if (!map || !mapReady || !geo) return;
+    const active = METRICS.find((m) => m.id === metricId);
+    const cellField = active?.resolution === "cell" ? (active.cellField ?? null) : null;
+    (map.getSource("cells") as maplibregl.GeoJSONSource | undefined)?.setData(cellsGeoJSON(geo, cellField));
+
+    const precinctVisible = active?.resolution === "precinct" ? "visible" : "none";
     map.setLayoutProperty("precinct-fill", "visibility", precinctVisible);
     map.setLayoutProperty("precinct-outline", "visibility", precinctVisible);
-    map.setPaintProperty(
-      "cells-fill",
-      "fill-opacity",
-      heatMode === "noise"
-        ? ["case", ["==", ["get", "isSubject"], 1], 0, ["interpolate", ["linear"], ["get", "w"], 0, 0.05, 1, 0.55]]
-        : 0,
-    );
-  }, [heatMode, mapReady]);
+  }, [metricId, geo, mapReady]);
 
   function updateLabelMarkers() {
     const map = mapRef.current;
@@ -536,11 +746,17 @@ export function MapView({ address }: { address: string }) {
     const center = map.getCenter();
     const zoom = map.getZoom();
 
-    // Thin labels by zoom, the way every real web map does -- 262
+    // Level-of-detail by zoom (VISUAL.md §5): "Zoomed out (city): ...
+    // neighbourhood labels [visible]" -- neighbourhood names are the
+    // city-scale orientation label, so they appear near this map's own
+    // minZoom (9); precinct numbers are a finer, more technical label and
+    // only resolve in once you're already zoomed past city scale. 262
     // neighbourhoods and 78 precinct numbers rendered unconditionally
-    // citywide would be unreadable clutter at a zoomed-out view and a
-    // real perf cost (DOM markers, not GPU-rendered symbols).
-    if (zoom >= 11) {
+    // citywide would be unreadable clutter at any zoom either way, so both
+    // are still capped to the nearest N actually inside the current view
+    // (DOM markers, not GPU-rendered symbols, so an unbounded count would
+    // also be a real perf cost).
+    if (zoom >= 9.5) {
       const visible = cw.neighborhoods
         .filter((n) => bounds.contains([n.lng, n.lat]))
         .sort((a, b) => roughDist(a, center) - roughDist(b, center))
@@ -555,7 +771,7 @@ export function MapView({ address }: { address: string }) {
       }
     }
 
-    if (zoom >= 10) {
+    if (zoom >= 11) {
       const visible = cw.precincts
         .filter((p) => bounds.contains([p.lng, p.lat]))
         .sort((a, b) => roughDist(a, center) - roughDist(b, center))
@@ -571,12 +787,13 @@ export function MapView({ address }: { address: string }) {
     }
   }
 
-  const noiseSource = geo?.sources.cells;
+  const activeMetric = METRICS.find((m) => m.id === metricId) ?? METRICS[0];
+  const cellMetricSource = cellSourceFor(metricId, geo);
   const crimeSource = citywide?.crime_source;
   const crimeCaveat = citywide?.crime_caveat;
 
-  const activeCellReadout = heatMode !== "crime" && hoveredCell;
-  const activePrecinctReadout = heatMode === "crime" && hoveredPrecinct;
+  const activeCellReadout = activeMetric.resolution === "cell" && hoveredCell;
+  const activePrecinctReadout = activeMetric.resolution === "precinct" && hoveredPrecinct;
 
   const legend = useMemo(
     () => [
@@ -587,7 +804,7 @@ export function MapView({ address }: { address: string }) {
         swatch: { border: `1px solid ${INK}`, background: "none" },
         label: "H3 res-9 cell · 0.105 km² · subject in red",
       },
-      ...(heatMode === "crime"
+      ...(activeMetric.resolution === "precinct"
         ? [
             {
               swatch: { background: RED, opacity: 0.34 },
@@ -595,8 +812,16 @@ export function MapView({ address }: { address: string }) {
             },
           ]
         : []),
+      ...(activeMetric.resolution === "cell" && activeMetric.id !== "none"
+        ? [
+            {
+              swatch: { background: RED, opacity: 0.34 },
+              label: `${activeMetric.label} · percentile within this neighbourhood`,
+            },
+          ]
+        : []),
     ],
-    [heatMode],
+    [activeMetric],
   );
 
   return (
@@ -604,19 +829,30 @@ export function MapView({ address }: { address: string }) {
       <h2 className="field__title">The neighbourhood, navigable</h2>
 
       <div className="mapfield__controls">
-        <span>Heat-map</span>
-        {HEAT_MODES.map((m) => (
-          <button
-            key={m.id}
-            type="button"
-            className="mapfield__toggle"
-            aria-pressed={heatMode === m.id}
-            onClick={() => setHeatMode(m.id)}
-          >
-            {m.label}
-          </button>
-        ))}
+        <label htmlFor="mapfield-metric">Shade the map by</label>
+        <select
+          id="mapfield-metric"
+          className="mapfield__select"
+          value={metricId}
+          onChange={(e) => setMetricId(e.target.value)}
+        >
+          {METRICS.map((m) => (
+            <option key={m.id} value={m.id} disabled={m.status === "disabled"} title={m.reason}>
+              {m.label}
+              {m.status === "disabled" ? " — greyed, see note below" : ""}
+            </option>
+          ))}
+        </select>
+        {activeMetric.status === "proxy" && (
+          <span className="mapfield__metricnote small">Proxy, not a claim about commute time.</span>
+        )}
       </div>
+      {METRICS.some((m) => m.status === "disabled") && (
+        <p className="mapfield__note mono">
+          Greyed options have no honest citywide value this report can compute yet — hover an option for the
+          real reason.
+        </p>
+      )}
 
       <div className="mapfield__stage">
         <div>
@@ -643,7 +879,7 @@ export function MapView({ address }: { address: string }) {
         <div className="readout">
           <h3>Map readout</h3>
           {activeCellReadout ? (
-            <CellReadout cell={hoveredCell} source={noiseSource} />
+            <CellReadout cell={hoveredCell} metric={activeMetric} source={cellMetricSource} />
           ) : activePrecinctReadout ? (
             <PrecinctReadout precinct={hoveredPrecinct} source={crimeSource} caveat={crimeCaveat} />
           ) : (
@@ -659,7 +895,9 @@ export function MapView({ address }: { address: string }) {
       </div>
 
       {geo && <p className="mapfield__note mono">{geo.basemap_note}</p>}
-      {heatMode === "crime" && crimeCaveat && <p className="mapfield__note mono">{crimeCaveat}</p>}
+      {activeMetric.resolution === "precinct" && crimeCaveat && (
+        <p className="mapfield__note mono">{crimeCaveat}</p>
+      )}
     </div>
   );
 }

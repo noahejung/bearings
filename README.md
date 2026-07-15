@@ -95,7 +95,7 @@ Six endpoints:
 - `GET /api/health` -> `{"status": "ok", "warm": bool}`
 - `GET /api/profile?address=<str>` -> the full profile (transit, amenities, safety, quiet, green, building); every one of those six blocks carries its own `source`
 - `POST /api/factcheck` body `{"address": str, "listing_text": str}` -> claim-by-claim fact check of listing marketing copy against the real data
-- `GET /api/map?address=<str>` -> real map geometry for the neighbourhood around one address: real building footprints and street centrelines (NYC Open Data, baked at build time -- `src/bearings/sources/buildings.py` / `streets.py`), GTFS subway/PATH alignments and stations (each carrying its real served routes), and real per-H3-cell 311 noise density for the k=3 disk around the subject cell. Feeds the navigable map's local overlay (`web/src/components/MapView.tsx`).
+- `GET /api/map?address=<str>` -> real map geometry for the neighbourhood around one address: real building footprints and street centrelines (NYC Open Data, baked at build time -- `src/bearings/sources/buildings.py` / `streets.py`), GTFS subway/PATH alignments and stations (each carrying its real served routes), and five real per-H3-cell metrics for the k=3 disk around the subject cell -- 311 noise, Overture daily-life amenity counts, living-street-tree counts, median PLUTO building age, and nearby-transit-station counts (see `src/bearings/mapgeo.py`'s own module docstring for the full per-metric breakdown). Feeds the navigable map's local overlay and metric dropdown (`web/src/components/MapView.tsx`).
 - `GET /api/citywide` -> address-independent map data, fetched once by the front end rather than once per address: every NTA neighbourhood label (262) and every NYPD precinct's boundary + CompStat crime total, plus each precinct's percentile position among all 78 (relative-to-NYC, not absolute -- see the "Known Simplifications" section below) -- see `src/bearings/citywide.py`.
 - `GET /tiles/nyc-basemap.pmtiles` (and the rest of `data/derived/`) -> the self-hosted PMTiles NYC basemap the map renders, served with Range-request support so MapLibre's `pmtiles.js` client only ever fetches the byte spans it needs, not the whole 99MB file -- see `src/bearings/sources/basemap.py`.
 
@@ -187,10 +187,43 @@ cell boundaries (`h3-js`, thin outline, subject cell red), real GTFS
 subway/PATH lines and stations (labelled by real served route, via
 `RouteBullet`), real building footprints and street centrelines around the
 searched address, and real NTA neighbourhood + NYPD precinct labels
-city-wide. An off-by-default heat-map toggle shades the map by a real
-metric at its native resolution -- 311 noise per H3 cell, NYPD CompStat
-crime per precinct -- never a fabricated finer resolution than the source
-actually has.
+city-wide.
+
+**Level-of-detail by zoom** (2026-07-15): layers appear, fade, and resize
+by zoom the way any slippy map does -- minor/residential streets and the
+hex grid are hidden at city scale and fade in as you zoom past ~z12-13,
+arterials/subway/water/neighbourhood labels stay visible throughout, and
+the searched address's own H3 cell is always drawn regardless of zoom.
+Authored entirely with MapLibre's native `minzoom` + `interpolate`/`case`
+zoom expressions (`web/src/lib/mapStyle.ts`, `MapView.tsx`) -- no custom
+show/hide system.
+
+**An off-by-default metric DROPDOWN** (2026-07-15, replacing an earlier
+hardcoded noise/crime toggle) shades the map by any one of seven real
+metrics at its native resolution -- never a fabricated finer resolution
+than the source actually has. Each metric was triaged honestly:
+- **Ship** (a real, precomputed-per-request value backs every cell/precinct
+  shown): 311 noise complaints, CompStat major crime (per precinct,
+  percentile vs. NYC), grocery/daily-life amenity density (Overture),
+  living-street-tree density, and median PLUTO building age -- all five
+  per H3 cell except crime, computed live for the k=3 disk around the
+  searched address (see `src/bearings/mapgeo.py`'s own module docstring).
+- **Proxy, labelled honestly:** transit access (subway/PATH stations
+  within an easy walk of each cell) stands in for "commute time", which
+  has no single citywide value -- a commute is always time *to* somewhere.
+- **Disabled, with a real reason, shown greyed in the dropdown, never
+  silently omitted:** FEMA flood zone (a single-point-at-a-time API with
+  no bounding-box query and a real live failure rate), and the sparse
+  per-building 311 datasets -- rodent inspections, heat/hot-water
+  complaints, bedbug filings (a quiet cell there could mean "no problem"
+  or "nobody filed a complaint", which this project's rule against
+  fabricated citywide data forbids shading a map with).
+Cell-resolution metrics are shaded by **percentile within the currently
+loaded neighbourhood** (a real, honestly-computed number, but a smaller
+reference population than crime's true 78-precinct citywide percentile --
+the map's own copy says "relative to this neighbourhood", never
+"citywide", for exactly that reason). See
+`web/src/lib/relativeScale.ts` and `src/bearings/mapgeo.py`.
 
 **Local dev needs the `pmtiles` CLI on PATH** (in addition to `poppler-utils`
 for CompStat's `pdftotext`, an existing prerequisite this README didn't

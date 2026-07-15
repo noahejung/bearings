@@ -154,9 +154,20 @@ export interface MapStation {
   routes: string[];
 }
 
+// Five real per-cell metrics (VISUAL.md §5, REVISED 2026-07-15 -- the
+// heat-map toggle became a metric dropdown; see bearings/mapgeo.py's own
+// module docstring for what each one measures and where its number comes
+// from). `building_age_years` is the only metric that can be `null`: the
+// real median PLUTO yearbuilt of every lot in a cell, or null when no
+// PLUTO lot with a recorded year falls in that cell -- never a fabricated
+// year standing in for "no record".
 export interface MapCell {
   h3: string;
-  value: number;
+  noise: number;
+  amenities: number;
+  trees: number;
+  building_age_years: number | null;
+  transit_access: number;
 }
 
 export interface MapBuilding {
