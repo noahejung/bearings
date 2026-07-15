@@ -178,6 +178,33 @@ def shapes(feed: str = "mta") -> pd.DataFrame:
     return out
 
 
+def shape_routes(feed: str = "mta") -> dict[str, str]:
+    """shape_id -> a real, rider-facing route label (e.g. "B", "PATH") --
+    the map's subway-line labels (VISUAL.md §5: "Subway lines + labels ...
+    labelled by route"). Joined via trips.txt (shape_id -> route_id) and
+    routes.txt (route_id -> route_short_name), the same two-hop join
+    stations() already uses for the same reason: PATH's route_ids are
+    opaque numbers, route_short_name is the only rider-facing label.
+
+    A shape_id shared by more than one route_short_name (possible in
+    principle -- GTFS doesn't forbid it) joins the labels with "/" rather
+    than silently picking one, so the label never claims a single-route
+    shape is more certain than the data says.
+    """
+    trips = _read(feed, "trips.txt")
+    routes = _read(feed, "routes.txt")
+    joined = (
+        trips[["shape_id", "route_id"]]
+        .dropna()
+        .merge(routes[["route_id", "route_short_name"]], on="route_id", how="left")
+    )
+    joined["shape_id"] = _namespaced(feed, joined["shape_id"])
+    grouped = joined.groupby("shape_id")["route_short_name"].apply(
+        lambda s: "/".join(sorted(set(s.dropna())))
+    )
+    return grouped.to_dict()
+
+
 def stop_times(feed: str = "mta") -> pd.DataFrame:
     """The timetable for the given feed, with times normalised to
     seconds-since-midnight and stops collapsed to (namespaced) parent

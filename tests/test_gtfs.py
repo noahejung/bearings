@@ -117,3 +117,31 @@ def test_mta_shape_ids_stay_unnamespaced(mta_shapes):
 
 def test_path_shape_ids_are_namespaced(path_shapes):
     assert path_shapes["shape_id"].str.startswith("PATH:").all()
+
+
+# ---------------------------------------------------------------------------
+# shape_routes() -- real route labels for the map's subway line labels.
+# ---------------------------------------------------------------------------
+
+
+def test_mta_shapes_resolve_to_real_route_labels(mta_shapes):
+    routes = gtfs.shape_routes()
+    # Every real shape_id must resolve to a real, non-empty route label --
+    # a broken join would silently produce "" for every shape.
+    labelled = [routes.get(sid, "") for sid in mta_shapes["shape_id"]]
+    assert all(labelled)
+    # At least the letter/number lines riders actually navigate by must
+    # show up somewhere in the label set.
+    all_labels = set("/".join(labelled).split("/"))
+    assert {"B", "D", "F", "M", "1", "6", "L"} <= all_labels
+
+
+def test_path_shapes_resolve_to_path(path_shapes):
+    routes = gtfs.shape_routes(feed="path")
+    labelled = {routes.get(sid, "") for sid in path_shapes["shape_id"]}
+    assert labelled == {"PATH"}
+
+
+def test_shape_routes_keys_are_namespaced_like_shapes(path_shapes):
+    routes = gtfs.shape_routes(feed="path")
+    assert all(k.startswith("PATH:") for k in routes)

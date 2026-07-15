@@ -80,10 +80,24 @@ def test_subway_line_coords_are_lat_lng_pairs(geo):
     assert -74.4 < lng < -73.6
 
 
+def test_subway_lines_carry_a_real_route_label(geo):
+    # Every line drawn near a dense transit address must resolve to a real
+    # rider-facing route label, never a blank string (VISUAL.md: subway
+    # lines are "labelled by route").
+    assert all(line["route"] for line in geo["subway_lines"])
+    all_labels = set("/".join(line["route"] for line in geo["subway_lines"]).split("/"))
+    assert {"B", "D", "F", "M"} & all_labels
+
+
 def test_finds_real_stations_near_a_dense_transit_address(geo):
     assert len(geo["stations"]) > 0
     names = {s["name"] for s in geo["stations"]}
     assert any("Herald Sq" in n or "34 St" in n or "5 Av" in n for n in names)
+
+
+def test_stations_carry_their_real_served_routes(geo):
+    herald = next(s for s in geo["stations"] if "Herald Sq" in s["name"])
+    assert set(herald["routes"]) >= {"B", "D", "F", "M"}
 
 
 def test_cells_cover_the_full_k3_disk_and_include_the_subject_cell(geo):

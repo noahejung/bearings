@@ -35,13 +35,29 @@ FROM python:3.12-slim AS runtime
 # pdftotext); a container has no such accident to lean on, so it is
 # installed explicitly here.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends poppler-utils ca-certificates \
+    && apt-get install -y --no-install-recommends poppler-utils ca-certificates curl \
     && rm -rf /var/lib/apt/lists/*
 
 # Official static uv binary -- pinned to the same version this repo's CI
 # workflow uses (.github/workflows/ci.yml), so "it passed in CI" and "it
 # built in Docker" mean the same uv behaviour.
 COPY --from=ghcr.io/astral-sh/uv:0.11.28 /uv /uvx /usr/local/bin/
+
+# go-pmtiles CLI (protomaps/go-pmtiles) -- an OS binary dependency of
+# bearings.sources.basemap, in exactly the same shape poppler-utils is a
+# dependency of bearings.sources.compstat above: not a Python package, so
+# `uv sync` succeeds with or without it, and the failure mode without it is
+# a loud PmtilesBinaryMissing at the RUN step below, not a silent missing
+# basemap. Pinned to v1.31.1 (the version this repo's local dev/test and
+# CI all use -- see .github/workflows/ci.yml) so "it extracted locally"
+# and "it extracted in the image" mean the same `pmtiles extract` binary.
+# No apt package exists for this (Go binary distributed via GitHub
+# Releases only), so it's fetched directly rather than through apt like
+# poppler-utils is.
+RUN curl -sL \
+      https://github.com/protomaps/go-pmtiles/releases/download/v1.31.1/go-pmtiles_1.31.1_Linux_x86_64.tar.gz \
+      | tar -xz -C /usr/local/bin pmtiles \
+    && chmod +x /usr/local/bin/pmtiles
 
 WORKDIR /app
 
@@ -133,6 +149,25 @@ RUN uv run python -c "from bearings import profile; profile.warm_caches()"
 # Parquet row-group pruning on precomputed min/max lat/lng columns) on
 # every real /api/map request.
 RUN uv run python -c "from bearings import mapgeo; mapgeo.warm_caches()"
+
+# The self-hosted NYC PMTiles basemap (src/bearings/sources/basemap.py).
+# Real cost: one `pmtiles extract` against the live Protomaps daily-build
+# host over HTTP range requests -- confirmed live 2026-07-15 at ~12s /
+# ~104MB transferred for a 99MB NYC-only archive at full zoom 0-15 detail.
+# Baked here, once, and served from this app's own /tiles mount -- see
+# api.py; never fetched from build.protomaps.com at request time.
+RUN uv run python -c "from bearings.sources import basemap; basemap.warm_cache()"
+
+# Citywide, address-independent map data: NTA neighbourhood labels and
+# every NYPD precinct's boundary + CompStat crime total (src/bearings/
+# citywide.py). Real cost: one NTA fetch (~5s) plus up to 78 live CompStat
+# PDF fetches (~1.5s cold each, less once NYPD's own CDN is warm) -- on the
+# order of two minutes, confirmed live 2026-07-15. A genuine, stated
+# expansion of the existing per-address-lazy CompStat pattern (see
+# citywide.py's own module docstring) -- baked here so the map's crime
+# choropleth is ready at container boot, not fetched 78-precincts-deep on
+# whichever request happens to load the map first.
+RUN uv run python -c "from bearings import citywide; citywide.warm_caches()"
 
 ENV PATH="/app/.venv/bin:$PATH"
 EXPOSE 8000

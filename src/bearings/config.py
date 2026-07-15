@@ -74,6 +74,31 @@ OVERTURE_S3 = (
 # Precinct, a real numbered precinct this dataset includes but that NYPD's
 # "77 precincts" figure conventionally excludes. Column is "precinct".
 PRECINCT_GEOJSON = "https://data.cityofnewyork.us/resource/y76i-bdw7.geojson"
+# Douglas-Peucker tolerance (degrees) used when simplifying precinct polygons
+# for the citywide choropleth -- 0.0003deg is ~30m at NYC's latitude, live-
+# measured to cut the citywide payload from 3.83MB to 243KB (78 precincts,
+# 6,132 total points) with no visible loss at any zoom where the whole city
+# fits on screen. See bearings/sources/precincts.py's precinct_features().
+PRECINCT_SIMPLIFY_TOLERANCE_DEG = 0.0003
+
+# 2020 Neighborhood Tabulation Areas (NTAs) -- confirmed live 2026-07-15 via
+# the Socrata catalog (api.us.socrata.com/api/catalog/v1?q=neighborhood+
+# tabulation): dataset "9nt8-h7nd", 262 features, columns nta2020/ntaname/
+# boroname/the_geom. Not the "2020 NTAs - Mapped" lens (4hft-v355), which
+# per this codebase's established pattern for map-lens datasets carries no
+# queryable columns. Used only for label placement (name + centroid), never
+# for a shaded layer -- see bearings/sources/neighborhoods.py.
+NTA_GEOJSON = "https://data.cityofnewyork.us/resource/9nt8-h7nd.geojson"
+
+# The Protomaps daily-build planet PMTiles basemap. `bearings.sources.
+# basemap` extracts just the NYC bbox from this remote archive over HTTP
+# range requests via the `pmtiles` CLI (protomaps/go-pmtiles) -- it never
+# downloads the full ~120GB planet file. Builds are retained for the past
+# week only (Protomaps' own retention policy, see docs.protomaps.com/
+# basemaps/downloads), so the date is resolved at bake time, not pinned --
+# same self-resolving shape as OVERTURE_RELEASE above, for the same reason.
+PMTILES_BUILD_HOST = "https://build.protomaps.com"
+PMTILES_BUILD_LOOKBACK_DAYS = 10
 
 # --- disk-cache freshness (see bearings.staleness) ---
 # Every one of these caches is write-once, read-forever -- crossing this
@@ -88,6 +113,14 @@ ANCHOR_TIMES_CACHE_MAX_AGE_S = 30 * 86400
 GTFS_CACHE_MAX_AGE_S = 30 * 86400
 COMPSTAT_CACHE_MAX_AGE_S = 10 * 86400
 PRECINCT_CACHE_MAX_AGE_S = 365 * 86400
+NTA_CACHE_MAX_AGE_S = 365 * 86400  # NTA boundaries are redrawn once a decade
+# The daily PMTiles basemap build churns constantly (upstream OSM edits),
+# but that's a source-freshness question, not a "did our bake go stale"
+# question -- the local extract is a point-in-time snapshot by design (baked
+# once at build time, same tradeoff as the POI table). A generous window so
+# a long-lived local dev/ directory still gets a loud nudge eventually.
+BASEMAP_CACHE_MAX_AGE_S = 30 * 86400
+CITYWIDE_CACHE_MAX_AGE_S = 10 * 86400  # matches COMPSTAT_CACHE_MAX_AGE_S below
 # Building footprints and street centrelines change rarely (new construction,
 # demolitions, occasional street re-mapping) -- same 30-day slack as the POI
 # table, which is baked from a similarly-official, similarly-infrequent source.

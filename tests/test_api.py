@@ -201,3 +201,39 @@ def test_map_returns_the_contract_shape(client):
 def test_map_bad_address_is_422_not_500(client):
     resp = client.get("/api/map", params={"address": "qqqqqqqqzzzzzzz not a real place"})
     assert resp.status_code == 422
+
+
+def test_map_subway_lines_carry_route_labels(client):
+    resp = client.get("/api/map", params={"address": EMPIRE_STATE})
+    body = resp.json()
+    assert all("route" in line for line in body["subway_lines"])
+    assert all("routes" in s for s in body["stations"])
+
+
+def test_citywide_returns_the_contract_shape(client):
+    resp = client.get("/api/citywide")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert set(body) == {
+        "neighborhoods",
+        "precincts",
+        "neighborhoods_source",
+        "precincts_source",
+        "crime_source",
+    }
+    assert len(body["neighborhoods"]) > 200
+    assert len(body["precincts"]) == 78
+    for p in body["precincts"]:
+        assert p["geometry"]["type"] in ("Polygon", "MultiPolygon")
+
+
+def test_tiles_serves_the_real_basemap_archive_with_range_support(client):
+    # A real MapLibre/pmtiles.js client never fetches the whole 99MB file --
+    # it opens a Range request for just the byte span it needs. If this
+    # endpoint didn't honour Range, the map would still "work" in a crude
+    # full-download sense but would defeat the entire reason PMTiles exists.
+    resp = client.get("/tiles/nyc-basemap.pmtiles", headers={"Range": "bytes=0-15"})
+    assert resp.status_code == 206
+    assert len(resp.content) == 16
+    # PMTiles v3 magic bytes: "PMTiles" + version byte 3.
+    assert resp.content[:7] == b"PMTiles"

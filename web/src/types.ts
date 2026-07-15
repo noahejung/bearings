@@ -139,12 +139,14 @@ export interface MapBbox {
 
 export interface MapLine {
   coords: [number, number][]; // [lat, lng]
+  route: string; // e.g. "B/D/F/M", "PATH" -- see sources/gtfs.py's shape_routes()
 }
 
 export interface MapStation {
   name: string;
   lat: number;
   lng: number;
+  routes: string[];
 }
 
 export interface MapCell {
@@ -173,4 +175,52 @@ export interface MapGeometry {
   cells: MapCell[];
   basemap_note: string;
   sources: Record<string, Source>;
+}
+
+// Mirrors GET /api/citywide exactly (bearings/citywide.py's get()). Unlike
+// MapGeometry above, none of this depends on which address is loaded --
+// it's fetched once, not once per address (see citywide.py's own
+// docstring).
+export interface NeighborhoodLabel {
+  nta2020: string;
+  name: string;
+  borough: string;
+  lat: number;
+  lng: number;
+}
+
+export interface PrecinctCrime {
+  week_ending: string;
+  robbery_ytd: number;
+  felony_assault_ytd: number;
+  total_ytd: number;
+}
+
+// GeoJSON Polygon/MultiPolygon -- typed loosely (not `Geometry` from
+// @types/geojson, which this repo doesn't depend on) since MapLibre's own
+// GeoJSONSource.setData() accepts `GeoJSON.GeoJSON | string` and does its
+// own runtime validation; the map component only ever passes this straight
+// through into a Feature it builds.
+export interface PrecinctGeometry {
+  type: "Polygon" | "MultiPolygon";
+  coordinates: unknown;
+}
+
+export interface PrecinctFeature {
+  precinct: number;
+  lat: number;
+  lng: number;
+  geometry: PrecinctGeometry;
+  // `null` when this one precinct's live CompStat fetch genuinely failed
+  // during the citywide bake -- never a fabricated zero. See citywide.py's
+  // _crime_for_precinct() docstring.
+  crime: PrecinctCrime | null;
+}
+
+export interface Citywide {
+  neighborhoods: NeighborhoodLabel[];
+  precincts: PrecinctFeature[];
+  neighborhoods_source: Source;
+  precincts_source: Source;
+  crime_source: Source;
 }

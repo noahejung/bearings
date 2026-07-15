@@ -22,10 +22,16 @@ name: CI
 # and does NOT call `bearings.profile.profile_for()` (which geocodes
 # internally). That is every source-module test (Socrata, GTFS, transit
 # graph, trees, rodents, noise, bedbugs, flood, heat, HPD, PLUTO, precincts,
-# CompStat, Overture) plus the pure, no-network `cells.py` h3 tests, plus
-# the staleness-cache tests. Confirmed live on 2026-07-14: 102 tests, 0
-# failures, ~90s total. Excluded: test_geocode.py, test_profile.py,
-# test_api.py, test_factcheck.py -- all four chain through the geocoder.
+# CompStat, Overture, basemap, neighborhoods) plus bearings.citywide's own
+# test (composes those same non-geocoding source modules) plus the pure,
+# no-network `cells.py` h3 tests, plus the staleness-cache tests. Confirmed
+# live on 2026-07-14: 102 tests, 0 failures, ~90s total. Excluded:
+# test_geocode.py, test_profile.py, test_api.py, test_factcheck.py -- all
+# four chain through the geocoder. Also excluded, pre-existing and not
+# introduced by this comment: test_mapgeo.py (chains through geocode.py the
+# same way), test_buildings.py, test_streets.py (don't chain through the
+# geocoder, but were never added to this list either -- a real gap, not
+# touched here since it's outside this dispatch's scope).
 #
 # DO NOT "fix" this by adding the excluded files back in. If you need to
 # verify the geocoder-chained paths, run them locally:
@@ -64,6 +70,16 @@ jobs:
       - name: Install poppler-utils (pdftotext, for CompStat parsing)
         run: sudo apt-get update && sudo apt-get install -y poppler-utils
 
+      # go-pmtiles CLI -- required by test_basemap.py (real `pmtiles
+      # extract` against the live Protomaps daily-build host). Same version
+      # pinned in the Dockerfile, for the same "CI and the deploy image
+      # mean the same binary" reason uv's own version pin exists.
+      - name: Install pmtiles CLI (go-pmtiles, for basemap extraction)
+        run: |
+          curl -sL https://github.com/protomaps/go-pmtiles/releases/download/v1.31.1/go-pmtiles_1.31.1_Linux_x86_64.tar.gz \
+            | sudo tar -xz -C /usr/local/bin pmtiles
+          sudo chmod +x /usr/local/bin/pmtiles
+
       # No Python linter is configured anywhere in this repo (pyproject.toml
       # has no [tool.ruff] / [tool.black] / [tool.mypy] section, and none of
       # ruff/black/mypy/flake8 is an installed dependency). Per this repo's
@@ -92,6 +108,9 @@ jobs:
             tests/test_bedbugs.py \
             tests/test_flood.py \
             tests/test_heat.py \
+            tests/test_basemap.py \
+            tests/test_neighborhoods.py \
+            tests/test_citywide.py \
             -v
 
   frontend:

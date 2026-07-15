@@ -36,7 +36,7 @@ import h3
 import pandas as pd
 
 from bearings import cells, config, transit
-from bearings.sources import buildings, gtfs, socrata, streets
+from bearings.sources import basemap, buildings, gtfs, socrata, streets
 
 # Matches the approved prototype's k=3 disk (37 cells) and its ~700m
 # half-width box -- see the dispatch's scratchpad bearings-map.html /
@@ -46,16 +46,20 @@ BBOX_RADIUS_M = 700.0
 _NOISE_WINDOW_DAYS = 365
 
 BASEMAP_NOTE = (
-    "Every layer is real, drawn from public records: building footprints "
-    "and street centrelines (NYC Open Data, baked once at build time -- "
-    "see sources/buildings.py and sources/streets.py), subway/PATH "
-    "alignments (GTFS shapes.txt), and per-cell density (real NYC 311 "
-    "noise counts). No basemap tiles, no third-party map service -- "
-    "every line on this sheet was computed from a dataset this report "
-    "also cites."
+    "The base map is a self-hosted PMTiles extract of the Protomaps daily "
+    "OpenStreetMap build (styled to this report's own palette, served from "
+    "this app's own origin -- no third-party tile server at request time; "
+    "see sources/basemap.py). Every layer drawn on top of it is real, "
+    "computed from public records: building footprints and street "
+    "centrelines (NYC Open Data, baked once at build time -- see "
+    "sources/buildings.py and sources/streets.py), subway/PATH alignments "
+    "and route labels (GTFS shapes.txt), and per-cell density (real NYC "
+    "311 noise counts). Every line on this sheet was computed from a "
+    "dataset this report also cites."
 )
 
 SOURCES = {
+    "basemap": dict(basemap.SOURCE),
     "subway": dict(transit.SOURCE),
     "cells": {"name": "NYC 311", "url": "https://data.cityofnewyork.us/d/erm2-nwe9"},
     "buildings": dict(buildings.SOURCE),
@@ -86,12 +90,20 @@ def _shape_touches_bbox(coords: list[tuple[float, float]], bbox: dict) -> bool:
 def _subway_lines(bbox: dict) -> list[dict]:
     """Every real GTFS shape (subway + PATH) that passes through the bbox,
     drawn in full -- not clipped to the box, matching the prototype's own
-    approach of letting the SVG frame do the clipping."""
+    approach of letting the map frame do the clipping. Each line carries a
+    real `route` label (e.g. "B/D/F/M", "PATH") via gtfs.shape_routes() --
+    VISUAL.md's map wants subway lines "labelled by route", not just drawn."""
     lines: list[dict] = []
     for feed in gtfs.FEEDS:
+        routes = gtfs.shape_routes(feed)
         for row in gtfs.shapes(feed).itertuples():
             if _shape_touches_bbox(row.coords, bbox):
-                lines.append({"coords": [[lat, lng] for lat, lng in row.coords]})
+                lines.append(
+                    {
+                        "coords": [[lat, lng] for lat, lng in row.coords],
+                        "route": routes.get(row.shape_id, ""),
+                    }
+                )
     return lines
 
 
@@ -103,7 +115,10 @@ def _stations_in_bbox(bbox: dict) -> list[dict]:
         all_stations["lat"].between(bbox["south"], bbox["north"])
         & all_stations["lng"].between(bbox["west"], bbox["east"])
     ]
-    return [{"name": r.name, "lat": r.lat, "lng": r.lng} for r in hit.itertuples()]
+    return [
+        {"name": r.name, "lat": r.lat, "lng": r.lng, "routes": r.routes}
+        for r in hit.itertuples()
+    ]
 
 
 def _cell_values(subject_cell: str, bbox: dict) -> list[dict]:

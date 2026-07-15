@@ -89,12 +89,14 @@ uv sync
 uv run uvicorn bearings.api:app --host 127.0.0.1 --port 8000
 ```
 
-Four endpoints:
+Six endpoints:
 
 - `GET /api/health` -> `{"status": "ok", "warm": bool}`
 - `GET /api/profile?address=<str>` -> the full profile (transit, amenities, safety, quiet, green, building); every one of those six blocks carries its own `source`
 - `POST /api/factcheck` body `{"address": str, "listing_text": str}` -> claim-by-claim fact check of listing marketing copy against the real data
-- `GET /api/map?address=<str>` -> real map geometry for the neighbourhood: GTFS subway/PATH alignments, real stations, and real per-H3-cell 311 noise density for the front end's self-drawn map (`web/src/components/MapView.tsx`). Deliberately does **not** include street or building-footprint layers -- `src/bearings/mapgeo.py`'s module docstring explains why (Overture's `transportation`/`buildings` themes are ~60GB/~276GB globally with no viable per-request bbox query at this codebase's scale) and the response's own `basemap_note` field states the same gap to the front end, rather than silently drawing nothing.
+- `GET /api/map?address=<str>` -> real map geometry for the neighbourhood around one address: real building footprints and street centrelines (NYC Open Data, baked at build time -- `src/bearings/sources/buildings.py` / `streets.py`), GTFS subway/PATH alignments and stations (each carrying its real served routes), and real per-H3-cell 311 noise density for the k=3 disk around the subject cell. Feeds the navigable map's local overlay (`web/src/components/MapView.tsx`).
+- `GET /api/citywide` -> address-independent map data, fetched once by the front end rather than once per address: every NTA neighbourhood label (262) and every NYPD precinct's boundary + CompStat crime total (78) -- see `src/bearings/citywide.py`.
+- `GET /tiles/nyc-basemap.pmtiles` (and the rest of `data/derived/`) -> the self-hosted PMTiles NYC basemap the map renders, served with Range-request support so MapLibre's `pmtiles.js` client only ever fetches the byte spans it needs, not the whole 99MB file -- see `src/bearings/sources/basemap.py`.
 
 `/api/factcheck` is the rule this whole project is built around, made
 concrete. One real claim from a live run against `1520 Sedgwick Ave, Bronx`
@@ -171,11 +173,32 @@ Tailwind), no animation library -- all motion is CSS, gated behind
 Designers Republic™ Steel set (bone `#EDE9DE`, ink `#111111`, steel
 `#8A8D8F`, pillar-box red `#D7263D` -- see `Projects/bearings/VISUAL.md` in
 the vault). No dark mode: the report is styled as a physical municipal
-record, not a dashboard, and a "dark mode" has no equivalent on paper. The
-one map component (`MapView.tsx`) is self-drawn SVG, no map library, no tile
-server, no live third-party basemap call -- real H3 cell boundaries via the
-`h3-js` npm package, real GTFS subway/PATH geometry, and real 311-derived
-per-cell density.
+record, not a dashboard, and a "dark mode" has no equivalent on paper.
+
+The map (`MapView.tsx`) is a real, navigable **MapLibre GL JS** map --
+pan/zoom/drag across all of NYC -- reading a **self-hosted PMTiles**
+extract of the Protomaps daily OpenStreetMap basemap, styled entirely to
+this app's own palette (`web/src/lib/mapStyle.ts`; no third-party
+cartography, no runtime call to a third-party tile server -- the `.pmtiles`
+file is baked once at build time and served from this app's own `/tiles`
+origin, see `src/bearings/sources/basemap.py`). On top of that: real H3
+cell boundaries (`h3-js`, thin outline, subject cell red), real GTFS
+subway/PATH lines and stations (labelled by real served route, via
+`RouteBullet`), real building footprints and street centrelines around the
+searched address, and real NTA neighbourhood + NYPD precinct labels
+city-wide. An off-by-default heat-map toggle shades the map by a real
+metric at its native resolution -- 311 noise per H3 cell, NYPD CompStat
+crime per precinct -- never a fabricated finer resolution than the source
+actually has.
+
+**Local dev needs the `pmtiles` CLI on PATH** (in addition to `poppler-utils`
+for CompStat's `pdftotext`, an existing prerequisite this README didn't
+previously call out): download the `pmtiles` binary for your OS from
+[protomaps/go-pmtiles releases](https://github.com/protomaps/go-pmtiles/releases)
+(this repo pins v1.31.1 in `Dockerfile` / `.github/workflows/ci.yml`) and put
+it on PATH. Without it, `bearings.sources.basemap.warm_cache()` raises a
+named `PmtilesBinaryMissing` error rather than silently shipping a map with
+no basemap.
 
 ## Deploy
 
@@ -187,11 +210,18 @@ the repo root is a [Render Blueprint](https://render.com/docs/infrastructure-as-
 that wires that existing image into a Render web service; it changes
 nothing about how the app itself boots or serves requests.
 
-**Memory, measured live (not guessed):** idle ~235MB resident, ~245MB peak
-under a 3-way concurrent burst of real `/api/profile` requests, tested
-under a hard `docker run --memory=512m` cap with zero OOM kills -- fits
-Render's Free tier (512MB RAM) with roughly half the budget still free.
-Full methodology and numbers in the deploy dispatch's agent-report.
+**Memory, measured live (not guessed) as of the render-deploy-prep dispatch:**
+idle ~235MB resident, ~245MB peak under a 3-way concurrent burst of real
+`/api/profile` requests, tested under a hard `docker run --memory=512m` cap
+with zero OOM kills -- fits Render's Free tier (512MB RAM) with roughly
+half the budget still free. Full methodology and numbers in that dispatch's
+agent-report. **Not re-measured by the navigable-map dispatch:** the new
+basemap/citywide features add ~99MB + ~300KB to the *image* (disk, baked
+once), not to process RSS at request time -- the new `/tiles` static file
+serve and the `/api/citywide` endpoint's `json.loads()` of a 300KB file are
+both small, one-shot costs, so this figure is expected to still roughly
+hold, but that expectation was not verified with a fresh `docker run
+--memory=512m` measurement this dispatch.
 
 ### Deploying to Render (already deployed -- steps below for reference / re-deploy)
 
@@ -215,10 +245,16 @@ from-scratch re-deploy (e.g. a new Render account).
    create: one web service named `bearings`, Docker runtime, Free plan.
    Review it.
 6. Click **Deploy Blueprint**. Render clones the repo, runs `docker build`
-   against the existing `Dockerfile` (measured locally: ~1.5 minutes for a
-   full from-scratch build on an already-warm base-image cache; add time
-   for Render's own base-image pulls on a genuinely cold build node), then
-   starts the container.
+   against the existing `Dockerfile`, then starts the container. Build time
+   has grown across several dispatches as more data got baked in at build
+   time rather than fetched lazily (buildings/streets ~4 min combined; the
+   self-hosted PMTiles basemap extract ~15s; the citywide NTA + 78-precinct
+   CompStat crime bake ~2 min) -- on the order of several minutes end to
+   end on an already-warm base-image cache; add time for Render's own
+   base-image pulls on a genuinely cold build node. This dispatch measured
+   each new step's real cost individually (see its own agent-report) but
+   did not re-run a full clean `docker build --no-cache` to get one fresh
+   combined number -- worth doing before trusting a single total figure.
 7. Once the deploy finishes, the live URL is on the service's page in the
    dashboard (`https://bearings-<random-suffix>.onrender.com` unless the
    plain name was available). Update the placeholder at the top of this
@@ -285,8 +321,10 @@ simplifications).
 | [NYC HPD Housing Maintenance Code Violations](https://data.cityofnewyork.us/d/wvxf-dwi5) | Open violations by class (Class C = immediately hazardous) for a building's BBL | Free Socrata REST API | NYC Open Data Terms of Use |
 | [NYC PLUTO](https://data.cityofnewyork.us/d/64uk-42ks) | Year built, per tax lot | Free Socrata REST API | NYC Open Data Terms of Use |
 | [NYC Street Tree Census](https://data.cityofnewyork.us/d/uvpi-gqnh) (2015) | Living street tree counts near an address | Free Socrata REST API | NYC Open Data Terms of Use |
-| [NYC Police Precinct boundaries](https://data.cityofnewyork.us/resource/y76i-bdw7.geojson) | Point-in-polygon precinct lookup | Free Socrata GeoJSON export | NYC Open Data Terms of Use |
+| [NYC Police Precinct boundaries](https://data.cityofnewyork.us/resource/y76i-bdw7.geojson) | Point-in-polygon precinct lookup + citywide choropleth polygons | Free Socrata GeoJSON export | NYC Open Data Terms of Use |
 | [NYPD CompStat](https://www.nyc.gov/site/nypd/stats/crime-statistics/citywide-crime-stats.page) | Per-precinct YTD robbery / felony assault / total major crime | Public PDF, requires a browser User-Agent (bot-UA block, not auth) | Public NYPD statistical release |
+| [NYC Neighborhood Tabulation Areas (2020)](https://data.cityofnewyork.us/d/9nt8-h7nd) | Neighbourhood name + centroid, for the map's label layer | Free Socrata GeoJSON export | NYC Open Data Terms of Use |
+| [Protomaps Basemap](https://docs.protomaps.com/basemaps/downloads) (OpenStreetMap + Natural Earth) | The navigable map's base layer (land/water/parks/streets) | Free daily PMTiles build, self-extracted via HTTP range requests, self-hosted | [ODbL](https://opendatacommons.org/licenses/odbl/) (OpenStreetMap Foundation) -- attribution shown in-app |
 
 ## Known simplifications
 
@@ -330,6 +368,19 @@ a stated simplification and distrust a hidden one.
   felony assault) plus a total, from the most recent weekly CompStat PDF.
   It is not a comprehensive crime picture, and "total" includes categories
   (burglary, grand larceny, etc.) not broken out individually.
+- **The map's crime heat-map shades precincts by a raw YTD count, not a
+  rate.** Precincts differ in area and population; a bigger or denser
+  precinct will read "louder" on the choropleth partly because it *is*
+  bigger, not only because it is more dangerous. This is the same number
+  NYPD's own CompStat publishes and the SafetyCard already shows -- real,
+  cited, not fabricated -- but it is a count, not a normalized rate, and
+  the map does not claim otherwise.
+- **Citywide crime data is a build-time snapshot of up to 78 independent
+  live PDF fetches.** `bearings.citywide.py`'s bake calls
+  `compstat.fetch_precinct()` for every real precinct number; if any one
+  precinct's live fetch fails that day, its `crime` field is `None` (never
+  a fabricated zero) and the map shows no fill for that one precinct
+  rather than a wrong number.
 - **The geocoder's fuzzy-match guard is a heuristic, not a proof.** NYC
   GeoSearch's PAD index is NYC-only, so an out-of-city address doesn't
   fail -- it fuzzy-matches a same-numbered NYC address on an unrelated
@@ -400,13 +451,20 @@ src/bearings/
     overture.py           # POIs via DuckDB over S3 Parquet + runtime release resolution
     gtfs.py                # MTA + PATH GTFS ingest, one code path for both feeds
     compstat.py             # NYPD precinct PDFs -> crime table
-    precincts.py              # precinct boundary point-in-polygon join
+    precincts.py              # precinct boundary point-in-polygon join + citywide polygons
+    neighborhoods.py           # NTA neighbourhood label centroids, citywide
+    buildings.py                # NYC building-footprint mass, baked at build time
+    streets.py                   # NYC street-centreline hairlines, baked at build time
+    basemap.py                    # self-hosted PMTiles NYC basemap extract
   transit.py            # GTFS -> graph -> real travel times from anchors
   profile.py            # assemble the per-address profile
-  mapgeo.py              # real map geometry for one address: subway lines,
-                          # stations, per-H3-cell 311 density (no streets/buildings --
-                          # see the module docstring for why)
-  api.py                # FastAPI wrapper: GET /api/profile, POST /api/factcheck, GET /api/map
+  mapgeo.py              # real map geometry for one address: real subway lines +
+                          # stations (with served routes), real building mass +
+                          # street hairlines, per-H3-cell 311 density
+  citywide.py             # address-independent map data: NTA labels + precinct
+                           # boundaries/crime, baked once, not once per address
+  api.py                # FastAPI wrapper: GET /api/profile, POST /api/factcheck,
+                        # GET /api/map, GET /api/citywide, GET /tiles/*
   cli.py                 # `bearings profile "<address>"`
   factcheck.py           # rule-based claim extraction + evidence lookup
 
@@ -417,7 +475,7 @@ web/                    # React + TypeScript front end (Phase 2) -- see "Running
     api.ts                # typed fetch wrapper for the API endpoints
     types.ts               # mirrors the API contract exactly
     components/             # one component per report field, the fact-checker,
-                             # and MapView.tsx (the self-drawn map)
-    lib/catalogue.ts         # BRG—YYYY—MMDD—xx catalogue code generator
+                             # and MapView.tsx (the navigable MapLibre map)
+    lib/mapStyle.ts          # the self-authored tDR MapLibre style (VISUAL.md §5)
     styles/index.css         # the whole design system, hand-written CSS
 ```

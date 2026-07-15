@@ -1155,32 +1155,100 @@ body {
   padding: 8px;
 }
 
-.mapfield__frame svg {
+/* MapLibre needs an explicit height on its container -- unlike the old
+   viewBox SVG, a GL canvas has no intrinsic aspect ratio to fall back to. */
+.mapfield__map {
   width: 100%;
-  height: auto;
+  height: 560px;
   background: var(--bone);
 }
 
-.hexcell .hexcell__fill {
-  transition: fill-opacity 0.13s ease;
+/* maplibre-gl's own stylesheet (imported in MapView.tsx) ships default
+   control chrome in its own visual language -- retint the navigation
+   control to the tDR palette rather than leaving MapLibre's default blue. */
+.maplibregl-ctrl-group {
+  border-radius: 0 !important;
+  border: 1.5px solid var(--ink) !important;
+  box-shadow: none !important;
 }
 
-.hexcell .hexcell__edge {
-  transition: stroke 0.13s ease, stroke-width 0.13s ease, stroke-opacity 0.13s ease;
+.maplibregl-ctrl-group button {
+  background: var(--bone) !important;
 }
 
-.hexcell:hover {
-  cursor: crosshair;
+.maplibregl-ctrl-attrib {
+  font-family: var(--font-mono) !important;
+  font-size: 9px !important;
 }
 
-.hexcell:hover .hexcell__fill {
-  fill-opacity: 0.04 !important;
+.mapfield__status {
+  margin-top: 0.6rem;
+  font-size: 0.76rem;
+  color: var(--steel);
 }
 
-.hexcell:hover .hexcell__edge {
-  stroke: var(--red) !important;
-  stroke-width: 2.4 !important;
-  stroke-opacity: 1 !important;
+.mapfield__status--error {
+  color: var(--red);
+}
+
+/* ---------- map labels (DOM markers, not GL symbol layers -- see
+   mapStyle.ts's own comment on why: real app fonts, no glyph-PBF
+   pipeline) ---------- */
+.maplabel {
+  font-family: var(--font-mono);
+  color: var(--ink);
+  white-space: nowrap;
+  pointer-events: none;
+  text-shadow: 0 0 3px var(--bone), 0 0 3px var(--bone), 0 0 5px var(--bone);
+}
+
+.maplabel--neighborhood {
+  font-size: 10px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.maplabel--precinct {
+  font-size: 9px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--steel);
+}
+
+/* ---------- subway station markers ---------- */
+.mapstation {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.mapstation__dot {
+  display: block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--bone);
+  border: 1.6px solid var(--red);
+  flex-shrink: 0;
+}
+
+.mapstation__bullets {
+  display: flex;
+  gap: 1px;
+}
+
+.mapstation__bullet {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  color: var(--bone);
+  font-family: var(--font-mono);
+  font-weight: 700;
+  font-size: 7.5px;
+  line-height: 1;
 }
 
 .mapfield__legend {

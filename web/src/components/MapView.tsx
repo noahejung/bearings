@@ -1,186 +1,393 @@
 import * as h3 from "h3-js";
-import { useEffect, useMemo, useState } from "react";
-import { ApiError, getMapGeometry } from "../api";
-import type { MapCell, MapGeometry } from "../types";
+import type { Feature, FeatureCollection, Geometry } from "geojson";
+import maplibregl, { type LngLat, type Map as MapLibreMap, type Marker } from "maplibre-gl";
+import "maplibre-gl/dist/maplibre-gl.css";
+import { Protocol } from "pmtiles";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { ApiError, getCitywide, getMapGeometry } from "../api";
+import { buildMapStyle } from "../lib/mapStyle";
+import type { Citywide, MapGeometry, PrecinctFeature } from "../types";
+import { colorFor } from "./RouteBullet";
 
-// VISUAL.md §5 -- self-drawn vectors, no map library, no tile server, no
-// live third-party basemap call in the request path. Ported from the
-// Noah-approved prototype (scratchpad/bearings-map.html, base=hybrid,
-// texture=stipple). Every layer is real geometry: NYC building footprints
-// and street centrelines (baked at build time -- sources/buildings.py,
-// sources/streets.py), GTFS subway/PATH alignments, and real H3 cell
-// boundaries (h3-js cellToBoundary) with real 311-derived density.
+// VISUAL.md §5, REVISED 2026-07-15 -- MapLibre GL reading a self-hosted
+// Protomaps PMTiles extract of NYC (bearings/sources/basemap.py bakes it;
+// api.py serves it from this app's own /tiles origin, never a third-party
+// tile server at request time). The base map (mapStyle.ts) is authored to
+// this app's own palette; everything on top of it is real geometry from
+// GET /api/map (the neighbourhood around the searched address -- building
+// mass, street hairlines, subway/PATH, H3 noise cells) and GET /api/citywide
+// (address-independent: NTA neighbourhood labels and every NYPD precinct's
+// boundary + CompStat crime total, fetched once, not once per address).
 
-const BONE = "#EDE9DE";
 const INK = "#111111";
-const STEEL = "#8A8D8F";
 const RED = "#D7263D";
+const STEEL = "#8A8D8F";
 
-const VB_W = 860;
-const VB_H = 560;
+type HeatMode = "none" | "noise" | "crime";
 
-// One-line toggle (VISUAL.md §6, "cheap to flip either way"): whether the
-// map ships showing the full H3 grid or only the subject cell. Also
-// operable live via the button below -- this constant is just the
-// default state, not the only way to flip it.
-const SHOW_FULL_GRID_BY_DEFAULT = true;
+const HEAT_MODES: { id: HeatMode; label: string }[] = [
+  { id: "none", label: "Off" },
+  { id: "noise", label: "311 noise (per cell)" },
+  { id: "crime", label: "CompStat crime (per precinct)" },
+];
 
-// Road-class weighting, indexed by MapStreet.rank (0=local .. 3=highway) --
-// matches the approved prototype exactly (scratchpad/bearings-map.html,
-// base=hybrid: stroke-width [0.28, 0.55, 1.0, 1.65], stroke-opacity
-// [0.3, 0.62, 0.85, 1] * 0.85 hybrid dimming).
-const STREET_WIDTH = [0.28, 0.55, 1.0, 1.65];
-const STREET_OPACITY = [0.3, 0.62, 0.85, 1].map((o) => o * 0.85);
+// ---------------------------------------------------------------------------
+// GeoJSON builders -- pure functions from the API contract to what MapLibre
+// wants. GeoJSON is always [lng, lat]; every upstream field here (h3-js
+// boundaries, MapGeometry coords, precinct geometry) is [lat, lng] like the
+// rest of this codebase, so every builder below flips it once, here, rather
+// than leaving that inversion to be rediscovered per-consumer.
+// ---------------------------------------------------------------------------
 
-function mercator(lng: number, lat: number): [number, number] {
-  return [
-    (lng + 180) / 360,
-    (1 - Math.log(Math.tan((lat * Math.PI) / 180) + 1 / Math.cos((lat * Math.PI) / 180)) / Math.PI) / 2,
-  ];
+function cellsGeoJSON(geo: MapGeometry): FeatureCollection {
+  const maxValue = Math.max(1, ...geo.cells.map((c) => c.value));
+  const features: Feature[] = geo.cells.map((c) => {
+    const boundary = h3.cellToBoundary(c.h3) as [number, number][]; // [lat, lng]
+    const ring: [number, number][] = boundary.map(([lat, lng]) => [lng, lat]);
+    ring.push(ring[0]); // close the polygon ring
+    const isSubject = c.h3 === geo.subject.cell;
+    return {
+      type: "Feature",
+      properties: { h3: c.h3, value: c.value, isSubject: isSubject ? 1 : 0, w: c.value / maxValue },
+      geometry: { type: "Polygon", coordinates: [ring] },
+    };
+  });
+  return { type: "FeatureCollection", features };
 }
 
-function project(geo: MapGeometry) {
-  const [x0, y1] = mercator(geo.bbox.west, geo.bbox.south);
-  const [x1, y0] = mercator(geo.bbox.east, geo.bbox.north);
-  const scale = Math.min(VB_W / (x1 - x0), VB_H / (y1 - y0));
-  const ox = (VB_W - (x1 - x0) * scale) / 2;
-  const oy = (VB_H - (y1 - y0) * scale) / 2;
-  return (lng: number, lat: number): [number, number] => {
-    const [mx, my] = mercator(lng, lat);
-    return [(mx - x0) * scale + ox, (my - y0) * scale + oy];
+function buildingsGeoJSON(geo: MapGeometry): FeatureCollection {
+  return {
+    type: "FeatureCollection",
+    features: geo.buildings.map((b) => ({
+      type: "Feature",
+      properties: {},
+      geometry: {
+        type: "Polygon",
+        coordinates: [b.coords.map(([lat, lng]): [number, number] => [lng, lat])],
+      },
+    })),
   };
 }
 
-function pathD(points: [number, number][], close = false): string {
-  const d = points.map(([x, y], i) => `${i ? "L" : "M"}${x.toFixed(1)} ${y.toFixed(1)}`).join("");
-  return close ? `${d}Z` : d;
+function streetsGeoJSON(geo: MapGeometry): FeatureCollection {
+  return {
+    type: "FeatureCollection",
+    features: geo.streets.map((s) => ({
+      type: "Feature",
+      properties: { rank: s.rank },
+      geometry: {
+        type: "LineString",
+        coordinates: s.coords.map(([lat, lng]): [number, number] => [lng, lat]),
+      },
+    })),
+  };
 }
 
-interface CellGeom extends MapCell {
-  boundary: [number, number][]; // [lat, lng]
-  home: boolean;
-  w: number; // 0..1, density relative to the loudest cell in view -- real data, not a guessed threshold
+function subwayGeoJSON(geo: MapGeometry): FeatureCollection {
+  return {
+    type: "FeatureCollection",
+    features: geo.subway_lines.map((line) => ({
+      type: "Feature",
+      properties: { route: line.route },
+      geometry: {
+        type: "LineString",
+        coordinates: line.coords.map(([lat, lng]): [number, number] => [lng, lat]),
+      },
+    })),
+  };
 }
 
-function EdgeTicks() {
-  const ticks: string[] = [];
-  for (let i = 0; i <= 12; i++) {
-    const x = (VB_W / 12) * i;
-    ticks.push(`M${x} 0V7`, `M${x} ${VB_H}V${VB_H - 7}`);
-  }
-  for (let i = 0; i <= 8; i++) {
-    const y = (VB_H / 8) * i;
-    ticks.push(`M0 ${y}H7`, `M${VB_W} ${y}H${VB_W - 7}`);
-  }
+function precinctsGeoJSON(citywide: Citywide): FeatureCollection {
+  const withCrime = citywide.precincts.filter((p): p is PrecinctFeature & { crime: NonNullable<PrecinctFeature["crime"]> } => p.crime !== null);
+  const maxCrime = Math.max(1, ...withCrime.map((p) => p.crime.total_ytd));
+  return {
+    type: "FeatureCollection",
+    features: citywide.precincts.map((p) => ({
+      type: "Feature",
+      properties: {
+        precinct: p.precinct,
+        hasCrime: p.crime ? 1 : 0,
+        w: p.crime ? p.crime.total_ytd / maxCrime : 0,
+        total_ytd: p.crime?.total_ytd ?? null,
+        week_ending: p.crime?.week_ending ?? null,
+      },
+      geometry: p.geometry as unknown as Geometry,
+    })),
+  };
+}
+
+const EMPTY_FC: FeatureCollection = { type: "FeatureCollection", features: [] };
+
+function roughDist(a: { lat: number; lng: number }, b: LngLat): number {
+  // Not geodesic -- only ever used to rank on-screen labels by proximity
+  // to the current view centre, where flat-Euclidean-on-degrees is fine.
+  return Math.hypot(a.lat - b.lat, a.lng - b.lng);
+}
+
+// ---------------------------------------------------------------------------
+
+interface HoveredCell {
+  h3: string;
+  value: number;
+  isSubject: boolean;
+}
+
+interface HoveredPrecinct {
+  precinct: number;
+  totalYtd: number | null;
+  weekEnding: string | null;
+}
+
+function CellReadout({ cell, source }: { cell: HoveredCell; source?: { name: string; url: string } }) {
   return (
-    <g>
-      {ticks.map((d, i) => (
-        <path key={i} d={d} stroke={INK} strokeWidth={1} strokeOpacity={0.5} />
-      ))}
-    </g>
+    <dl>
+      <dt>311 noise · trailing 12mo</dt>
+      <dd>
+        {cell.value}
+        <span style={{ fontSize: 11, color: STEEL, marginLeft: 6 }}>calls</span>
+      </dd>
+      <dt>Cell area</dt>
+      <dd className="small">0.105 km²</dd>
+      {cell.isSubject && (
+        <>
+          <dt>Status</dt>
+          <dd className="small" style={{ color: RED }}>
+            SUBJECT CELL
+          </dd>
+        </>
+      )}
+      {source && (
+        <>
+          <dt>Source</dt>
+          <dd className="small">{source.name}</dd>
+        </>
+      )}
+    </dl>
   );
 }
 
-function StipplePattern({ id, w }: { id: string; w: number }) {
-  // Dot spacing tightens from ~11px at zero density to ~3px at maximum
-  // (VISUAL.md §5) -- value is density of mark, never opacity of a wash,
-  // so the streets/subway underneath stay legible at any value.
-  const sp = 11 - w * 8;
-  const r = 0.5 + w * 0.85;
+function PrecinctReadout({ precinct, source }: { precinct: HoveredPrecinct; source?: { name: string; url: string } }) {
   return (
-    <pattern id={id} patternUnits="userSpaceOnUse" width={sp} height={sp}>
-      <circle cx={sp / 2} cy={sp / 2} r={r} fill={INK} />
-      <circle cx={0} cy={0} r={r} fill={INK} />
-      <circle cx={sp} cy={sp} r={r} fill={INK} />
-    </pattern>
-  );
-}
-
-function HexCell({ cell, p, onHover }: { cell: CellGeom; p: (lng: number, lat: number) => [number, number]; onHover: (c: CellGeom) => void }) {
-  const ring = cell.boundary.map(([lat, lng]) => p(lng, lat));
-  const d = pathD(ring, true);
-  const color = cell.home ? RED : INK;
-  const patternId = `stipple-${cell.h3}`;
-
-  return (
-    <g className="hexcell" onMouseEnter={() => onHover(cell)}>
-      <defs>
-        <StipplePattern id={patternId} w={cell.w} />
-      </defs>
-      <path
-        className="hexcell__fill"
-        d={d}
-        fill={`url(#${patternId})`}
-        fillOpacity={cell.home ? 0.95 : 0.78}
-        stroke="none"
-      />
-      <path
-        className="hexcell__edge"
-        d={d}
-        fill="none"
-        stroke={color}
-        strokeWidth={cell.home ? 2.4 : 0.5 + cell.w * 1.2}
-        strokeOpacity={cell.home ? 1 : 0.5}
-      />
-      {/* invisible hit area so hover works over the empty gaps between dots */}
-      <path d={d} fill="transparent" stroke="none" />
-    </g>
-  );
-}
-
-function Readout({ cell }: { cell: CellGeom | null }) {
-  if (!cell) {
-    return (
-      <div className="readout">
-        <h3>Cell readout</h3>
-        <p className="readout__empty">
-          Hover a cell.
-          <br />
-          <br />
-          Its fill will drop away so the streets underneath stay readable while you read the
-          number.
-        </p>
-      </div>
-    );
-  }
-  return (
-    <div className="readout">
-      <h3>Cell readout</h3>
-      <dl>
-        <dt>311 noise · trailing 12mo</dt>
-        <dd>
-          {cell.value}
-          <span style={{ fontSize: 11, color: STEEL, marginLeft: 6 }}>calls</span>
-        </dd>
-        <dt>H3 index · res 9</dt>
-        <dd className="small">{cell.h3}</dd>
-        <dt>Cell area</dt>
-        <dd className="small">0.105 km²</dd>
-        {cell.home && (
-          <>
-            <dt>Status</dt>
-            <dd className="small" style={{ color: RED }}>
-              SUBJECT CELL
-            </dd>
-          </>
+    <dl>
+      <dt>NYPD Precinct</dt>
+      <dd>{precinct.precinct}</dd>
+      <dt>Index crimes · YTD</dt>
+      <dd>
+        {precinct.totalYtd === null ? (
+          <span style={{ fontSize: 13, fontStyle: "italic", color: STEEL }}>NO DATA</span>
+        ) : (
+          precinct.totalYtd.toLocaleString()
         )}
-      </dl>
-    </div>
+      </dd>
+      {precinct.weekEnding && (
+        <>
+          <dt>Week ending</dt>
+          <dd className="small">{precinct.weekEnding}</dd>
+        </>
+      )}
+      {source && (
+        <>
+          <dt>Source</dt>
+          <dd className="small">{source.name}</dd>
+        </>
+      )}
+    </dl>
   );
 }
 
 export function MapView({ address }: { address: string }) {
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const mapRef = useRef<MapLibreMap | null>(null);
+  const [mapReady, setMapReady] = useState(false);
+
   const [geo, setGeo] = useState<MapGeometry | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [hovered, setHovered] = useState<CellGeom | null>(null);
-  const [fullGrid, setFullGrid] = useState(SHOW_FULL_GRID_BY_DEFAULT);
 
+  const [citywide, setCitywide] = useState<Citywide | null>(null);
+  const citywideRef = useRef<Citywide | null>(null);
+  citywideRef.current = citywide;
+
+  const [heatMode, setHeatMode] = useState<HeatMode>("none");
+  const [hoveredCell, setHoveredCell] = useState<HoveredCell | null>(null);
+  const [hoveredPrecinct, setHoveredPrecinct] = useState<HoveredPrecinct | null>(null);
+
+  const labelMarkersRef = useRef<Marker[]>([]);
+  const stationMarkersRef = useRef<Marker[]>([]);
+
+  // ---- 1. create the map exactly once. ----
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+
+    const protocol = new Protocol();
+    maplibregl.addProtocol("pmtiles", protocol.tile);
+
+    const tilesUrl = new URL("/tiles/nyc-basemap.pmtiles", window.location.origin).href;
+    const map = new maplibregl.Map({
+      container,
+      style: buildMapStyle(tilesUrl),
+      center: [-73.9857, 40.7484], // Manhattan-ish, replaced by the first real address's bbox
+      zoom: 10.5,
+      minZoom: 9,
+      maxZoom: 18,
+    });
+    map.addControl(new maplibregl.NavigationControl({ showCompass: false }), "top-right");
+    mapRef.current = map;
+    map.on("load", () => setMapReady(true));
+
+    return () => {
+      labelMarkersRef.current.forEach((m) => m.remove());
+      labelMarkersRef.current = [];
+      stationMarkersRef.current.forEach((m) => m.remove());
+      stationMarkersRef.current = [];
+      map.remove();
+      maplibregl.removeProtocol("pmtiles");
+      mapRef.current = null;
+      setMapReady(false);
+    };
+  }, []);
+
+  // ---- 2. real sources + layers, added once the map has actually loaded. ----
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !mapReady) return;
+
+    map.addSource("precincts", { type: "geojson", data: EMPTY_FC });
+    map.addLayer({
+      id: "precinct-fill",
+      type: "fill",
+      source: "precincts",
+      layout: { visibility: "none" },
+      paint: {
+        "fill-color": RED,
+        "fill-opacity": [
+          "case",
+          ["==", ["get", "hasCrime"], 0],
+          0,
+          ["interpolate", ["linear"], ["get", "w"], 0, 0.08, 1, 0.6],
+        ],
+      },
+    });
+    map.addLayer({
+      id: "precinct-outline",
+      type: "line",
+      source: "precincts",
+      layout: { visibility: "none" },
+      paint: { "line-color": INK, "line-width": 0.6, "line-opacity": 0.5 },
+    });
+
+    map.addSource("buildings", { type: "geojson", data: EMPTY_FC });
+    map.addLayer({
+      id: "buildings-fill",
+      type: "fill",
+      source: "buildings",
+      paint: { "fill-color": STEEL, "fill-opacity": 0.34 },
+    });
+
+    map.addSource("streets", { type: "geojson", data: EMPTY_FC });
+    map.addLayer({
+      id: "streets-line",
+      type: "line",
+      source: "streets",
+      layout: { "line-cap": "round", "line-join": "round" },
+      paint: {
+        "line-color": INK,
+        "line-width": ["match", ["get", "rank"], 0, 0.6, 1, 0.9, 2, 1.4, 3, 2.0, 0.6],
+        "line-opacity": ["match", ["get", "rank"], 0, 0.35, 1, 0.55, 2, 0.75, 3, 0.9, 0.35],
+      },
+    });
+
+    map.addSource("subway", { type: "geojson", data: EMPTY_FC });
+    map.addLayer({
+      id: "subway-line",
+      type: "line",
+      source: "subway",
+      layout: { "line-cap": "round", "line-join": "round" },
+      paint: { "line-color": RED, "line-width": 2.4, "line-opacity": 0.92 },
+    });
+
+    // The H3 disk is the only STRONG ink on the sheet (VISUAL.md §5) --
+    // thin outline (Noah, 2026-07-15: reduce stroke weight), subject cell
+    // red. Fill only carries a value when the noise heat-map is selected.
+    map.addSource("cells", { type: "geojson", data: EMPTY_FC });
+    map.addLayer({
+      id: "cells-fill",
+      type: "fill",
+      source: "cells",
+      paint: {
+        "fill-color": RED,
+        "fill-opacity": [
+          "case",
+          ["==", ["get", "isSubject"], 1],
+          0,
+          ["interpolate", ["linear"], ["get", "w"], 0, 0.05, 1, 0.55],
+        ],
+      },
+    });
+    map.addLayer({
+      id: "cells-outline",
+      type: "line",
+      source: "cells",
+      paint: {
+        "line-color": ["case", ["==", ["get", "isSubject"], 1], RED, INK],
+        "line-width": ["case", ["==", ["get", "isSubject"], 1], 1.6, 0.6],
+        "line-opacity": ["case", ["==", ["get", "isSubject"], 1], 1, 0.45],
+      },
+    });
+
+    const onCellMove = (e: maplibregl.MapLayerMouseEvent) => {
+      const f = e.features?.[0];
+      if (!f?.properties) return;
+      map.getCanvas().style.cursor = "crosshair";
+      setHoveredCell({
+        h3: f.properties.h3 as string,
+        value: f.properties.value as number,
+        isSubject: f.properties.isSubject === 1,
+      });
+    };
+    const onCellLeave = () => {
+      map.getCanvas().style.cursor = "";
+      setHoveredCell(null);
+    };
+    const onPrecinctMove = (e: maplibregl.MapLayerMouseEvent) => {
+      const f = e.features?.[0];
+      if (!f?.properties) return;
+      map.getCanvas().style.cursor = "crosshair";
+      setHoveredPrecinct({
+        precinct: f.properties.precinct as number,
+        totalYtd: (f.properties.total_ytd as number | null) ?? null,
+        weekEnding: (f.properties.week_ending as string | null) ?? null,
+      });
+    };
+    const onPrecinctLeave = () => {
+      map.getCanvas().style.cursor = "";
+      setHoveredPrecinct(null);
+    };
+    const onMoveEnd = () => updateLabelMarkers();
+
+    map.on("mousemove", "cells-fill", onCellMove);
+    map.on("mouseleave", "cells-fill", onCellLeave);
+    map.on("mousemove", "precinct-fill", onPrecinctMove);
+    map.on("mouseleave", "precinct-fill", onPrecinctLeave);
+    map.on("moveend", onMoveEnd);
+
+    return () => {
+      map.off("mousemove", "cells-fill", onCellMove);
+      map.off("mouseleave", "cells-fill", onCellLeave);
+      map.off("mousemove", "precinct-fill", onPrecinctMove);
+      map.off("mouseleave", "precinct-fill", onPrecinctLeave);
+      map.off("moveend", onMoveEnd);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mapReady]);
+
+  // ---- 3. fetch the neighbourhood around the searched address. ----
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
     setError(null);
-    setHovered(null);
+    setHoveredCell(null);
     getMapGeometry(address)
       .then((g) => {
         if (!cancelled) setGeo(g);
@@ -196,159 +403,218 @@ export function MapView({ address }: { address: string }) {
     };
   }, [address]);
 
-  const p = useMemo(() => (geo ? project(geo) : null), [geo]);
+  // ---- 4. fetch citywide (address-independent) data once. ----
+  useEffect(() => {
+    let cancelled = false;
+    getCitywide()
+      .then((c) => {
+        if (!cancelled) setCitywide(c);
+      })
+      .catch(() => {
+        // Non-fatal: the map still works without labels/the crime
+        // choropleth -- it just quietly has fewer layers, never a crash.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
-  const cellGeoms: CellGeom[] = useMemo(() => {
-    if (!geo) return [];
-    const maxValue = Math.max(1, ...geo.cells.map((c) => c.value));
-    return geo.cells
-      .filter((c) => fullGrid || c.h3 === geo.subject.cell)
-      .map((c) => ({
-        ...c,
-        home: c.h3 === geo.subject.cell,
-        boundary: h3.cellToBoundary(c.h3) as [number, number][],
-        w: c.value / maxValue,
-      }));
-  }, [geo, fullGrid]);
+  // ---- 5. push the address-scoped geometry into the map + fly to it. ----
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !mapReady || !geo) return;
 
-  if (loading) {
-    return (
-      <div className="mapfield">
-        <p className="loading mono">Drawing the map…</p>
-      </div>
+    (map.getSource("cells") as maplibregl.GeoJSONSource | undefined)?.setData(cellsGeoJSON(geo));
+    (map.getSource("buildings") as maplibregl.GeoJSONSource | undefined)?.setData(buildingsGeoJSON(geo));
+    (map.getSource("streets") as maplibregl.GeoJSONSource | undefined)?.setData(streetsGeoJSON(geo));
+    (map.getSource("subway") as maplibregl.GeoJSONSource | undefined)?.setData(subwayGeoJSON(geo));
+
+    map.fitBounds(
+      [
+        [geo.bbox.west, geo.bbox.south],
+        [geo.bbox.east, geo.bbox.north],
+      ],
+      { padding: 48, duration: 600 },
     );
+
+    stationMarkersRef.current.forEach((m) => m.remove());
+    stationMarkersRef.current = [];
+    for (const s of geo.stations) {
+      const el = document.createElement("div");
+      el.className = "mapstation";
+      el.title = s.name;
+      const dot = document.createElement("span");
+      dot.className = "mapstation__dot";
+      el.appendChild(dot);
+      if (s.routes.length > 0) {
+        const bullets = document.createElement("span");
+        bullets.className = "mapstation__bullets";
+        for (const route of s.routes) {
+          const b = document.createElement("span");
+          b.className = "mapstation__bullet";
+          b.textContent = route;
+          b.style.backgroundColor = colorFor(route);
+          bullets.appendChild(b);
+        }
+        el.appendChild(bullets);
+      }
+      stationMarkersRef.current.push(
+        new maplibregl.Marker({ element: el, anchor: "left" }).setLngLat([s.lng, s.lat]).addTo(map),
+      );
+    }
+  }, [geo, mapReady]);
+
+  // ---- 6. push citywide geometry into the map + refresh labels. ----
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !mapReady || !citywide) return;
+    (map.getSource("precincts") as maplibregl.GeoJSONSource | undefined)?.setData(precinctsGeoJSON(citywide));
+    updateLabelMarkers();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [citywide, mapReady]);
+
+  // ---- 7. heat-map toggle: which choropleth (if any) is visible. ----
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !mapReady) return;
+    const precinctVisible = heatMode === "crime" ? "visible" : "none";
+    map.setLayoutProperty("precinct-fill", "visibility", precinctVisible);
+    map.setLayoutProperty("precinct-outline", "visibility", precinctVisible);
+    map.setPaintProperty(
+      "cells-fill",
+      "fill-opacity",
+      heatMode === "noise"
+        ? ["case", ["==", ["get", "isSubject"], 1], 0, ["interpolate", ["linear"], ["get", "w"], 0, 0.05, 1, 0.55]]
+        : 0,
+    );
+  }, [heatMode, mapReady]);
+
+  function updateLabelMarkers() {
+    const map = mapRef.current;
+    const cw = citywideRef.current;
+    if (!map || !cw) return;
+
+    labelMarkersRef.current.forEach((m) => m.remove());
+    labelMarkersRef.current = [];
+
+    const bounds = map.getBounds();
+    const center = map.getCenter();
+    const zoom = map.getZoom();
+
+    // Thin labels by zoom, the way every real web map does -- 262
+    // neighbourhoods and 78 precinct numbers rendered unconditionally
+    // citywide would be unreadable clutter at a zoomed-out view and a
+    // real perf cost (DOM markers, not GPU-rendered symbols).
+    if (zoom >= 11) {
+      const visible = cw.neighborhoods
+        .filter((n) => bounds.contains([n.lng, n.lat]))
+        .sort((a, b) => roughDist(a, center) - roughDist(b, center))
+        .slice(0, 40);
+      for (const n of visible) {
+        const el = document.createElement("div");
+        el.className = "maplabel maplabel--neighborhood";
+        el.textContent = n.name;
+        labelMarkersRef.current.push(
+          new maplibregl.Marker({ element: el, anchor: "center" }).setLngLat([n.lng, n.lat]).addTo(map),
+        );
+      }
+    }
+
+    if (zoom >= 10) {
+      const visible = cw.precincts
+        .filter((p) => bounds.contains([p.lng, p.lat]))
+        .sort((a, b) => roughDist(a, center) - roughDist(b, center))
+        .slice(0, 30);
+      for (const p of visible) {
+        const el = document.createElement("div");
+        el.className = "maplabel maplabel--precinct";
+        el.textContent = `Precinct ${p.precinct}`;
+        labelMarkersRef.current.push(
+          new maplibregl.Marker({ element: el, anchor: "center" }).setLngLat([p.lng, p.lat]).addTo(map),
+        );
+      }
+    }
   }
 
-  if (error || !geo || !p) {
-    return (
-      <div className="mapfield">
-        <p className="field__empty">{error ?? "Map geometry unavailable."}</p>
-      </div>
-    );
-  }
+  const noiseSource = geo?.sources.cells;
+  const crimeSource = citywide?.crime_source;
+
+  const activeCellReadout = heatMode !== "crime" && hoveredCell;
+  const activePrecinctReadout = heatMode === "crime" && hoveredPrecinct;
+
+  const legend = useMemo(
+    () => [
+      { swatch: { background: STEEL, opacity: 0.34 }, label: "Building footprint" },
+      { swatch: { background: INK, height: 2 }, label: "Street, by road class" },
+      { swatch: { background: RED }, label: "Subway / PATH — real alignment" },
+      {
+        swatch: { border: `1px solid ${INK}`, background: "none" },
+        label: "H3 res-9 cell · 0.105 km² · subject in red",
+      },
+    ],
+    [],
+  );
 
   return (
     <div className="mapfield">
-      <h2 className="field__title">The neighbourhood, drawn</h2>
+      <h2 className="field__title">The neighbourhood, navigable</h2>
 
       <div className="mapfield__controls">
-        <span>H3 grid</span>
-        <button
-          type="button"
-          className="mapfield__toggle"
-          aria-pressed={fullGrid}
-          onClick={() => setFullGrid(true)}
-        >
-          Full grid
-        </button>
-        <button
-          type="button"
-          className="mapfield__toggle"
-          aria-pressed={!fullGrid}
-          onClick={() => setFullGrid(false)}
-        >
-          Subject cell only
-        </button>
+        <span>Heat-map</span>
+        {HEAT_MODES.map((m) => (
+          <button
+            key={m.id}
+            type="button"
+            className="mapfield__toggle"
+            aria-pressed={heatMode === m.id}
+            onClick={() => setHeatMode(m.id)}
+          >
+            {m.label}
+          </button>
+        ))}
       </div>
 
       <div className="mapfield__stage">
         <div>
           <div className="mapfield__frame">
-            <svg
-              viewBox={`0 0 ${VB_W} ${VB_H}`}
-              aria-label="H3 cell map with real building footprints, street centrelines, and subway alignments"
-            >
-              {/* Building mass, no outline -- reads as ground (VISUAL.md §5). */}
-              {geo.buildings.map((b, i) => (
-                <path
-                  key={i}
-                  d={pathD(b.coords.map(([lat, lng]) => p(lng, lat)), true)}
-                  fill={STEEL}
-                  fillOpacity={0.34}
-                  stroke="none"
-                />
-              ))}
-
-              {/* Street hairlines, weighted by road class -- ink, on top of
-                  the building mass but under everything else. */}
-              {geo.streets.map((s, i) => (
-                <path
-                  key={i}
-                  d={pathD(s.coords.map(([lat, lng]) => p(lng, lat)))}
-                  fill="none"
-                  stroke={INK}
-                  strokeWidth={STREET_WIDTH[s.rank]}
-                  strokeOpacity={STREET_OPACITY[s.rank]}
-                  strokeLinecap="round"
-                />
-              ))}
-
-              {geo.subway_lines.map((line, i) => (
-                <path
-                  key={i}
-                  d={pathD(line.coords.map(([lat, lng]) => p(lng, lat)))}
-                  fill="none"
-                  stroke={RED}
-                  strokeWidth={2.7}
-                  strokeOpacity={0.92}
-                  strokeLinecap="round"
-                />
-              ))}
-              {geo.stations.map((s, i) => {
-                const [x, y] = p(s.lng, s.lat);
-                return <circle key={i} cx={x} cy={y} r={4} fill={BONE} stroke={RED} strokeWidth={1.8} />;
-              })}
-
-              {cellGeoms.map((c) => (
-                <HexCell key={c.h3} cell={c} p={p} onHover={setHovered} />
-              ))}
-
-              {/* subject lot registration mark */}
-              {(() => {
-                const [sx, sy] = p(geo.subject.lng, geo.subject.lat);
-                const a = 13;
-                return (
-                  <>
-                    <path
-                      d={`M${sx - a} ${sy}H${sx + a}M${sx} ${sy - a}V${sy + a}`}
-                      stroke={RED}
-                      strokeWidth={2}
-                    />
-                    <circle cx={sx} cy={sy} r={6} fill="none" stroke={RED} strokeWidth={2} />
-                  </>
-                );
-              })()}
-
-              <EdgeTicks />
-            </svg>
+            <div
+              ref={containerRef}
+              className="mapfield__map"
+              role="img"
+              aria-label="Navigable map of New York City, centred on the neighbourhood around the searched address, with real building footprints, streets, subway alignments, and H3 noise cells"
+            />
           </div>
           <div className="mapfield__legend">
-            <span>
-              <i style={{ background: STEEL, opacity: 0.34 }} />
-              Building footprint
-            </span>
-            <span>
-              <i style={{ background: INK, height: 2 }} />
-              Street, by road class
-            </span>
-            <span>
-              <i style={{ background: RED }} />
-              Subway / PATH — real alignment
-            </span>
-            <span>
-              <i style={{ border: `1.5px solid ${RED}`, background: "none", height: 8, width: 8, borderRadius: "50%" }} />
-              Station
-            </span>
-            <span>
-              <i style={{ border: `1px solid ${INK}`, background: "none" }} />
-              H3 res-9 cell · 0.105 km²
-            </span>
+            {legend.map((item, i) => (
+              <span key={i}>
+                <i style={item.swatch} />
+                {item.label}
+              </span>
+            ))}
           </div>
+          {loading && <p className="mapfield__status mono">Loading the neighbourhood record…</p>}
+          {error && <p className="mapfield__status mapfield__status--error mono">{error}</p>}
         </div>
-        <Readout cell={hovered} />
+
+        <div className="readout">
+          <h3>Map readout</h3>
+          {activeCellReadout ? (
+            <CellReadout cell={hoveredCell} source={noiseSource} />
+          ) : activePrecinctReadout ? (
+            <PrecinctReadout precinct={hoveredPrecinct} source={crimeSource} />
+          ) : (
+            <p className="readout__empty">
+              Hover a cell{citywide ? " or precinct" : ""}.
+              <br />
+              <br />
+              Pan and zoom the map freely — the base layer covers all of NYC. The
+              highlighted neighbourhood is the one around your searched address.
+            </p>
+          )}
+        </div>
       </div>
 
-      <p className="mapfield__note mono">{geo.basemap_note}</p>
+      {geo && <p className="mapfield__note mono">{geo.basemap_note}</p>}
     </div>
   );
 }

@@ -1,4 +1,4 @@
-import type { FactcheckResult, MapGeometry, Profile } from "./types";
+import type { Citywide, FactcheckResult, MapGeometry, Profile } from "./types";
 
 // Empty string -> relative "/api/..." paths, which the Vite dev proxy (vite.config.ts)
 // forwards to the backend, and which work unmodified once both are served from one
@@ -63,4 +63,10 @@ export function postFactcheck(address: string, listingText: string): Promise<Fac
 
 export function getMapGeometry(address: string): Promise<MapGeometry> {
   return request<MapGeometry>(`/api/map?address=${encodeURIComponent(address)}`);
+}
+
+// Address-independent -- fetched once, not once per address (see
+// bearings/citywide.py's own docstring for why).
+export function getCitywide(): Promise<Citywide> {
+  return request<Citywide>("/api/citywide");
 }

@@ -24,8 +24,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from bearings import factcheck, geocode, mapgeo, profile, transit
-from bearings.sources import compstat, overture
+from bearings import citywide, config, factcheck, geocode, mapgeo, profile, transit
+from bearings.sources import basemap, compstat, overture
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s", stream=sys.stdout
@@ -104,6 +104,12 @@ async def lifespan(_app: FastAPI):
     logger.info("  map base layers (building footprints + street centrelines)...")
     mapgeo.warm_caches()
 
+    logger.info("  NYC basemap tiles (self-hosted PMTiles extract)...")
+    basemap.warm_cache()
+
+    logger.info("  citywide map data (neighbourhood labels, precinct crime)...")
+    citywide.warm_caches()
+
     _state["warm"] = True
     logger.info("all caches warm in %.1fs -- ready to serve", time.monotonic() - start)
 
@@ -164,6 +170,37 @@ def get_map(address: str = Query(..., min_length=1)) -> dict:
     except geocode.GeocodeError as e:
         raise HTTPException(status_code=422, detail=str(e)) from e
     return mapgeo.map_geometry(loc.lat, loc.lng, loc.bbl)
+
+
+@app.get("/api/citywide")
+def get_citywide() -> dict:
+    """Address-independent map data: every NTA neighbourhood label and
+    every NYPD precinct's boundary + CompStat crime total, citywide -- see
+    citywide.py's own docstring for why this is baked once rather than
+    computed per address like /api/map. The frontend fetches this once when
+    the map mounts, not once per address search."""
+    return citywide.get()
+
+
+# Serves the self-hosted PMTiles NYC basemap (and the rest of data/derived/
+# -- pois.parquet, buildings.parquet, streets.parquet, citywide.json -- all
+# of it real public NYC/MTA/OSM data with nothing private in it, so sharing
+# the one directory rather than carving out a single-file mount costs
+# nothing). Starlette's StaticFiles/FileResponse honours Range headers
+# natively, which is what lets MapLibre's pmtiles.js fetch just the byte
+# ranges it needs from a 99MB archive instead of the whole file. Must be
+# registered before the catch-all "/" mount below, same ordering rule that
+# mount's own comment already documents.
+# Unconditional (unlike the web/dist mount below): StaticFiles raises at
+# construction time if its directory doesn't exist yet, and on a genuinely
+# fresh checkout data/derived/ doesn't exist until warm_cache()/
+# warm_caches() create it -- which happens inside the ASGI lifespan
+# *startup* handler, which runs after this module-level mount() call, not
+# before. Creating the (possibly still-empty) directory here guarantees the
+# mount always succeeds; no request reaches it before lifespan startup
+# finishes filling it in (see this module's own docstring).
+config.DERIVED_DIR.mkdir(parents=True, exist_ok=True)
+app.mount("/tiles", StaticFiles(directory=config.DERIVED_DIR), name="tiles")
 
 
 # Single-origin deploy: serve the built React app (web/dist, produced by

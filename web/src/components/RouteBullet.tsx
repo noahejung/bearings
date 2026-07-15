@@ -36,10 +36,18 @@ const DARK_TEXT_ROUTES = new Set(["N", "Q", "R", "W", "G"]);
 
 const FALLBACK_COLOR = "#5B5648";
 
-function colorFor(route: string): string {
+// Exported so the map (MapView.tsx) can build plain-DOM station markers in
+// the same real MTA/PATH wayfinding colours without duplicating this table
+// -- one source of truth for "what colour is the B train", not two that
+// could drift apart.
+export function colorFor(route: string): string {
   if (route in ROUTE_COLORS) return ROUTE_COLORS[route];
   const local = route.replace(/X$/, ""); // FX -> F, 6X -> 6 (express variants)
   return ROUTE_COLORS[local] ?? FALLBACK_COLOR;
+}
+
+export function isDarkTextRoute(route: string): boolean {
+  return DARK_TEXT_ROUTES.has(route.replace(/X$/, ""));
 }
 
 export function RouteBullet({ route }: { route: string }) {
