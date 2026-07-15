@@ -71,6 +71,8 @@ def test_profile_returns_the_contract_shape(client):
         "felony_assault_pct",
         "total_ytd",
         "total_pct",
+        "crime_percentile",
+        "crime_caveat",
         "source",
     }
     assert set(body["quiet"]) == {"noise_complaints_12mo", "source"}
@@ -220,11 +222,25 @@ def test_citywide_returns_the_contract_shape(client):
         "neighborhoods_source",
         "precincts_source",
         "crime_source",
+        "crime_caveat",
     }
     assert len(body["neighborhoods"]) > 200
     assert len(body["precincts"]) == 78
     for p in body["precincts"]:
         assert p["geometry"]["type"] in ("Polygon", "MultiPolygon")
+
+
+def test_citywide_crime_is_shaded_relative_to_the_city(client):
+    # VISUAL.md §5, 2026-07-15: crime is a percentile position among all
+    # real NYC precincts, never a raw count on its own -- see
+    # citywide.percentile_rank()'s docstring for the method.
+    resp = client.get("/api/citywide")
+    body = resp.json()
+    with_crime = [p for p in body["precincts"] if p["crime"] is not None]
+    assert len(with_crime) > 60
+    for p in with_crime:
+        assert 0.0 <= p["crime"]["crime_percentile"] <= 100.0
+    assert len(body["crime_caveat"]) > 40
 
 
 def test_tiles_serves_the_real_basemap_archive_with_range_support(client):

@@ -54,6 +54,11 @@ export interface Safety {
   felony_assault_pct?: number;
   total_ytd?: number;
   total_pct?: number;
+  // This precinct's percentile position (0-100) among every real NYC
+  // precinct's own YTD major-crime count -- crime is relative-to-NYC, not
+  // an absolute number on its own (VISUAL.md §5). See web/src/lib/crime.ts.
+  crime_percentile?: number;
+  crime_caveat?: string;
   source?: Source;
 }
 
@@ -194,6 +199,9 @@ export interface PrecinctCrime {
   robbery_ytd: number;
   felony_assault_ytd: number;
   total_ytd: number;
+  // 0-100, median-neutral (~50) -- see bearings/citywide.py's
+  // percentile_rank() and web/src/lib/crime.ts.
+  crime_percentile: number;
 }
 
 // GeoJSON Polygon/MultiPolygon -- typed loosely (not `Geometry` from
@@ -223,4 +231,5 @@ export interface Citywide {
   neighborhoods_source: Source;
   precincts_source: Source;
   crime_source: Source;
+  crime_caveat: string;
 }

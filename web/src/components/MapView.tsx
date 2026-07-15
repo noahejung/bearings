@@ -5,8 +5,9 @@ import "maplibre-gl/dist/maplibre-gl.css";
 import { Protocol } from "pmtiles";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ApiError, getCitywide, getMapGeometry } from "../api";
+import { crimeRelativeLabel, formatPercentile } from "../lib/crime";
 import { buildMapStyle } from "../lib/mapStyle";
-import type { Citywide, MapGeometry, PrecinctFeature } from "../types";
+import type { Citywide, MapGeometry } from "../types";
 import { colorFor } from "./RouteBullet";
 
 // VISUAL.md §5, REVISED 2026-07-15 -- MapLibre GL reading a self-hosted
@@ -98,8 +99,16 @@ function subwayGeoJSON(geo: MapGeometry): FeatureCollection {
 }
 
 function precinctsGeoJSON(citywide: Citywide): FeatureCollection {
-  const withCrime = citywide.precincts.filter((p): p is PrecinctFeature & { crime: NonNullable<PrecinctFeature["crime"]> } => p.crime !== null);
-  const maxCrime = Math.max(1, ...withCrime.map((p) => p.crime.total_ytd));
+  // Crime is shaded RELATIVE to the rest of NYC, never on an absolute
+  // scale (VISUAL.md §5, REVISED 2026-07-15): `w` used to be
+  // total_ytd/maxCrime, which put nearly every precinct near the low end
+  // of the ramp and only the single worst precinct at full colour --
+  // exactly the "NYC just looks bad all around" failure the design brief
+  // named. `crime_percentile` (bearings/citywide.py's percentile_rank(),
+  // already baked into every precinct's crime block) is median-neutral by
+  // construction, so reusing the SAME 0-1 fill-opacity ramp against
+  // percentile/100 instead makes the median precinct read as the ramp's
+  // own midpoint automatically, with no change to the ramp itself.
   return {
     type: "FeatureCollection",
     features: citywide.precincts.map((p) => ({
@@ -107,8 +116,9 @@ function precinctsGeoJSON(citywide: Citywide): FeatureCollection {
       properties: {
         precinct: p.precinct,
         hasCrime: p.crime ? 1 : 0,
-        w: p.crime ? p.crime.total_ytd / maxCrime : 0,
+        w: p.crime ? p.crime.crime_percentile / 100 : 0,
         total_ytd: p.crime?.total_ytd ?? null,
+        crime_percentile: p.crime?.crime_percentile ?? null,
         week_ending: p.crime?.week_ending ?? null,
       },
       geometry: p.geometry as unknown as Geometry,
@@ -135,6 +145,7 @@ interface HoveredCell {
 interface HoveredPrecinct {
   precinct: number;
   totalYtd: number | null;
+  crimePercentile: number | null;
   weekEnding: string | null;
 }
 
@@ -166,19 +177,36 @@ function CellReadout({ cell, source }: { cell: HoveredCell; source?: { name: str
   );
 }
 
-function PrecinctReadout({ precinct, source }: { precinct: HoveredPrecinct; source?: { name: string; url: string } }) {
+function PrecinctReadout({
+  precinct,
+  source,
+  caveat,
+}: {
+  precinct: HoveredPrecinct;
+  source?: { name: string; url: string };
+  caveat?: string;
+}) {
   return (
     <dl>
       <dt>NYPD Precinct</dt>
       <dd>{precinct.precinct}</dd>
-      <dt>Index crimes · YTD</dt>
+      <dt>Major crime, citywide</dt>
       <dd>
-        {precinct.totalYtd === null ? (
+        {precinct.crimePercentile === null ? (
           <span style={{ fontSize: 13, fontStyle: "italic", color: STEEL }}>NO DATA</span>
         ) : (
-          precinct.totalYtd.toLocaleString()
+          crimeRelativeLabel(precinct.crimePercentile)
         )}
       </dd>
+      {precinct.crimePercentile !== null && (
+        <>
+          <dt>Percentile · YTD count</dt>
+          <dd className="small">
+            {formatPercentile(precinct.crimePercentile)} · {precinct.totalYtd?.toLocaleString()} major
+            crimes YTD
+          </dd>
+        </>
+      )}
       {precinct.weekEnding && (
         <>
           <dt>Week ending</dt>
@@ -189,6 +217,12 @@ function PrecinctReadout({ precinct, source }: { precinct: HoveredPrecinct; sour
         <>
           <dt>Source</dt>
           <dd className="small">{source.name}</dd>
+        </>
+      )}
+      {caveat && (
+        <>
+          <dt>Note</dt>
+          <dd className="small">{caveat}</dd>
         </>
       )}
     </dl>
@@ -357,6 +391,7 @@ export function MapView({ address }: { address: string }) {
       setHoveredPrecinct({
         precinct: f.properties.precinct as number,
         totalYtd: (f.properties.total_ytd as number | null) ?? null,
+        crimePercentile: (f.properties.crime_percentile as number | null) ?? null,
         weekEnding: (f.properties.week_ending as string | null) ?? null,
       });
     };
@@ -538,6 +573,7 @@ export function MapView({ address }: { address: string }) {
 
   const noiseSource = geo?.sources.cells;
   const crimeSource = citywide?.crime_source;
+  const crimeCaveat = citywide?.crime_caveat;
 
   const activeCellReadout = heatMode !== "crime" && hoveredCell;
   const activePrecinctReadout = heatMode === "crime" && hoveredPrecinct;
@@ -551,8 +587,16 @@ export function MapView({ address }: { address: string }) {
         swatch: { border: `1px solid ${INK}`, background: "none" },
         label: "H3 res-9 cell · 0.105 km² · subject in red",
       },
+      ...(heatMode === "crime"
+        ? [
+            {
+              swatch: { background: RED, opacity: 0.34 },
+              label: "Precinct fill · percentile vs. NYC, median neutral",
+            },
+          ]
+        : []),
     ],
-    [],
+    [heatMode],
   );
 
   return (
@@ -601,7 +645,7 @@ export function MapView({ address }: { address: string }) {
           {activeCellReadout ? (
             <CellReadout cell={hoveredCell} source={noiseSource} />
           ) : activePrecinctReadout ? (
-            <PrecinctReadout precinct={hoveredPrecinct} source={crimeSource} />
+            <PrecinctReadout precinct={hoveredPrecinct} source={crimeSource} caveat={crimeCaveat} />
           ) : (
             <p className="readout__empty">
               Hover a cell{citywide ? " or precinct" : ""}.
@@ -615,6 +659,7 @@ export function MapView({ address }: { address: string }) {
       </div>
 
       {geo && <p className="mapfield__note mono">{geo.basemap_note}</p>}
+      {heatMode === "crime" && crimeCaveat && <p className="mapfield__note mono">{crimeCaveat}</p>}
     </div>
   );
 }

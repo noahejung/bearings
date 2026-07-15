@@ -160,6 +160,9 @@ const PROFILE = {
     felony_assault_pct: 1.1,
     total_ytd: 200,
     total_pct: 0.4,
+    crime_percentile: 91.7,
+    crime_caveat:
+      "Shown as this precinct's percentile position among all NYC precincts, ranked by raw year-to-date major-crime count -- not a per-resident rate.",
     source: { name: "NYPD CompStat", url: "https://www.nyc.gov/site/nypd/stats/crime-statistics/citywide-crime-stats.page" },
   },
   quiet: {
@@ -223,12 +226,14 @@ const CITYWIDE = {
       lat: 40.7548,
       lng: -73.9925,
       geometry: { type: "Polygon", coordinates: [[[-74.0, 40.75], [-73.99, 40.75], [-73.99, 40.76], [-74.0, 40.76], [-74.0, 40.75]]] },
-      crime: { week_ending: "7/5/2026", robbery_ytd: 12, felony_assault_ytd: 8, total_ytd: 200 },
+      crime: { week_ending: "7/5/2026", robbery_ytd: 12, felony_assault_ytd: 8, total_ytd: 200, crime_percentile: 91.7 },
     },
   ],
   neighborhoods_source: { name: "NYC Neighborhood Tabulation Areas (NTAs)", url: "https://data.cityofnewyork.us/d/9nt8-h7nd" },
   precincts_source: { name: "NYPD Police Precincts", url: "https://data.cityofnewyork.us/d/y76i-bdw7" },
   crime_source: { name: "NYPD CompStat", url: "https://www.nyc.gov/site/nypd/stats/crime-statistics/citywide-crime-stats.page" },
+  crime_caveat:
+    "Shown as this precinct's percentile position among all NYC precincts, ranked by raw year-to-date major-crime count -- not a per-resident rate.",
 };
 
 beforeEach(() => {
@@ -290,6 +295,13 @@ describe("App (full mount)", () => {
     expect(screen.getByText("34 St-Herald Sq")).toBeInTheDocument();
     expect(screen.getByText("1,297")).toBeInTheDocument(); // noise complaints, tabular-formatted
     expect(screen.getByText("1931")).toBeInTheDocument();
+
+    // Crime is relative-to-NYC, not an absolute number on its own
+    // (VISUAL.md §5, 2026-07-15): the safety card's headline is the
+    // citywide framing, and the raw count (200) survives only as a
+    // secondary line in the table below it.
+    expect(screen.getByText(/More major crimes reported than most NYC precincts/i)).toBeInTheDocument();
+    expect(screen.getByText(/92nd percentile citywide/i)).toBeInTheDocument();
 
     // The map field rendered with the real fetched geometry, not stuck loading
     // -- MapView.tsx now drives a real maplibre-gl map (mocked above only

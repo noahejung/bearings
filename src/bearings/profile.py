@@ -17,7 +17,7 @@ from functools import lru_cache
 import duckdb
 import pandas as pd
 
-from bearings import cells, config, geocode, staleness, transit
+from bearings import cells, citywide, config, geocode, staleness, transit
 from bearings.sources import compstat, gtfs, hpd, noise, overture, pluto, precincts, trees
 from bearings.transit import WALK_SPEED_MPS, _haversine_m
 
@@ -196,6 +196,32 @@ def _crime(pct: int) -> dict:
     return compstat.fetch_precinct(pct)
 
 
+def _crime_percentile(total_ytd: int) -> float | None:
+    """This precinct's percentile position (0-100, median-neutral) against
+    every other real precinct's own YTD major-crime count -- crime is
+    relative-to-NYC, never an absolute count on its own (VISUAL.md §5). See
+    citywide.percentile_rank()'s docstring for the exact method and
+    citywide.py's module docstring for why raw counts, not a per-capita
+    rate, are the denominator (no NYPD/NYC Open Data precinct-population
+    table exists -- checked live, not assumed).
+
+    citywide.warm_caches() is a no-op once data/derived/citywide.json
+    already exists (the common case: api.py's lifespan startup bakes it
+    before any request can arrive) -- called here too so the CLI path
+    (bearings.cli, which never calls citywide.warm_caches() itself) still
+    gets a real percentile rather than a crash, at the cost of paying the
+    citywide bake once on a genuinely fresh data/ directory, same tradeoff
+    _pois()/_anchor_times() already make for their own first call.
+    """
+    citywide.warm_caches()
+    totals = [
+        p["crime"]["total_ytd"] for p in citywide.get()["precincts"] if p["crime"] is not None
+    ]
+    if not totals:
+        return None
+    return citywide.percentile_rank(totals, total_ytd)
+
+
 def _safety(lat: float, lng: float) -> dict:
     pct = precincts.precinct_for(lat, lng)
     if pct is None:
@@ -211,6 +237,7 @@ def _safety(lat: float, lng: float) -> dict:
         "felony_assault_pct": c["felony_assault_pct"],
         "total_ytd": c["total_ytd"],
         "total_pct": c["total_pct"],
+        "crime_percentile": _crime_percentile(c["total_ytd"]),
     }
 
 

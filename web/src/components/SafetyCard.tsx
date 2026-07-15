@@ -1,3 +1,4 @@
+import { crimeRelativeLabel, formatPercentile, ordinalSuffix } from "../lib/crime";
 import type { Safety } from "../types";
 import { SourceTag } from "./SourceTag";
 import { Stamp } from "./Stamp";
@@ -55,6 +56,17 @@ export function SafetyCard({ safety }: { safety: Safety }) {
         <p className="field__empty">No NYPD precinct match for this location.</p>
       ) : (
         <>
+          {typeof safety.crime_percentile === "number" && (
+            <p className="safety-relative">
+              <span className="safety-relative__label">
+                {crimeRelativeLabel(safety.crime_percentile)}
+              </span>
+              <span className="safety-relative__detail">
+                {formatPercentile(safety.crime_percentile)} for major-crime volume, among all NYC
+                precincts.
+              </span>
+            </p>
+          )}
           <table className="safety-table">
             <tbody>
               {rows.map((r) => (
@@ -72,6 +84,12 @@ export function SafetyCard({ safety }: { safety: Safety }) {
             NYPD CompStat, week ending {safety.week_ending} · robbery and felony assault only —
             not a comprehensive crime picture, and "total" folds in categories not broken out
             individually.
+            {safety.crime_caveat && (
+              <>
+                <br />
+                {safety.crime_caveat}
+              </>
+            )}
             <br />
             {safety.source && <SourceTag source={safety.source} />}
           </p>
@@ -79,19 +97,4 @@ export function SafetyCard({ safety }: { safety: Safety }) {
       )}
     </article>
   );
-}
-
-function ordinalSuffix(n: number): string {
-  const rem100 = n % 100;
-  if (rem100 >= 11 && rem100 <= 13) return "th";
-  switch (n % 10) {
-    case 1:
-      return "st";
-    case 2:
-      return "nd";
-    case 3:
-      return "rd";
-    default:
-      return "th";
-  }
 }

@@ -59,6 +59,23 @@ def test_carroll_gardens_lands_in_the_76th():
     assert cg["safety"]["precinct"] == 76
 
 
+def test_safety_carries_a_citywide_crime_percentile(empire_state):
+    # Precinct 14 (Midtown South, Empire State's own precinct) is a
+    # genuinely high-crime-volume precinct -- live-verified 2026-07-15
+    # against the real citywide distribution (see test_citywide.py's own
+    # discriminating regression guard for the exact numbers). Crime is now
+    # relative-to-NYC (VISUAL.md §5), never an absolute count on its own.
+    s = empire_state["safety"]
+    assert isinstance(s["crime_percentile"], float)
+    assert s["crime_percentile"] > 90
+
+
+def test_carroll_gardens_reads_as_lower_crime_than_empire_state(empire_state):
+    cg = profile.profile_for("360 Smith St, Brooklyn")
+    assert cg["safety"]["crime_percentile"] < empire_state["safety"]["crime_percentile"]
+    assert cg["safety"]["crime_percentile"] < 10
+
+
 def test_has_the_new_blocks(empire_state):
     assert {"quiet", "green", "building"} <= set(empire_state)
 

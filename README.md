@@ -70,7 +70,8 @@ every nearby station, not just one):
   "safety": {"precinct": 14, "week_ending": "7/5/2026",
              "robbery_ytd": 122, "robbery_pct": -31.8,
              "felony_assault_ytd": 285, "felony_assault_pct": -2.1,
-             "total_ytd": 1445, "total_pct": -11.46},
+             "total_ytd": 1445, "total_pct": -11.46,
+             "crime_percentile": 94.2},
   "quiet": {"noise_complaints_12mo": 1296,
             "source": {"name": "NYC 311", "url": "https://data.cityofnewyork.us/d/erm2-nwe9"}},
   "green": {"street_trees_nearby": 277,
@@ -95,7 +96,7 @@ Six endpoints:
 - `GET /api/profile?address=<str>` -> the full profile (transit, amenities, safety, quiet, green, building); every one of those six blocks carries its own `source`
 - `POST /api/factcheck` body `{"address": str, "listing_text": str}` -> claim-by-claim fact check of listing marketing copy against the real data
 - `GET /api/map?address=<str>` -> real map geometry for the neighbourhood around one address: real building footprints and street centrelines (NYC Open Data, baked at build time -- `src/bearings/sources/buildings.py` / `streets.py`), GTFS subway/PATH alignments and stations (each carrying its real served routes), and real per-H3-cell 311 noise density for the k=3 disk around the subject cell. Feeds the navigable map's local overlay (`web/src/components/MapView.tsx`).
-- `GET /api/citywide` -> address-independent map data, fetched once by the front end rather than once per address: every NTA neighbourhood label (262) and every NYPD precinct's boundary + CompStat crime total (78) -- see `src/bearings/citywide.py`.
+- `GET /api/citywide` -> address-independent map data, fetched once by the front end rather than once per address: every NTA neighbourhood label (262) and every NYPD precinct's boundary + CompStat crime total, plus each precinct's percentile position among all 78 (relative-to-NYC, not absolute -- see the "Known Simplifications" section below) -- see `src/bearings/citywide.py`.
 - `GET /tiles/nyc-basemap.pmtiles` (and the rest of `data/derived/`) -> the self-hosted PMTiles NYC basemap the map renders, served with Range-request support so MapLibre's `pmtiles.js` client only ever fetches the byte spans it needs, not the whole 99MB file -- see `src/bearings/sources/basemap.py`.
 
 `/api/factcheck` is the rule this whole project is built around, made
@@ -368,13 +369,22 @@ a stated simplification and distrust a hidden one.
   felony assault) plus a total, from the most recent weekly CompStat PDF.
   It is not a comprehensive crime picture, and "total" includes categories
   (burglary, grand larceny, etc.) not broken out individually.
-- **The map's crime heat-map shades precincts by a raw YTD count, not a
-  rate.** Precincts differ in area and population; a bigger or denser
-  precinct will read "louder" on the choropleth partly because it *is*
-  bigger, not only because it is more dangerous. This is the same number
-  NYPD's own CompStat publishes and the SafetyCard already shows -- real,
-  cited, not fabricated -- but it is a count, not a normalized rate, and
-  the map does not claim otherwise.
+- **Crime is shown relative to the rest of NYC, not as an absolute count
+  (revised 2026-07-15).** Both the map's crime heat-map and the SafetyCard
+  now lead with a precinct's *percentile position* among all real NYC
+  precincts (`bearings.citywide.percentile_rank()`), median-neutral by
+  construction, rather than a raw count on its own -- an unnormalised count
+  partly maps population/commercial density, not risk, and on an absolute
+  scale NYC's baseline is high everywhere, so even the safest precinct read
+  alarming. **The percentile still ranks raw counts, not a per-resident
+  rate** -- no NYPD/NYC Open Data dataset publishes a population figure per
+  precinct (checked live against the Socrata catalog before making this
+  call; see `citywide.py`'s own module docstring for exactly what was
+  checked and rejected, including why areal-interpolating Census population
+  into precinct polygons was judged too shaky to ship). The raw YTD count
+  survives as a secondary, factual line in both places, and a plain caveat
+  (`CRIME_RELATIVE_CAVEAT`) states the denominator decision and that counts
+  reflect policing/reporting intensity as well as public safety.
 - **Citywide crime data is a build-time snapshot of up to 78 independent
   live PDF fetches.** `bearings.citywide.py`'s bake calls
   `compstat.fetch_precinct()` for every real precinct number; if any one

@@ -79,6 +79,7 @@ def _to_contract(prof: dict) -> dict:
     safety = dict(prof["safety"])
     if safety:
         safety["source"] = dict(compstat.SOURCE)
+        safety["crime_caveat"] = citywide.CRIME_RELATIVE_CAVEAT
 
     return {
         "address": prof["address"],

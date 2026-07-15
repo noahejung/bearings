@@ -665,6 +665,31 @@ body {
 }
 
 /* ---------- safety field ---------- */
+/* The relative headline (VISUAL.md §5, 2026-07-15) -- crime is read as a
+   citywide position, not a raw count; the table below stays as a secondary,
+   factual line. */
+.safety-relative {
+  margin-bottom: 1rem;
+  padding-bottom: 1rem;
+  border-bottom: 1px dashed var(--steel);
+}
+
+.safety-relative__label {
+  display: block;
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 1.05rem;
+  letter-spacing: -0.005em;
+}
+
+.safety-relative__detail {
+  display: block;
+  margin-top: 0.25rem;
+  font-family: var(--font-mono);
+  font-size: 0.76rem;
+  color: var(--steel);
+}
+
 .safety-table th {
   text-align: left;
   font-weight: 400;
