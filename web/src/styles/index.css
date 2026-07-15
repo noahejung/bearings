@@ -434,9 +434,21 @@ body {
 }
 
 /* ---------- field grid & field chrome (the metric rows) ---------- */
+/* Six cards total: one --wide (spans the full row) plus five narrow ones.
+   auto-fit sizes its tracks off the container width alone, with no notion
+   of how many items actually exist -- at a 300px floor a ~1274px report
+   column only ever fits 4 tracks, so the five narrow cards run 4-then-1
+   and that trailing single card (Building age and violations) sits alone
+   in its own row with three empty, unbordered grid tracks beside it: a
+   dead rectangle roughly the width of three cards. Lowering the floor to
+   250px (auto-fit's own empty-track-collapse rule, not a fixed column
+   count) lets exactly five 1fr tracks fit at this report's width, so the
+   five narrow cards line up in one row with no leftover track -- still
+   fully fluid, still real CSS Grid columns (VISUAL.md §4 "grid first"),
+   just sized so the actual card count divides evenly at this width. */
 .fields {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
   gap: 0;
   margin-top: 1.5rem;
   border-top: 1px solid var(--ink);
