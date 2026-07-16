@@ -24,7 +24,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from bearings import cellprofile, citywide, config, factcheck, geocode, mapgeo, profile, transit
+from bearings import cellprofile, cells, citywide, config, factcheck, geocode, mapgeo, profile, transit
 from bearings.sources import basemap, compstat, overture
 
 logging.basicConfig(
@@ -184,6 +184,41 @@ def get_cell(h3: str) -> dict:
     if prof is None:
         raise HTTPException(status_code=404, detail=f"no baked profile for cell {h3!r}")
     return prof
+
+
+@app.get("/api/geocode")
+def get_geocode(address: str = Query(..., min_length=1)) -> dict:
+    """Address -> point, fast. Deliberately does NOT reuse /api/map or
+    /api/profile's geocode-then-slow-live-compute path -- geocode.geocode()
+    is a single NYC Planning Labs GeoSearch call (no Socrata, no DuckDB
+    scan), so this is the fast half of what /api/profile used to do in one
+    slow request. The frontend calls this to resolve a searched address to
+    its containing cell, then GET /api/cell/{h3} for the actual instant
+    report (SPEC-precompute-v2.md Phase 2: "Search an address -> geocode ->
+    cell -> /api/cell/{h3}")."""
+    try:
+        loc = geocode.geocode(address)
+    except geocode.GeocodeError as e:
+        raise HTTPException(status_code=422, detail=str(e)) from e
+    return {
+        "label": loc.label,
+        "lat": loc.lat,
+        "lng": loc.lng,
+        "bbl": loc.bbl,
+        "cell": cells.cell_for(loc.lat, loc.lng),
+    }
+
+
+@app.get("/api/cells")
+def get_cells() -> dict:
+    """The small, flat, citywide grid index -- every real H3 res-9 cell's
+    id, centroid, and five metric-dropdown summary numbers (~1MB, a pure
+    static-file read) -- NOT the full per-cell report (16MB across 43
+    shards; see cellprofile.py's own module docstring for why that's too
+    heavy to ship just to paint a grid). Powers the citywide clickable hex
+    grid (SPEC-precompute-v2.md Phase 2) -- the frontend fetches this once
+    on map mount, independent of any address search or cell click."""
+    return cellprofile.cells_index()
 
 
 @app.get("/api/citywide")

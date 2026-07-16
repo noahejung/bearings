@@ -302,6 +302,72 @@ def test_cell_garbage_h3_string_is_404_not_500(client):
     assert resp.status_code == 404
 
 
+def test_geocode_returns_a_fast_real_point(client):
+    start = time.monotonic()
+    resp = client.get("/api/geocode", params={"address": EMPIRE_STATE})
+    elapsed = time.monotonic() - start
+    assert resp.status_code == 200
+    body = resp.json()
+    assert set(body) == {"label", "lat", "lng", "bbl", "cell"}
+    assert 40.74 < body["lat"] < 40.76
+    assert -73.99 < body["lng"] < -73.98
+    assert body["bbl"] is not None and body["bbl"].startswith("1")
+    assert body["cell"] == cells.cell_for(body["lat"], body["lng"])
+    # A single GeoSearch call, not a live profile/map compute -- generous
+    # relative to a plain HTTP round trip so this stays robust on slow CI,
+    # but nowhere near /api/profile's measured 6-10s.
+    assert elapsed < 5.0
+
+
+def test_geocode_bad_address_is_422_not_500(client):
+    resp = client.get("/api/geocode", params={"address": "qqqqqqqqzzzzzzz not a real place"})
+    assert resp.status_code == 422
+    assert "detail" in resp.json()
+
+
+def test_cells_returns_every_real_cell_as_a_flat_citywide_index(client):
+    resp = client.get("/api/cells")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert set(body) == {"cells"}
+    assert 6_000 < len(body["cells"]) < 9_000
+    sample = body["cells"][0]
+    assert set(sample) == {
+        "h3",
+        "lat",
+        "lng",
+        "noise",
+        "amenities",
+        "trees",
+        "building_age_years",
+        "transit_access",
+    }
+    # Real cell ids, matching the same real-cell set /api/cell/{h3} serves --
+    # not a fabricated grid over the NYC_BBOX rectangle (which would include
+    # open water, per cellprofile.py's own module docstring).
+    loc = geocode.geocode(EMPIRE_STATE)
+    esb_cell = cells.cell_for(loc.lat, loc.lng)
+    ids = {c["h3"] for c in body["cells"]}
+    assert esb_cell in ids
+    # No dupes -- every real cell appears exactly once.
+    assert len(ids) == len(body["cells"])
+    # Real, non-trivial signal exists somewhere in the citywide set, not
+    # just structural zeros.
+    assert any(c["noise"] > 0 for c in body["cells"])
+    assert any(c["amenities"] > 0 for c in body["cells"])
+
+
+def test_cells_is_fast_a_pure_lookup_not_a_live_compute(client):
+    start = time.monotonic()
+    resp = client.get("/api/cells")
+    elapsed = time.monotonic() - start
+    assert resp.status_code == 200
+    # Generous relative to the sub-second production target for the same
+    # reason test_cell_is_fast_a_pure_lookup_not_a_live_compute is -- a flat
+    # ~1MB static-file read, never a live external call.
+    assert elapsed < 2.0
+
+
 def test_tiles_serves_the_real_basemap_archive_with_range_support(client):
     # A real MapLibre/pmtiles.js client never fetches the whole 99MB file --
     # it opens a Range request for just the byte span it needs. If this

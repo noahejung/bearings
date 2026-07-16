@@ -7,7 +7,7 @@ import type { StyleSpecification } from "maplibre-gl";
 // a `vitest run` instead of shipping silently to prod again.
 import { validateStyleMin } from "@maplibre/maplibre-gl-style-spec";
 import { describe, expect, it } from "vitest";
-import { buildMapStyle, buildOverlayLayers } from "./mapStyle";
+import { buildCitywideGridLayers, buildMapStyle, buildOverlayLayers } from "./mapStyle";
 
 // FIXED 2026-07-15: four paint properties across three layers
 // (streets-line's line-width/line-opacity, cells-fill's fill-opacity,
@@ -104,5 +104,75 @@ describe("buildOverlayLayers (MapView's own app layers)", () => {
     expect((streetsPaint["line-width"][2] as unknown[])[0]).toBe("zoom");
     expect(streetsPaint["line-opacity"][0]).toBe("interpolate");
     expect((streetsPaint["line-opacity"][2] as unknown[])[0]).toBe("zoom");
+  });
+
+  // SPEC-precompute-v2.md Phase 2 / VISUAL.md §5 REVISED 2026-07-15: "The
+  // hex grid COVERS THE WHOLE CITY... present across the entire map at
+  // every zoom so any cell is clickable". buildOverlayLayers() spreads
+  // buildCitywideGridLayers() in, so these assertions exercise the exact
+  // layers MapView.tsx actually adds to the map, not a separate copy.
+  it("includes the citywide grid's fill (hit-test) and outline layers, both reading the citywide-cells source", () => {
+    const layers = buildOverlayLayers();
+    const fill = layers.find((l) => l.id === "citywide-cells-fill");
+    const outline = layers.find((l) => l.id === "citywide-cells-outline");
+    expect(fill).toBeDefined();
+    expect(outline).toBeDefined();
+    expect((fill as { source: string }).source).toBe("citywide-cells");
+    expect((outline as { source: string }).source).toBe("citywide-cells");
+  });
+
+  it("the citywide grid's fill is genuinely transparent (VISUAL.md: 'transparent fill for hit-testing'), never a visible wash", () => {
+    const fill = buildOverlayLayers().find((l) => l.id === "citywide-cells-fill") as {
+      paint: { "fill-opacity": unknown };
+    };
+    expect(fill.paint["fill-opacity"]).toBe(0);
+  });
+
+  it("the citywide grid's outline is present (non-zero opacity) at zoom 9 (city scale), not gated behind a minzoom cut", () => {
+    // Unlike the local per-address "cells" layer (which fades in only
+    // 12->14, VISUAL.md: only near a searched address), the citywide grid
+    // must already be visible at city-wide zoom -- this is the literal
+    // "covers the whole city" requirement, checked as real interpolate
+    // output, not just "the layer exists".
+    const outline = buildOverlayLayers().find((l) => l.id === "citywide-cells-outline") as {
+      paint: { "line-opacity": unknown[] };
+    };
+    const opacity = outline.paint["line-opacity"];
+    expect(opacity[0]).toBe("interpolate");
+    expect((opacity[2] as unknown[])[0]).toBe("zoom");
+    expect(opacity[3]).toBe(9); // first zoom stop is city scale, not a higher minzoom
+    const notSelectedAtCityZoom = (opacity[4] as unknown[])[2];
+    expect(notSelectedAtCityZoom).toBeGreaterThan(0);
+  });
+
+  it("a selected cell's outline is emphasized (full opacity, red) at every zoom, via feature-state, not a property rebuild", () => {
+    const layers = buildCitywideGridLayers();
+    const outline = layers.find((l) => l.id === "citywide-cells-outline") as {
+      paint: { "line-color": unknown[]; "line-opacity": unknown[] };
+    };
+    const color = outline.paint["line-color"];
+    expect(color[0]).toBe("case");
+    expect(JSON.stringify(color[1])).toContain("feature-state");
+    const opacity = outline.paint["line-opacity"];
+    const selectedAtMinZoom = (opacity[4] as unknown[])[2];
+    const selectedAtMaxZoom = (opacity[6] as unknown[])[2];
+    expect(selectedAtMinZoom).toBe(1);
+    expect(selectedAtMaxZoom).toBe(1);
+  });
+
+  it("every citywide grid paint expression uses ['zoom'] only as the direct input to a top-level interpolate/step (same regression class as the 2026-07-15 fix above)", () => {
+    for (const layer of buildCitywideGridLayers()) {
+      if (!("paint" in layer) || !layer.paint) continue;
+      for (const [prop, value] of Object.entries(layer.paint)) {
+        if (!Array.isArray(value)) continue;
+        const isTopLevelZoomExpr =
+          (value[0] === "interpolate" || value[0] === "step") && Array.isArray(value[2]) && value[2][0] === "zoom";
+        if (isTopLevelZoomExpr) continue;
+        const json = JSON.stringify(value);
+        expect(json.includes('"zoom"'), `${layer.id}.paint.${prop} nests ["zoom"] outside a top-level interpolate/step: ${json}`).toBe(
+          false,
+        );
+      }
+    }
   });
 });

@@ -244,3 +244,108 @@ export interface Citywide {
   crime_source: Source;
   crime_caveat: string;
 }
+
+// Mirrors GET /api/geocode exactly (bearings/api.py's get_geocode()) -- a
+// single fast NYC Planning Labs GeoSearch call, not a live profile/map
+// compute. Used to resolve a searched address to its containing cell
+// before fetching that cell's instant report (SPEC-precompute-v2.md Phase
+// 2: "Search an address -> geocode -> cell -> GET /api/cell/{h3}").
+export interface GeocodeResult {
+  label: string;
+  lat: number;
+  lng: number;
+  bbl: string | null;
+  cell: string;
+}
+
+// Mirrors GET /api/cells exactly (bearings/cellprofile.py's cells_index())
+// -- every real H3 res-9 cell citywide, flattened to just what the map
+// grid needs: an id, a centroid (so a click/hover can report a real
+// location even before the full profile loads), and the same five
+// metric-dropdown summary numbers MapCell already carries (see that
+// interface's own comment) -- but for EVERY real cell citywide, not just
+// the 37 in one address's local disk. Deliberately NOT the full per-cell
+// report (that's what GET /api/cell/{h3} is for, fetched only for
+// whichever one cell was actually clicked or searched).
+export interface CellsIndexEntry {
+  h3: string;
+  lat: number;
+  lng: number;
+  noise: number;
+  amenities: number;
+  trees: number;
+  building_age_years: number | null;
+  transit_access: number;
+}
+
+export interface CellsIndex {
+  cells: CellsIndexEntry[];
+}
+
+// Mirrors GET /api/cell/{h3} exactly (bearings/cellprofile.py's
+// profile_for()) -- a full, real, BLOCK-level report for one H3 res-9
+// cell, precomputed at build time (SPEC-precompute-v2.md Phase 1) so this
+// loads in well under 1s, unlike the live per-BUILDING /api/profile.
+// Deliberately a different, honest shape from `Profile` above rather than
+// forced into it: a block aggregate genuinely does not have a named list
+// of nearest stations (only a count) or a per-building HPD violation
+// breakdown by class A/B/C (only the aggregated, cell-wide open Class C
+// count) -- inventing those fields to fit the building-level `Profile`
+// shape would fabricate a precision this data doesn't have. See
+// CellReportView.tsx for how each block below is actually rendered.
+export interface CellNoise {
+  complaints_12mo: number;
+  source: Source;
+}
+
+export interface CellAmenities {
+  counts: AmenityCounts;
+  source: Source;
+}
+
+export interface CellTrees {
+  street_trees: number;
+  source: Source;
+}
+
+export interface CellBuildingAge {
+  median_year_built: number | null;
+  era: Era;
+  source: Source;
+}
+
+export interface CellTransit {
+  stations_within_500m: number;
+  to_anchors: ToAnchors;
+  caveat: string;
+  source: Source;
+}
+
+// `crime` mirrors PrecinctCrime above (already defined for /api/citywide) --
+// `null` when this cell's centroid resolved to no NYPD precinct (open
+// water, a gap at a simplified boundary edge), never a fabricated zero.
+export interface CellSafety {
+  precinct: number | null;
+  crime: PrecinctCrime | null;
+  crime_caveat: string;
+  source: Source;
+}
+
+export interface CellHousingHazards {
+  class_c_violations: number;
+  note: string;
+  source: Source;
+}
+
+export interface CellProfile {
+  h3: string;
+  shard: string;
+  centroid: { lat: number; lng: number };
+  noise: CellNoise;
+  amenities: CellAmenities;
+  trees: CellTrees;
+  building_age: CellBuildingAge;
+  transit: CellTransit;
+  safety: CellSafety;
+  housing_hazards: CellHousingHazards;
+}

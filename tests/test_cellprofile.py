@@ -178,6 +178,46 @@ def test_at_least_some_cells_citywide_show_a_real_housing_hazard_count():
     assert any(n > 0 for n in hazard_counts)
 
 
+def test_cells_index_covers_every_real_cell_with_the_flat_summary_shape():
+    idx = cellprofile.cells_index()
+    assert set(idx) == {"cells"}
+    all_ids = set(cellprofile.all_cells())
+    index_ids = {c["h3"] for c in idx["cells"]}
+    assert index_ids == all_ids
+    for c in idx["cells"]:
+        assert set(c) == {
+            "h3",
+            "lat",
+            "lng",
+            "noise",
+            "amenities",
+            "trees",
+            "building_age_years",
+            "transit_access",
+        }
+
+
+def test_cells_index_values_match_the_full_per_cell_profile(esb_cell, esb_profile):
+    # The lightweight index must never drift from the full profile it was
+    # derived from -- same numbers, just unwrapped from their {value,
+    # source} blocks (see _cell_index_entry()'s own docstring).
+    idx = cellprofile.cells_index()
+    entry = next(c for c in idx["cells"] if c["h3"] == esb_cell)
+    assert entry["lat"] == esb_profile["centroid"]["lat"]
+    assert entry["lng"] == esb_profile["centroid"]["lng"]
+    assert entry["noise"] == esb_profile["noise"]["complaints_12mo"]
+    assert entry["amenities"] == sum(esb_profile["amenities"]["counts"].values())
+    assert entry["trees"] == esb_profile["trees"]["street_trees"]
+    assert entry["building_age_years"] == esb_profile["building_age"]["median_year_built"]
+    assert entry["transit_access"] == esb_profile["transit"]["stations_within_500m"]
+
+
+def test_cells_index_raises_a_loud_error_if_not_yet_baked(monkeypatch, tmp_path):
+    monkeypatch.setattr(cellprofile, "_CELLS_INDEX_PATH", tmp_path / "never-baked.json")
+    with pytest.raises(FileNotFoundError):
+        cellprofile.cells_index()
+
+
 def test_at_least_some_cells_citywide_have_no_pluto_coverage_and_stay_none():
     # median_year_built must be a real None for a cell with no PLUTO lot
     # centred in it -- never a fabricated year. Confirmed structurally

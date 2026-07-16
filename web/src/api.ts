@@ -1,4 +1,12 @@
-import type { Citywide, FactcheckResult, MapGeometry, Profile } from "./types";
+import type {
+  CellProfile,
+  CellsIndex,
+  Citywide,
+  FactcheckResult,
+  GeocodeResult,
+  MapGeometry,
+  Profile,
+} from "./types";
 
 // Empty string -> relative "/api/..." paths, which the Vite dev proxy (vite.config.ts)
 // forwards to the backend, and which work unmodified once both are served from one
@@ -69,4 +77,29 @@ export function getMapGeometry(address: string): Promise<MapGeometry> {
 // bearings/citywide.py's own docstring for why).
 export function getCitywide(): Promise<Citywide> {
   return request<Citywide>("/api/citywide");
+}
+
+// The fast path (SPEC-precompute-v2.md Phase 2): a single GeoSearch call,
+// not a live profile/map compute -- used to resolve a searched address to
+// its containing cell before fetching that cell's report via getCell()
+// below. See bearings/api.py's get_geocode() docstring.
+export function getGeocode(address: string): Promise<GeocodeResult> {
+  return request<GeocodeResult>(`/api/geocode?address=${encodeURIComponent(address)}`);
+}
+
+// A precomputed block-level report for one real H3 res-9 cell -- a flat
+// baked-JSON read, target well under 1s (bearings/api.py's get_cell()
+// docstring). Powers both "click any grid cell" and "search an address"
+// (search resolves to a cell via getGeocode() first, then calls this).
+export function getCell(h3: string): Promise<CellProfile> {
+  return request<CellProfile>(`/api/cell/${encodeURIComponent(h3)}`);
+}
+
+// The small, flat, citywide grid index -- every real cell's id, centroid,
+// and five summary metric values, fetched once when the map mounts (not
+// once per address/click) -- see bearings/cellprofile.py's cells_index()
+// docstring for why this is a separate, lighter file from the full
+// per-cell shards getCell() reads from.
+export function getCellsIndex(): Promise<CellsIndex> {
+  return request<CellsIndex>("/api/cells");
 }

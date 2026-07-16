@@ -305,5 +305,81 @@ export function buildOverlayLayers(): StyleSpecification["layers"] {
         ],
       },
     },
+    ...buildCitywideGridLayers(),
+  ];
+}
+
+// The citywide clickable grid (SPEC-precompute-v2.md Phase 2, VISUAL.md §5
+// REVISED 2026-07-15: "The hex grid COVERS THE WHOLE CITY... present
+// across the entire map at every zoom so any cell is clickable; style it
+// thin/subtle at city scale... clearer as you zoom in"). Deliberately a
+// SEPARATE source/layer pair from "cells" above, which stays exactly what
+// it always was: the local, address-scoped, k=3 disk that the metric
+// dropdown shades. This pair instead covers every one of the ~7,000 real
+// cells citywide (MapView's own citywideCellsGeoJSON(), built from
+// GET /api/cells) and exists purely for navigation + click-to-load, not
+// metric shading -- so its paint never varies by any per-feature `w`/
+// `hasValue`, only by whether a cell is the current SELECTION (toggled via
+// MapLibre feature-state, not a full GeoJSON rebuild -- see MapView.tsx's
+// own selection effect for why: rebuilding ~7,000 polygons' `properties`
+// on every click would be real, avoidable work this data volume doesn't
+// need).
+//
+// "citywide-cells-fill" is a genuinely-transparent fill (VISUAL.md's own
+// "transparent fill for hit-testing") -- MapLibre still dispatches
+// mousemove/click events against a 0-opacity fill's real geometry, which
+// is exactly why a fill (not just the thin outline line) is needed here:
+// a line layer only registers a hit within a few pixels of the drawn
+// stroke, but a full hex must be clickable anywhere inside it.
+//
+// Split into its own exported function (not inlined into
+// buildOverlayLayers() above) so a future citywide heat-map (VISUAL.md
+// §5's still-open item) can extend just this pair without touching the
+// unrelated local-disk layers, and so mapStyle.test.ts can assert on it
+// independently.
+export function buildCitywideGridLayers(): StyleSpecification["layers"] {
+  return [
+    {
+      id: "citywide-cells-fill",
+      type: "fill",
+      source: "citywide-cells",
+      paint: { "fill-color": RED, "fill-opacity": 0 },
+    },
+    {
+      id: "citywide-cells-outline",
+      type: "line",
+      source: "citywide-cells",
+      paint: {
+        "line-color": ["case", ["boolean", ["feature-state", "selected"], false], RED, INK],
+        // Top-level zoom interpolate whose stop outputs carry the
+        // selected/not-selected `case` -- same restructuring cells-outline
+        // above already uses, required because a `["zoom"]`-consuming
+        // expression must be the direct top-level paint value, never
+        // nested inside `case` (see this file's own 2026-07-15 FIXED note
+        // above buildOverlayLayers() for the silent-failure this guards
+        // against). Faint citywide overlay at city scale (VISUAL.md: "a
+        // faint overlay, not noise"), thicker and more legible once
+        // zoomed past neighborhood scale; the selected cell stays fully
+        // emphasized across the whole range.
+        "line-width": [
+          "interpolate",
+          ["linear"],
+          ["zoom"],
+          9,
+          ["case", ["boolean", ["feature-state", "selected"], false], 1.6, 0.12],
+          14,
+          ["case", ["boolean", ["feature-state", "selected"], false], 2.2, 0.55],
+        ],
+        "line-opacity": [
+          "interpolate",
+          ["linear"],
+          ["zoom"],
+          9,
+          ["case", ["boolean", ["feature-state", "selected"], false], 1, 0.14],
+          14,
+          ["case", ["boolean", ["feature-state", "selected"], false], 1, 0.5],
+        ],
+      },
+    },
   ];
 }

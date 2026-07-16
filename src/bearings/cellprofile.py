@@ -10,6 +10,16 @@ report-ready profile for every real H3 res-9 cell citywide, once, at build
 time, and serve it as a flat lookup (this module's `profile_for()`) instead
 of computing it per request.
 
+Phase 2 (SPEC-precompute-v2.md, the frontend payoff) adds one more baked
+artefact alongside the full per-cell shards: `cells_index()`, a small flat
+citywide list (h3 + centroid + five summary numbers, ~1MB total) built from
+the same profiles this module already computes -- it exists because the
+citywide clickable hex grid needs every real cell's id and boundary to
+paint the whole city, but shipping the full 16MB/43-shard profile set to
+every visitor just to draw a grid would be the wrong trade; a browser only
+ever needs one cell's *full* profile at a time (whichever was clicked),
+which is exactly what GET /api/cell/{h3} already serves.
+
 **What "every real cell" means, and how it's decided -- data-derived, not a
 bounding box.** NYC_BBOX is a rectangle that includes open water (Long
 Island Sound, the Upper Bay, a slice of New Jersey) -- enumerating H3 cells
@@ -94,6 +104,14 @@ from bearings.transit import TRANSIT_CAVEAT, WALK_SPEED_MPS, _haversine_m
 
 _CELLS_DIR = config.DERIVED_DIR / "cells"
 _MANIFEST_PATH = _CELLS_DIR / "_manifest.json"
+# A small, flat, citywide index -- h3 + centroid + the five metric-dropdown
+# summary values (real, non-nested numbers, matching mapgeo.py's own MapCell
+# shape) for EVERY real cell, not the 43-shard/16MB full-profile set. Exists
+# for exactly one job: painting the citywide clickable hex grid (Phase 2,
+# SPEC-precompute-v2.md) without shipping the full per-cell report to a
+# browser that only needs it for one clicked cell at a time (GET /api/cell/
+# {h3} already serves that). See cells_index()'s own docstring.
+_CELLS_INDEX_PATH = config.DERIVED_DIR / "cells_index.json"
 
 _NOISE_WINDOW_DAYS = 365
 
@@ -297,6 +315,47 @@ def _building_age_block(median_year: float | None) -> dict:
     }
 
 
+def _cell_index_entry(prof: dict) -> dict:
+    """One full per-cell profile, flattened to the small set of fields the
+    citywide grid needs -- a real, honest summary (every number here is the
+    exact same value the full /api/cell/{h3} profile carries, just
+    unwrapped from its `{value, source}` block), never a re-derived or
+    approximated one. `amenities` sums the eight real category counts to
+    one number, matching mapgeo.py's own MapCell.amenities shape (a single
+    int, not a nested per-category breakdown -- the per-category counts are
+    still available from the full profile on click)."""
+    return {
+        "h3": prof["h3"],
+        "lat": prof["centroid"]["lat"],
+        "lng": prof["centroid"]["lng"],
+        "noise": prof["noise"]["complaints_12mo"],
+        "amenities": sum(prof["amenities"]["counts"].values()),
+        "trees": prof["trees"]["street_trees"],
+        "building_age_years": prof["building_age"]["median_year_built"],
+        "transit_access": prof["transit"]["stations_within_500m"],
+    }
+
+
+def _bake_cells_index_from_shards() -> dict:
+    """Build/rebuild data/derived/cells_index.json from the already-baked
+    per-cell shards -- no external fetch, just a read of already-local
+    JSON, so this is cheap (a few seconds at most) even though the shards
+    total 16MB. Exists as its own function (not inlined into _bake_all())
+    so warm_caches() can call it standalone to backfill the index onto an
+    existing bake that predates this file (see warm_caches()'s own
+    docstring) without re-running the several-minutes-long full citywide
+    fetch."""
+    manifest_data = json.loads(_MANIFEST_PATH.read_text())
+    entries: list[dict] = []
+    for shard in manifest_data["shards"]:
+        shard_map = json.loads(_shard_path(shard).read_text())
+        entries.extend(_cell_index_entry(prof) for prof in shard_map.values())
+    entries.sort(key=lambda e: e["h3"])
+    index = {"cells": entries}
+    _CELLS_INDEX_PATH.write_text(json.dumps(index))
+    return index
+
+
 def _bake_all() -> dict:
     """Assemble every real cell's profile and write it to
     data/derived/cells/<res6-shard>.json, plus a manifest recording what
@@ -371,6 +430,11 @@ def _bake_all() -> dict:
         "pluto_hpd_join_hit_rate": pluto_hit_rate,
     }
     _MANIFEST_PATH.write_text(json.dumps(manifest))
+    # Built from the shards this same call just wrote (not the in-memory
+    # `profiles` dict directly) -- one code path builds the lightweight
+    # index either way (fresh bake or backfill onto an old one), so there
+    # is exactly one place this transform can drift, not two.
+    _bake_cells_index_from_shards()
     return manifest
 
 
@@ -390,6 +454,14 @@ def warm_caches() -> None:
         staleness.warn_if_stale(
             _MANIFEST_PATH, config.CELL_PROFILE_CACHE_MAX_AGE_S, "per-cell profiles"
         )
+        if not _CELLS_INDEX_PATH.exists():
+            # Backfills the lightweight citywide grid index onto a bake
+            # that finished before this file existed (this dev machine's
+            # own state the day this was added, and the same shape of gap
+            # a future field could hit again) -- cheap (local shard reads
+            # only), so there is no reason to force a multi-minute full
+            # rebake just for this.
+            _bake_cells_index_from_shards()
         return
     buildings.warm_cache()
     profile.warm_caches()
@@ -417,6 +489,22 @@ def manifest() -> dict:
             "cellprofile.warm_caches() first."
         )
     return json.loads(_MANIFEST_PATH.read_text())
+
+
+def cells_index() -> dict:
+    """The small, flat, citywide grid index -- every real cell's h3 id,
+    centroid, and five metric-dropdown summary values, ~1MB total (not the
+    16MB/43-shard full-profile set) -- see this module's own
+    `_CELLS_INDEX_PATH` comment for why this exists as its own baked file.
+    Requires warm_caches() to have run first -- raises FileNotFoundError
+    otherwise, matching every other not-baked-yet guard in this codebase.
+    """
+    if not _CELLS_INDEX_PATH.exists():
+        raise FileNotFoundError(
+            f"{_CELLS_INDEX_PATH} has not been baked yet -- call bearings."
+            "cellprofile.warm_caches() first."
+        )
+    return json.loads(_CELLS_INDEX_PATH.read_text())
 
 
 def profile_for(h3_id: str) -> dict | None:
