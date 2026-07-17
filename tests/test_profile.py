@@ -115,3 +115,124 @@ def test_building_year_built_is_never_a_bare_zero(empire_state):
     # PLUTO's yearbuilt=0 "not recorded" sentinel must never leak through
     # as a literal year -- it has to become None.
     assert empire_state["building"]["year_built"] != 0
+
+
+# --- Phase 3: bedbugs, rodents, heat, flood -- wired into profile_for() ---
+
+# Real fixture addresses re-used from each source module's own test file
+# (tests/test_bedbugs.py, test_rodents.py, test_heat.py, test_flood.py),
+# geocoded here live to confirm profile_for()'s own address -> BBL path
+# lands on the exact same BBL those source-level tests already verified
+# live -- see this dispatch's own agent-report for the confirmed geocode
+# results (all four matched exactly, no drift).
+
+
+@pytest.fixture(scope="module")
+def bedbug_building():
+    # 60 West 36 St, Manhattan -- BBL 1008370078, matches bedbugs.py's own
+    # KNOWN_BBL fixture (six filings on record, most recent 135 total
+    # units / 9 infested / 0 eradicated / 2 re-infested).
+    return profile.profile_for("60 West 36 St, Manhattan")
+
+
+@pytest.fixture(scope="module")
+def rat_building():
+    # 346 East 4 St, Manhattan -- BBL 1003730026, matches rodents.py's own
+    # KNOWN_BBL fixture (4 real Initial/Compliance inspections, 3 failed).
+    return profile.profile_for("346 East 4 St, Manhattan")
+
+
+@pytest.fixture(scope="module")
+def heat_hotspot():
+    # 1040B East 217 St, Bronx -- BBL 2046990051, matches heat.py's own
+    # KNOWN_HEAT_BBL fixture: the single worst building in the city for
+    # heat/hot-water 311 complaints in the 2025-26 heating season (2,401).
+    return profile.profile_for("1040B East 217 St, Bronx")
+
+
+@pytest.fixture(scope="module")
+def flood_zone_building():
+    # 480 Van Brunt St, Brooklyn (Red Hook waterfront, ex-Fairway Market
+    # site) -- confirmed live 2026-07-17: geocodes to (40.6742,
+    # -74.017051), a real point inside FEMA's Zone AE Special Flood
+    # Hazard Area (in_special_flood_hazard_area=True, BFE 10.0ft), the
+    # same zone test_flood.py's own RED_HOOK_POINT fixture lands in.
+    return profile.profile_for("480 Van Brunt St, Brooklyn")
+
+
+def test_has_the_hazard_blocks(empire_state):
+    assert {"bedbugs", "rodents", "heat", "flood"} <= set(empire_state)
+
+
+def test_bedbugs_real_filing(bedbug_building):
+    r = bedbug_building["bedbugs"]["report"]
+    assert r["units_total"] == 135
+    assert r["units_infested"] == 9
+    assert r["units_reinfested"] == 2
+    assert r["filing_period_end"] == "2025-10-31"
+    assert bedbug_building["bedbugs"]["source"] == {
+        "name": "NYC Bedbug Filings",
+        "url": "https://data.cityofnewyork.us/d/wz6d-d3jb",
+    }
+
+
+def test_bedbugs_none_means_never_filed_not_zero(empire_state):
+    # Empire State's own BBL has never filed a bedbug report (confirmed
+    # live) -- this must come back as None, not a dict of zeros, which
+    # would falsely claim a clean filing history that doesn't exist.
+    assert empire_state["bedbugs"]["report"] is None
+    # The source is still attached even when there's nothing to report --
+    # a real lookup ran and found nothing, so the citation still applies.
+    assert empire_state["bedbugs"]["source"]["name"]
+
+
+def test_rodents_real_inspection_failures(rat_building):
+    r = rat_building["rodents"]["inspections"]
+    assert r["inspections"] == 4
+    assert r["failed"] == 3
+    assert r["last_result"] == "Failed for Rat Activity"
+    assert rat_building["rodents"]["source"] == {
+        "name": "NYC DOHMH Rodent Inspections",
+        "url": "https://data.cityofnewyork.us/d/p937-wjvj",
+    }
+
+
+def test_rodents_none_means_never_inspected_not_zero(empire_state):
+    assert empire_state["rodents"]["inspections"] is None
+
+
+def test_heat_real_hotspot_complaints(heat_hotspot):
+    h = heat_hotspot["heat"]
+    assert h["complaints"] == 2401
+    assert h["joined_on"] == "bbl"
+    assert h["source"] == {"name": "NYC 311", "url": "https://data.cityofnewyork.us/d/erm2-nwe9"}
+
+
+def test_heat_is_a_real_low_count_not_absent(empire_state):
+    # Empire State's own BBL carries a real, small, non-zero heat/hot-water
+    # complaint count (confirmed live: 1) -- distinct from bedbugs/rodents
+    # at the same address, which are genuinely None (never filed/inspected
+    # at all). heat.complaints() always returns a dict (0 or more), never
+    # None, because a BBL join always "looked" even when it finds nothing.
+    h = empire_state["heat"]
+    assert isinstance(h["complaints"], int)
+    assert h["joined_on"] == "bbl"
+
+
+def test_flood_special_hazard_area(flood_zone_building):
+    f = flood_zone_building["flood"]
+    assert f["zone"]["zone"] == "AE"
+    assert f["zone"]["in_special_flood_hazard_area"] is True
+    assert f["source"] == {
+        "name": "FEMA National Flood Hazard Layer",
+        "url": "https://hazards.fema.gov/arcgis/rest/services/public/NFHL/MapServer/28",
+    }
+
+
+def test_flood_minimal_hazard_is_not_sfha(empire_state):
+    # Midtown Manhattan, inland -- Zone X, not a Special Flood Hazard Area.
+    # A real, discriminating contrast against flood_zone_building's Zone AE,
+    # not just "some zone came back."
+    f = empire_state["flood"]
+    assert f["zone"]["zone"] == "X"
+    assert f["zone"]["in_special_flood_hazard_area"] is False

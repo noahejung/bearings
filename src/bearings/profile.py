@@ -18,7 +18,20 @@ import duckdb
 import pandas as pd
 
 from bearings import cells, citywide, config, geocode, staleness, transit
-from bearings.sources import compstat, gtfs, hpd, noise, overture, pluto, precincts, trees
+from bearings.sources import (
+    bedbugs,
+    compstat,
+    flood,
+    gtfs,
+    heat,
+    hpd,
+    noise,
+    overture,
+    pluto,
+    precincts,
+    rodents,
+    trees,
+)
 from bearings.transit import WALK_SPEED_MPS, _haversine_m
 
 NEAREST_STATION_COUNT = 3
@@ -286,6 +299,68 @@ def _building(bbl: str | None) -> dict:
     }
 
 
+@lru_cache(maxsize=256)
+def _bedbugs_report(bbl: str) -> dict | None:
+    return bedbugs.report(bbl)
+
+
+@lru_cache(maxsize=256)
+def _rodent_inspections(bbl: str) -> dict | None:
+    return rodents.inspections(bbl)
+
+
+@lru_cache(maxsize=256)
+def _flood_zone(lat: float, lng: float) -> dict | None:
+    return flood.zone(lat, lng)
+
+
+def _bedbugs(bbl: str | None) -> dict:
+    """Mirrors `_building()`'s no-BBL handling exactly: no BBL means no way
+    to look this building up at all, so `report` is null. This does
+    collapse two different facts into the same `None` at this layer --
+    "never checked" (no BBL) vs. "checked, this building has never filed"
+    (bedbugs.report()'s own None) -- but that is the same tradeoff
+    `_building()`'s `year_built` already makes (PLUTO's own "not recorded"
+    sentinel and "no BBL at all" both surface as `None` there too), so this
+    matches an existing, already-shipped convention rather than inventing a
+    new three-state shape nothing else in this codebase uses."""
+    return {
+        "report": None if bbl is None else _bedbugs_report(bbl),
+        "source": dict(bedbugs.SOURCE),
+    }
+
+
+def _rodents(bbl: str | None) -> dict:
+    """See `_bedbugs()`'s docstring for the no-BBL-vs-never-inspected
+    collapse -- same tradeoff, same reasoning."""
+    return {
+        "inspections": None if bbl is None else _rodent_inspections(bbl),
+        "source": dict(rodents.SOURCE),
+    }
+
+
+def _heat(bbl: str | None, lat: float, lng: float) -> dict:
+    """heat.complaints() already returns a complete, self-describing dict
+    (its own `source` included) -- prefer the exact per-building BBL join,
+    and fall back to the ~50m point radius only when no BBL is known. This
+    never silently guesses: `joined_on` in the returned dict says which
+    path actually ran, so a caller can never mistake "near this point" for
+    "in this building" (see heat.py's own docstring)."""
+    return heat.complaints(bbl if bbl is not None else (lat, lng))
+
+
+def _flood(lat: float, lng: float) -> dict:
+    """Point-based, not BBL-based -- always computed, since every profile
+    has a real (lat, lng) even when the geocoder returns no BBL. `zone` is
+    `None` when no FEMA NFHL study covers this point (a different fact from
+    "studied, Zone X" -- see flood.py's own docstring), but `source` is
+    still attached either way: the FEMA lookup genuinely ran."""
+    return {
+        "zone": _flood_zone(lat, lng),
+        "source": dict(flood.SOURCE),
+    }
+
+
 def profile_for(address: str) -> dict:
     loc = geocode.geocode(address)
     cell = cells.cell_for(loc.lat, loc.lng)
@@ -305,4 +380,8 @@ def profile_for(address: str) -> dict:
         "quiet": _quiet(loc.lat, loc.lng),
         "green": _green(loc.lat, loc.lng),
         "building": _building(loc.bbl),
+        "bedbugs": _bedbugs(loc.bbl),
+        "rodents": _rodents(loc.bbl),
+        "heat": _heat(loc.bbl, loc.lat, loc.lng),
+        "flood": _flood(loc.lat, loc.lng),
     }
