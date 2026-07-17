@@ -79,9 +79,32 @@ every nearby station, not just one):
   "building": {"year_built": 1931, "era": "prewar",
                "era_note": "Pre-war walk-up stock often carries rent-stabilised units, so a cheap apartment may exist here. This is a signal, not a promise.",
                "hpd_open_violations": {"class_a": 0, "class_b": 0, "class_c": 0},
-               "source": {"name": "NYC PLUTO + HPD", "url": "https://data.cityofnewyork.us/d/wvxf-dwi5"}}
+               "source": {"name": "NYC PLUTO + HPD", "url": "https://data.cityofnewyork.us/d/wvxf-dwi5"}},
+  "bedbugs": {"report": null,
+              "source": {"name": "NYC Bedbug Filings", "url": "https://data.cityofnewyork.us/d/wz6d-d3jb"}},
+  "rodents": {"inspections": null,
+              "source": {"name": "NYC DOHMH Rodent Inspections", "url": "https://data.cityofnewyork.us/d/p937-wjvj"}},
+  "heat": {"complaints": 1, "seasons": 1, "season_start": "2025-10-01", "season_end": "2026-06-01",
+           "joined_on": "bbl",
+           "source": {"name": "NYC 311", "url": "https://data.cityofnewyork.us/d/erm2-nwe9"}},
+  "flood": {"zone": {"zone": "X", "description": "Area of minimal flood hazard: outside the mapped 0.2% annual chance floodplain.",
+                      "in_special_flood_hazard_area": false, "base_flood_elevation_ft": null,
+                      "source": {"name": "FEMA National Flood Hazard Layer", "url": "https://hazards.fema.gov/arcgis/rest/services/public/NFHL/MapServer/28"}},
+            "source": {"name": "FEMA National Flood Hazard Layer", "url": "https://hazards.fema.gov/arcgis/rest/services/public/NFHL/MapServer/28"}}
 }
 ```
+
+The four blocks above (`bedbugs`, `rodents`, `heat`, `flood`) are Phase 3 additions
+(2026-07-17): a bedbug filing report and a rodent inspection summary are per-building
+(`bbl`-joined) and `null` when the building has no BBL or no record on file -- `null`
+means "no record," never a fabricated zero (this exact address has genuinely never
+filed a bedbug report or been rodent-inspected). `heat` counts real 311 heat/hot-water
+complaints over the trailing legal heating season (Oct 1 -- May 31), joined on `bbl`
+when one exists and falling back to a ~50m point radius otherwise (`joined_on` says
+which). `flood` is a true per-point FEMA National Flood Hazard Layer lookup -- `zone`
+is `null` when no flood study covers the point at all, a different fact from "studied,
+Zone X" (a real dict with `in_special_flood_hazard_area: false`). None of the four
+computes a dollar figure -- see "Known simplifications" below for why.
 
 ## Running the API
 
@@ -366,7 +389,7 @@ simplifications).
 | [MTA GTFS (subway)](http://web.mta.info/developers/data-nyct-subway.html) | Station locations + full timetable | Free zip download | MTA Developer Data Terms of Use (free use, attribution requested) |
 | [PATH GTFS](https://www.panynj.gov/path/en/schedules-maps/gtfs-realtime.html) (served via Trillium Transit) | Station locations + full timetable for the 13 PATH stations | Free zip download | Published by the Port Authority as open transit data |
 | [Overture Maps Places](https://overturemaps.org/) | POIs (name, category, location) for all of NYC | Free, keyless Parquet-over-S3, queried with DuckDB | See [overturemaps.org/data](https://overturemaps.org/data) for the current per-theme license and attribution requirements before any public-facing use |
-| [NYC 311 Service Requests](https://data.cityofnewyork.us/d/erm2-nwe9) | Noise complaint counts near an address, trailing 12 months | Free Socrata REST API, paginated | NYC Open Data Terms of Use -- public data, generally free to reuse |
+| [NYC 311 Service Requests](https://data.cityofnewyork.us/d/erm2-nwe9) | Noise complaint counts near an address (trailing 12 months) and heat/hot-water complaint counts per building (trailing legal heating season) | Free Socrata REST API, paginated | NYC Open Data Terms of Use -- public data, generally free to reuse |
 | [NYC HPD Housing Maintenance Code Violations](https://data.cityofnewyork.us/d/wvxf-dwi5) | Open violations by class (Class C = immediately hazardous) for a building's BBL | Free Socrata REST API | NYC Open Data Terms of Use |
 | [NYC PLUTO](https://data.cityofnewyork.us/d/64uk-42ks) | Year built, per tax lot | Free Socrata REST API | NYC Open Data Terms of Use |
 | [NYC Street Tree Census](https://data.cityofnewyork.us/d/uvpi-gqnh) (2015) | Living street tree counts near an address | Free Socrata REST API | NYC Open Data Terms of Use |
@@ -374,6 +397,9 @@ simplifications).
 | [NYPD CompStat](https://www.nyc.gov/site/nypd/stats/crime-statistics/citywide-crime-stats.page) | Per-precinct YTD robbery / felony assault / total major crime | Public PDF, requires a browser User-Agent (bot-UA block, not auth) | Public NYPD statistical release |
 | [NYC Neighborhood Tabulation Areas (2020)](https://data.cityofnewyork.us/d/9nt8-h7nd) | Neighbourhood name + centroid, for the map's label layer | Free Socrata GeoJSON export | NYC Open Data Terms of Use |
 | [Protomaps Basemap](https://docs.protomaps.com/basemaps/downloads) (OpenStreetMap + Natural Earth) | The navigable map's base layer (land/water/parks/streets) | Free daily PMTiles build, self-extracted via HTTP range requests, self-hosted | [ODbL](https://opendatacommons.org/licenses/odbl/) (OpenStreetMap Foundation) -- attribution shown in-app |
+| [NYC Bedbug Reporting](https://data.cityofnewyork.us/d/wz6d-d3jb) | Most recent annual bedbug filing (units total/infested/eradicated/re-infested) for a building's BBL | Free Socrata REST API | NYC Open Data Terms of Use |
+| [NYC DOHMH Rodent Inspections](https://data.cityofnewyork.us/d/p937-wjvj) | Initial/Compliance inspection pass/fail summary, trailing 24 months, joined on boro/block/lot | Free Socrata REST API | NYC Open Data Terms of Use |
+| [FEMA National Flood Hazard Layer](https://hazards.fema.gov/arcgis/rest/services/public/NFHL/MapServer/28) | True per-point flood zone lookup (Special Flood Hazard Area yes/no, zone letter, Base Flood Elevation) | Free, keyless public ArcGIS MapServer (REST query) | Public federal data (FEMA) |
 
 ## Known simplifications
 
@@ -395,6 +421,23 @@ a stated simplification and distrust a hidden one.
   it's a hex disk, not the actual reachable street network -- it can over-
   or under-count near rivers, parks, highways, or anywhere the walkable
   network doesn't match a regular hex tiling.
+- **A missing BBL collapses two different "no record" facts into the same
+  `null` for `bedbugs`/`rodents`.** `bedbugs.report()`/`rodents.inspections()`
+  return `null` for "this BBL exists and has genuinely never filed/been
+  inspected" -- but `profile.profile_for()` also returns `null` when the
+  geocoder hands back no BBL at all (a smaller number of addresses, e.g.
+  some condo sub-lots), where the honest answer is "couldn't check," not
+  "checked and clean." This matches an existing, already-shipped
+  convention: `building.year_built` already collapses "no BBL" and "BBL
+  known, PLUTO has no year on record" into the same `null` rather than a
+  three-state shape. `heat` and `flood` don't have this gap -- `heat`
+  falls back to a point-radius join when there's no BBL (`joined_on` says
+  which happened) and `flood` never needs a BBL at all.
+- **No dollar figure for flood insurance.** `flood.zone()` reports the FEMA
+  zone and whether it's a Special Flood Hazard Area, never a premium
+  estimate -- NFIP premiums depend on elevation certificates and structure
+  details this project has no data for. See SPEC.md's "Rejected, and why"
+  for the same reasoning applied project-wide.
 - **Claim extraction is rule-based regex, not an LLM.** `factcheck.py`
   matches a curated list of real-estate marketing phrases against the
   listing text with regex. This is deterministic and needs no API key or
