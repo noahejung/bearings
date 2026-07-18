@@ -19,9 +19,28 @@ export interface ToAnchors {
   newport_path: number;
 }
 
+// The two real, live reasons an anchor can be unreachable (bearings/
+// profile.py's NO_STATION_IN_RANGE / NO_RAIL_CONNECTION) -- added
+// 2026-07-18 to replace a single collapsed "-1"/"no route found" with an
+// honest, distinguishable explanation. See web/src/lib/transit.ts for the
+// plain-language copy each one maps to, and profile.py's own
+// `_anchor_result()` docstring for exactly how each is decided.
+export type UnreachableReason = "no_station_in_range" | "no_rail_connection";
+
+// `null` means a real route was found -- always the case exactly when the
+// matching `ToAnchors` value is a real, non-negative minute count; the
+// two never disagree (see profile.py's `_anchor_result()` docstring).
+export interface UnreachableReasons {
+  midtown: UnreachableReason | null;
+  wtc: UnreachableReason | null;
+  downtown_brooklyn: UnreachableReason | null;
+  newport_path: UnreachableReason | null;
+}
+
 export interface Transit {
   nearest_stations: Station[];
   to_anchors: ToAnchors;
+  unreachable_reason: UnreachableReasons;
   caveat: string;
   source: Source;
 }
@@ -317,6 +336,7 @@ export interface CellBuildingAge {
 export interface CellTransit {
   stations_within_500m: number;
   to_anchors: ToAnchors;
+  unreachable_reason: UnreachableReasons;
   caveat: string;
   source: Source;
 }

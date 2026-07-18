@@ -78,6 +78,38 @@ from bearings.transit import WALK_SPEED_MPS, _haversine_m
 NEAREST_STATION_COUNT = 6
 STATION_SEARCH_M = 1200.0
 
+# Reason codes for an unreachable anchor (to_anchors[anchor] == -1) -- added
+# 2026-07-18 to replace a single collapsed "-1" (and the frontend's single
+# "no route found" string) with an honest, distinguishable explanation. See
+# _anchor_result()'s docstring for exactly how each is decided, and this
+# project's 2026-07-18 agent-report "no-route-copy-split" for the full
+# rationale. Both are real, plain-language-register facts (VISUAL.md), not
+# invented officialese:
+#   - a station right there but on a network with no rail path to the rest
+#     of the system (Staten Island Railway, today) is a very different fact
+#     from "no station nearby at all", and collapsing them into one string
+#     told a Staten Island resident their neighborhood was as transit-dead
+#     as a genuine desert, which it isn't -- it's a real, permanent ferry
+#     gap in this project's schedule data, not a judgment on the place.
+NO_STATION_IN_RANGE = "no_station_in_range"
+NO_RAIL_CONNECTION = "no_rail_connection"
+
+
+class UnexplainedDisconnectedStation(RuntimeError):
+    """A real station is unreachable from every one of the four anchors,
+    and it doesn't belong to the one network gap this project currently
+    knows about and has verified live (Staten Island Railway -- see
+    `_disconnected_stop_ids()`). Raised, not silently folded into
+    NO_RAIL_CONNECTION, because a silent new disconnection is exactly the
+    shape of bug that orphaned the entire Astoria N/W line before the
+    2026-07-18 `gtfs.stations()` dedup fix (see that module's own
+    docstring) -- a loud, named failure here beats a plausible-but-wrong
+    "no rail connection" label on a route a bug fix would actually
+    restore. Mirrors `transit.py`'s own `AnchorSnapTooFar` -- same
+    "loud guard over a silently-wrong plausible number" pattern, this
+    project's own standing rule after that incident."""
+
+
 # One merged citation for the building block: PLUTO supplies year_built/era,
 # HPD supplies hpd_open_violations. The contract calls for a single source
 # object here rather than one per field, so this borrows HPD's dataset URL
@@ -175,6 +207,49 @@ def _anchor_times():
     return times
 
 
+@lru_cache(maxsize=1)
+def _disconnected_stop_ids() -> frozenset[str]:
+    """Every real station that is unreachable from all four anchors --
+    computed once by diffing the full station table against the union of
+    every anchor's own reachable-stop-id set in `_anchor_times()`. As of
+    the 2026-07-18 dedup fix (see `gtfs.stations()`'s docstring) this set
+    is exactly the 21 real Staten Island Railway stations, confirmed live:
+    SIR has no rail path to the rest of NYCT, and the only way across is
+    the Staten Island Ferry, which carries no GTFS schedule data this
+    project has access to -- a real, permanent methodology gap, not a bug.
+
+    Every stop_id in the returned set is asserted here to serve ONLY the
+    real, rider-facing "SIR" route (`gtfs.stations()`'s own `routes`
+    column, itself sourced from routes.txt's `route_short_name`) -- if a
+    future GTFS update or code regression disconnects any OTHER station,
+    that assertion fails with `UnexplainedDisconnectedStation` immediately
+    at first use, rather than silently relabeling a brand-new routing
+    defect as this project's one known, explained gap. Same "loud guard
+    over a plausible-but-wrong number" pattern `transit.py`'s own
+    `AnchorSnapTooFar` already established for anchor-snap distance.
+    """
+    at = _anchor_times()
+    reachable: set[str] = set()
+    for by_stop in at.values():
+        reachable |= set(by_stop)
+
+    st = _stations()
+    routes_by_id = dict(zip(st["stop_id"], st["routes"], strict=True))
+    disconnected = set(routes_by_id) - reachable
+
+    for stop_id in disconnected:
+        routes = routes_by_id.get(stop_id, [])
+        if routes != ["SIR"]:
+            raise UnexplainedDisconnectedStation(
+                f"{stop_id!r} (serving routes={routes!r}) is unreachable "
+                "from every anchor but does not serve only Staten Island "
+                "Railway -- a new, unexplained network gap, not this "
+                "project's one known, real ferry gap. Investigate before "
+                "treating it as NO_RAIL_CONNECTION."
+            )
+    return frozenset(disconnected)
+
+
 def warm_caches() -> None:
     """Populate every module-level cache profile_for() depends on: the POI
     table, the station tables, and the anchor-time dict (which builds the
@@ -182,10 +257,18 @@ def warm_caches() -> None:
     api.py's startup handler so the first real HTTP request never pays the
     cold-boot cost. Safe to call more than once -- every cache here is
     memoised, so repeat calls are free.
+
+    Also validates `_disconnected_stop_ids()` eagerly, here, rather than
+    leaving it to fire lazily on whichever address or cell happens to be
+    the first to hit an unreachable anchor -- a real network regression
+    should surface loudly at boot, the same moment `_anchor_times()`
+    itself would already fail on `AnchorSnapTooFar`, not buried inside a
+    live request or a partway-through citywide bake.
     """
     _pois()
     _stations()
     _anchor_times()
+    _disconnected_stop_ids()
 
 
 def _walk_minutes(metres: float) -> int:
@@ -213,28 +296,75 @@ def _nearby_stations(lat: float, lng: float) -> list[dict]:
     return out[:NEAREST_STATION_COUNT]
 
 
-def _to_anchors(nearby: list[dict]) -> dict[str, int]:
-    """Total door-to-anchor minutes: walk to a station, then ride.
+def _anchor_result(
+    candidates: list[tuple[str, int]], by_stop: dict[str, int]
+) -> tuple[int, str | None]:
+    """One anchor's real (minutes, reason) result for one query point.
+
+    `candidates` is a list of (stop_id, walk_minutes) pairs for every
+    station the caller considers worth checking -- already filtered to
+    STATION_SEARCH_M and capped to NEAREST_STATION_COUNT by the caller
+    (this module's own `_nearby_stations()`, or cellprofile.py's
+    `_transit_by_cell()`). Shared by both call sites so the reason logic
+    lives in exactly one place -- both independently reimplemented the
+    plain minutes computation before this function existed (see this
+    project's 2026-07-18 "no-route-copy-split" agent-report).
+
+    Returns (minutes, reason). `minutes` is -1 exactly when `reason` is
+    not None -- the number and its explanation always come from the same
+    scan, never two passes that could disagree:
+      - NO_STATION_IN_RANGE when `candidates` is empty: no station was
+        even found near enough to consider.
+      - NO_RAIL_CONNECTION when candidates exist but none of them has a
+        real ride time from this anchor -- every one sits on a network
+        with no rail path here (Staten Island Railway, today).
+        `_disconnected_stop_ids()` is called first for its own validating
+        side effect (memoised, so free after the first real call): if any
+        candidate here were NOT that one known, explained disconnection,
+        that call raises `UnexplainedDisconnectedStation` before this
+        function could mislabel a genuinely new bug.
+      - `None` (a real route was found) otherwise.
+    """
+    if not candidates:
+        return -1, NO_STATION_IN_RANGE
+
+    best: int | None = None
+    for stop_id, walk_minutes in candidates:
+        ride_s = by_stop.get(stop_id)
+        if ride_s is None:
+            continue
+        total = walk_minutes + int(round(ride_s / 60))
+        if best is None or total < best:
+            best = total
+
+    if best is not None:
+        return best, None
+
+    _disconnected_stop_ids()  # validates every candidate above, or raises
+    return -1, NO_RAIL_CONNECTION
+
+
+def _to_anchors(nearby: list[dict]) -> tuple[dict[str, int], dict[str, str | None]]:
+    """Total door-to-anchor minutes, plus (see `_anchor_result()`) a real
+    reason whenever an anchor is unreachable -- the two returned dicts
+    share the same keys and the same invariant `_anchor_result()`
+    documents (a -1 and a non-None reason always travel together).
 
     We take the best station for each anchor independently -- the fastest
     way to Midtown may not start at the same station as the fastest way to
     WTC.
     """
     times = _anchor_times()
-    out: dict[str, int] = {}
+    candidates = [(s["stop_id"], s["walk_minutes"]) for s in nearby]
 
+    minutes_out: dict[str, int] = {}
+    reason_out: dict[str, str | None] = {}
     for anchor, by_stop in times.items():
-        best: int | None = None
-        for s in nearby:
-            ride_s = by_stop.get(s["stop_id"])
-            if ride_s is None:
-                continue
-            total = s["walk_minutes"] + int(round(ride_s / 60))
-            if best is None or total < best:
-                best = total
-        out[anchor] = best if best is not None else -1
+        minutes, reason = _anchor_result(candidates, by_stop)
+        minutes_out[anchor] = minutes
+        reason_out[anchor] = reason
 
-    return out
+    return minutes_out, reason_out
 
 
 def _amenities(cell: str) -> dict[str, int]:
@@ -406,6 +536,7 @@ def profile_for(address: str) -> dict:
     loc = geocode.geocode(address)
     cell = cells.cell_for(loc.lat, loc.lng)
     nearby = _nearby_stations(loc.lat, loc.lng)
+    to_anchors, unreachable_reason = _to_anchors(nearby)
 
     return {
         "address": loc.label,
@@ -414,7 +545,8 @@ def profile_for(address: str) -> dict:
         "location": {"lat": loc.lat, "lng": loc.lng, "bbl": loc.bbl},
         "transit": {
             "nearest_stations": nearby,
-            "to_anchors": _to_anchors(nearby),
+            "to_anchors": to_anchors,
+            "unreachable_reason": unreachable_reason,
         },
         "amenities": _amenities(cell),
         "safety": _safety(loc.lat, loc.lng),

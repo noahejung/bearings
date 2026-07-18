@@ -17,6 +17,7 @@ const SAFETY_SOURCE = { name: "NYPD CompStat", url: "https://www.nyc.gov/site/ny
 const TRANSIT: Transit = {
   nearest_stations: [{ name: "34 St-Herald Sq", routes: ["B", "D", "F", "M"], walk_minutes: 4 }],
   to_anchors: { midtown: 9, wtc: 21, downtown_brooklyn: 27, newport_path: 33 },
+  unreachable_reason: { midtown: null, wtc: null, downtown_brooklyn: null, newport_path: null },
   caveat: "In-vehicle time plus a nominal transfer penalty.",
   source: TRANSIT_SOURCE,
 };

@@ -1,5 +1,6 @@
 import { crimeRelativeLabel, formatPercentile } from "../lib/crime";
-import type { CellProfile } from "../types";
+import { unreachableReasonSentence, unreachableReasonShortLabel } from "../lib/transit";
+import type { CellProfile, UnreachableReason } from "../types";
 import { SourceTag } from "./SourceTag";
 import { Stamp } from "./Stamp";
 import { Stat } from "./Stat";
@@ -78,6 +79,22 @@ export function CellReportView({ cell }: { cell: CellProfile }) {
   const crime = cell.safety.crime;
   const hasBuildingAge = cell.building_age.median_year_built !== null;
 
+  // Every anchor that failed carries its own real reason (see
+  // web/src/types.ts's UnreachableReasons) -- collapse to the DISTINCT
+  // reasons actually present so a shared cause (today, every failing cell
+  // fails all four anchors for the same reason -- see the 2026-07-18
+  // no-route-copy-split report) only prints one explanation, not four
+  // identical ones. Still correct if that ever stops being true: a future
+  // cell with a genuine per-anchor split would print one sentence per
+  // distinct reason, not silently drop one.
+  const distinctUnreachableReasons = Array.from(
+    new Set(
+      anchorEntries
+        .map(([key]) => cell.transit.unreachable_reason[key])
+        .filter((reason): reason is UnreachableReason => reason !== null)
+    )
+  );
+
   return (
     <div className="fields">
       <article className="field field--wide" aria-labelledby="cell-transit-heading">
@@ -97,6 +114,7 @@ export function CellReportView({ cell }: { cell: CellProfile }) {
           {anchorEntries.map(([key, minutes]) => {
             const reachable = minutes >= 0;
             const pct = reachable ? Math.min(100, (minutes / BAR_SCALE_MAX_MIN) * 100) : 0;
+            const reason = cell.transit.unreachable_reason[key];
             return (
               <div className="anchor" key={key}>
                 <span className="anchor__label">{ANCHOR_LABELS[key]}</span>
@@ -104,12 +122,21 @@ export function CellReportView({ cell }: { cell: CellProfile }) {
                   {reachable ? <span className="anchor__fill" style={{ width: `${pct}%` }} /> : null}
                 </span>
                 <span className={`anchor__value${reachable ? "" : " anchor__value--nodata"}`}>
-                  {reachable ? `${minutes} min` : "no route found"}
+                  {reachable ? `${minutes} min` : unreachableReasonShortLabel(reason as UnreachableReason)}
                 </span>
               </div>
             );
           })}
         </div>
+
+        {distinctUnreachableReasons.length > 0 && (
+          <p className="field__caveat mono">
+            <span className="field__caveat-kicker" aria-hidden="true">
+              why
+            </span>
+            {distinctUnreachableReasons.map(unreachableReasonSentence).join(" ")}
+          </p>
+        )}
 
         <p className="field__caveat mono">
           <span className="field__caveat-kicker" aria-hidden="true">

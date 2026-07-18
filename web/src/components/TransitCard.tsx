@@ -1,4 +1,5 @@
-import type { Transit } from "../types";
+import { unreachableReasonSentence, unreachableReasonShortLabel } from "../lib/transit";
+import type { Transit, UnreachableReason } from "../types";
 import { RouteBullets } from "./RouteBullet";
 import { SourceTag } from "./SourceTag";
 import { Stamp } from "./Stamp";
@@ -21,6 +22,16 @@ export function TransitCard({ transit }: { transit: Transit }) {
     keyof Transit["to_anchors"],
     number,
   ][];
+
+  // See CellReportView.tsx's identical block for why this collapses to
+  // the distinct reasons present rather than printing once per anchor.
+  const distinctUnreachableReasons = Array.from(
+    new Set(
+      anchorEntries
+        .map(([key]) => transit.unreachable_reason[key])
+        .filter((reason): reason is UnreachableReason => reason !== null)
+    )
+  );
 
   return (
     <article className="field field--wide" aria-labelledby="transit-heading">
@@ -58,6 +69,7 @@ export function TransitCard({ transit }: { transit: Transit }) {
         {anchorEntries.map(([key, minutes]) => {
           const reachable = minutes >= 0;
           const pct = reachable ? Math.min(100, (minutes / BAR_SCALE_MAX_MIN) * 100) : 0;
+          const reason = transit.unreachable_reason[key];
           return (
             <div className="anchor" key={key}>
               <span className="anchor__label">{ANCHOR_LABELS[key]}</span>
@@ -67,12 +79,21 @@ export function TransitCard({ transit }: { transit: Transit }) {
               <span
                 className={`anchor__value${reachable ? "" : " anchor__value--nodata"}`}
               >
-                {reachable ? `${minutes} min` : "no route found"}
+                {reachable ? `${minutes} min` : unreachableReasonShortLabel(reason as UnreachableReason)}
               </span>
             </div>
           );
         })}
       </div>
+
+      {distinctUnreachableReasons.length > 0 && (
+        <p className="field__caveat mono">
+          <span className="field__caveat-kicker" aria-hidden="true">
+            why
+          </span>
+          {distinctUnreachableReasons.map(unreachableReasonSentence).join(" ")}
+        </p>
+      )}
 
       <p className="field__caveat mono">
         <span className="field__caveat-kicker" aria-hidden="true">

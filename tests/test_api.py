@@ -47,8 +47,20 @@ def test_profile_returns_the_contract_shape(client):
         "building",
     }
     assert set(body["location"]) == {"lat", "lng", "bbl"}
-    assert set(body["transit"]) == {"nearest_stations", "to_anchors", "caveat", "source"}
+    assert set(body["transit"]) == {
+        "nearest_stations",
+        "to_anchors",
+        "unreachable_reason",
+        "caveat",
+        "source",
+    }
     assert set(body["transit"]["to_anchors"]) == {
+        "midtown",
+        "wtc",
+        "downtown_brooklyn",
+        "newport_path",
+    }
+    assert set(body["transit"]["unreachable_reason"]) == {
         "midtown",
         "wtc",
         "downtown_brooklyn",
@@ -92,6 +104,56 @@ def test_profile_returns_the_contract_shape(client):
         "class_b",
         "class_c",
     }
+
+
+def test_profile_reachable_anchors_carry_no_reason(client):
+    # Empire State reaches every anchor with a real ride -- the reason
+    # dict must be all None, never a leftover string next to a real minute
+    # value (the two must always travel together, see profile.py's own
+    # _anchor_result() docstring).
+    resp = client.get("/api/profile", params={"address": EMPIRE_STATE})
+    body = resp.json()
+    for anchor, minutes in body["transit"]["to_anchors"].items():
+        assert minutes >= 0
+        assert body["transit"]["unreachable_reason"][anchor] is None
+
+
+def test_profile_no_station_in_range_reason(client):
+    # 131 Huguenot Ave, Staten Island -- confirmed live 2026-07-18: no
+    # subway or PATH station of any kind falls within STATION_SEARCH_M
+    # (1200m) of this real address, so `_nearby_stations()` returns an
+    # empty list and every anchor gets the honest "nothing found nearby"
+    # reason, not a mislabeled "not connected to the network" one.
+    resp = client.get(
+        "/api/profile", params={"address": "131 Huguenot Ave, Staten Island"}
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["transit"]["nearest_stations"] == []
+    for anchor, minutes in body["transit"]["to_anchors"].items():
+        assert minutes == -1
+        assert body["transit"]["unreachable_reason"][anchor] == "no_station_in_range"
+
+
+def test_profile_no_rail_connection_reason(client):
+    # 43 Foster Rd, Staten Island -- confirmed live 2026-07-18: the two
+    # real nearest stations (S15 Prince's Bay, S16 Huguenot) are both real,
+    # in-range Staten Island Railway stops -- SIR has no rail path to the
+    # rest of NYCT (the only crossing is the Staten Island Ferry, not in
+    # this project's GTFS data), a genuinely different fact from "no
+    # station nearby at all".
+    resp = client.get(
+        "/api/profile", params={"address": "43 Foster Rd, Staten Island"}
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert len(body["transit"]["nearest_stations"]) >= 1
+    assert all(
+        "SIR" in s["routes"] for s in body["transit"]["nearest_stations"]
+    )
+    for anchor, minutes in body["transit"]["to_anchors"].items():
+        assert minutes == -1
+        assert body["transit"]["unreachable_reason"][anchor] == "no_rail_connection"
 
 
 def test_profile_amenities_include_every_category_even_at_zero(client):

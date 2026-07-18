@@ -63,7 +63,8 @@ every nearby station, not just one):
     "nearest_stations": [
       {"stop_id": "R17", "name": "34 St-Herald Sq", "routes": ["N","Q","R","W"], "walk_minutes": 3}
     ],
-    "to_anchors": {"midtown": 5, "wtc": 21, "downtown_brooklyn": 24, "newport_path": 17}
+    "to_anchors": {"midtown": 5, "wtc": 21, "downtown_brooklyn": 24, "newport_path": 17},
+    "unreachable_reason": {"midtown": null, "wtc": null, "downtown_brooklyn": null, "newport_path": null}
   },
   "amenities": {"cafe": 105, "restaurant": 65, "bar": 64, "gym": 49,
                 "pharmacy": 26, "park": 18, "grocery": 14, "laundry": 1},

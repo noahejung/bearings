@@ -199,6 +199,7 @@ const ESB_CELL_PROFILE = {
   transit: {
     stations_within_500m: 5,
     to_anchors: { midtown: 4, wtc: 20, downtown_brooklyn: 23, newport_path: 17 },
+    unreachable_reason: { midtown: null, wtc: null, downtown_brooklyn: null, newport_path: null },
     caveat:
       "In-vehicle time plus a nominal transfer penalty. Excludes the walk from your door and the wait on the platform. Treat as a floor, not a door-to-door estimate.",
     source: {
@@ -256,6 +257,7 @@ const RIVERDALE_CELL_PROFILE = {
   transit: {
     stations_within_500m: 0,
     to_anchors: { midtown: 48, wtc: 61, downtown_brooklyn: 66, newport_path: 58 },
+    unreachable_reason: { midtown: null, wtc: null, downtown_brooklyn: null, newport_path: null },
     caveat: "In-vehicle time plus a nominal transfer penalty.",
     source: {
       name: "MTA GTFS + PATH GTFS",

@@ -99,10 +99,17 @@ def test_empire_state_cell_carries_the_full_contract_shape(esb_cell, esb_profile
     assert set(esb_profile["transit"]) == {
         "stations_within_500m",
         "to_anchors",
+        "unreachable_reason",
         "caveat",
         "source",
     }
     assert set(esb_profile["transit"]["to_anchors"]) == {
+        "midtown",
+        "wtc",
+        "downtown_brooklyn",
+        "newport_path",
+    }
+    assert set(esb_profile["transit"]["unreachable_reason"]) == {
         "midtown",
         "wtc",
         "downtown_brooklyn",
@@ -141,16 +148,73 @@ def test_empire_state_cell_has_real_nontrivial_signal_not_just_zeros(esb_profile
 
 def test_transit_to_anchors_are_plausible_travel_times(esb_profile):
     to_anchors = esb_profile["transit"]["to_anchors"]
-    for minutes in to_anchors.values():
+    reasons = esb_profile["transit"]["unreachable_reason"]
+    for anchor, minutes in to_anchors.items():
         assert isinstance(minutes, int)
         # -1 is the established "unreachable from the nearest stations"
         # sentinel (matches profile.py's own _to_anchors() convention) --
         # every other value must be a plausible real minute count, never
         # negative-but-not-the-sentinel or an absurd number.
         assert minutes == -1 or 0 <= minutes < 240
+        # The minutes sentinel and its reason must always travel together
+        # -- see profile.py's _anchor_result() docstring for why this is
+        # an invariant, not a coincidence.
+        if minutes == -1:
+            assert reasons[anchor] in ("no_station_in_range", "no_rail_connection")
+        else:
+            assert reasons[anchor] is None
     # Midtown itself must be fast from a cell that all but sits on top of
     # Times Sq-42 St -- a real regression guard, not just "is an int".
     assert 0 <= to_anchors["midtown"] < 20
+
+
+def test_no_rail_connection_reason_at_a_named_real_staten_island_cell():
+    # H3 892a106084bffff, centroid ~(40.5357, -74.1883) -- near Huguenot,
+    # Staten Island (named in this project's 2026-07-18 "no-route"
+    # diagnosis report). The nearest real station here is S16 Huguenot
+    # (Staten Island Railway) -- SIR has no rail path to the rest of NYCT
+    # (the only crossing is the Staten Island Ferry, not in this project's
+    # GTFS data), a real, permanent gap, not a bug, and a genuinely
+    # different fact from "no station nearby at all".
+    prof = cellprofile.profile_for("892a106084bffff")
+    assert prof is not None
+    to_anchors = prof["transit"]["to_anchors"]
+    reasons = prof["transit"]["unreachable_reason"]
+    for anchor, minutes in to_anchors.items():
+        assert minutes == -1
+        assert reasons[anchor] == "no_rail_connection"
+
+
+def test_no_station_in_range_reason_at_a_named_real_cell():
+    # H3 892a1060e4fffff -- the real cell the live address "131 Huguenot
+    # Ave, Staten Island" geocodes into. Confirmed live 2026-07-18: zero
+    # subway or PATH stations of any kind fall within STATION_SEARCH_M of
+    # this cell's centroid -- a genuine transit-desert case, not a network
+    # gap on top of a nearby station.
+    cell = "892a1060e4fffff"
+    assert cell in set(cellprofile.all_cells())
+    prof = cellprofile.profile_for(cell)
+    assert prof is not None
+    to_anchors = prof["transit"]["to_anchors"]
+    reasons = prof["transit"]["unreachable_reason"]
+    for anchor, minutes in to_anchors.items():
+        assert minutes == -1
+        assert reasons[anchor] == "no_station_in_range"
+
+
+def test_reachable_control_cell_has_no_reason():
+    # H3 892a100d293ffff, centroid ~(40.7502, -73.9772) -- immediately by
+    # Grand Central, Manhattan (this project's own named control cell from
+    # the 2026-07-18 diagnosis/fix reports). Every anchor resolves to a
+    # real ride here -- the reason dict must be all None, matching the
+    # minutes dict having no -1 sentinel anywhere.
+    prof = cellprofile.profile_for("892a100d293ffff")
+    assert prof is not None
+    to_anchors = prof["transit"]["to_anchors"]
+    reasons = prof["transit"]["unreachable_reason"]
+    for anchor, minutes in to_anchors.items():
+        assert minutes >= 0
+        assert reasons[anchor] is None
 
 
 def test_safety_carries_a_real_precinct_and_percentile_when_resolved(esb_profile):

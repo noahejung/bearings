@@ -21,6 +21,60 @@ def test_midtown_is_farther_from_newport(empire_state):
     assert a["newport_path"] > a["midtown"]
 
 
+def test_empire_state_anchors_carry_no_unreachable_reason(empire_state):
+    # Every anchor is a real, reachable ride from Empire State -- the
+    # reason dict must be all None, never a leftover string sitting next
+    # to a real minute value (see profile.py's _anchor_result() docstring
+    # for why the two always travel together).
+    reasons = empire_state["transit"]["unreachable_reason"]
+    assert set(reasons) == {"midtown", "wtc", "downtown_brooklyn", "newport_path"}
+    assert all(r is None for r in reasons.values())
+
+
+def test_no_station_in_range_at_a_real_staten_island_address():
+    # 131 Huguenot Ave, Staten Island -- confirmed live 2026-07-18: no
+    # subway or PATH station of any kind falls within STATION_SEARCH_M
+    # (1200m) of this real, geocodable address, so _nearby_stations()
+    # returns an empty list. This is the honest "nothing nearby" case,
+    # distinct from a station being right there but disconnected.
+    prof = profile.profile_for("131 Huguenot Ave, Staten Island")
+    assert prof["transit"]["nearest_stations"] == []
+    to_anchors = prof["transit"]["to_anchors"]
+    reasons = prof["transit"]["unreachable_reason"]
+    for anchor, minutes in to_anchors.items():
+        assert minutes == -1
+        assert reasons[anchor] == "no_station_in_range"
+
+
+def test_no_rail_connection_at_a_real_staten_island_railway_address():
+    # 43 Foster Rd, Staten Island -- confirmed live 2026-07-18: the two
+    # real nearest stations (S15 Prince's Bay, S16 Huguenot) are both real,
+    # in-range Staten Island Railway stops. SIR has no rail path to the
+    # rest of NYCT -- the only crossing is the Staten Island Ferry, which
+    # isn't in this project's GTFS schedule data -- a real, permanent gap,
+    # not a bug, and a different fact from "no station nearby at all".
+    prof = profile.profile_for("43 Foster Rd, Staten Island")
+    stations = prof["transit"]["nearest_stations"]
+    assert len(stations) >= 1
+    assert all("SIR" in s["routes"] for s in stations)
+    to_anchors = prof["transit"]["to_anchors"]
+    reasons = prof["transit"]["unreachable_reason"]
+    for anchor, minutes in to_anchors.items():
+        assert minutes == -1
+        assert reasons[anchor] == "no_rail_connection"
+
+
+def test_disconnected_stop_ids_is_exactly_staten_island_railway_today():
+    # A live, direct check of the guard itself (profile.py's
+    # UnexplainedDisconnectedStation): as of the 2026-07-18 gtfs.stations()
+    # dedup fix, the only real network gap left is Staten Island Railway
+    # (21 stations, St George to Tottenville) -- calling this must not
+    # raise, and every id it returns must be a real "S"-prefixed SIR stop.
+    disconnected = profile._disconnected_stop_ids()
+    assert len(disconnected) == 21
+    assert all(stop_id.startswith("S") for stop_id in disconnected)
+
+
 def test_finds_nearby_stations(empire_state):
     stations = empire_state["transit"]["nearest_stations"]
     assert len(stations) >= 1

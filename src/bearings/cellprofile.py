@@ -271,6 +271,12 @@ def _building_age_and_hazards_by_cell(
 def _transit_by_cell(
     cell_ids: list[str], centroids: dict[str, tuple[float, float]]
 ) -> dict[str, dict]:
+    """Per-cell station access count plus the real per-anchor commute --
+    the (minutes, reason) pair itself comes from `profile._anchor_result()`
+    (shared with `profile.py`'s own `_to_anchors()`, not reimplemented here
+    -- see that function's docstring for why sharing this one place
+    matters: both call sites independently duplicated the same minutes
+    computation before the 2026-07-18 no-route-reason-code fix)."""
     stations_df = profile._stations()
     anchor_times = profile._anchor_times()
     station_list = [
@@ -288,20 +294,22 @@ def _transit_by_cell(
         access = sum(1 for d, _ in nearby if d <= TRANSIT_ACCESS_RADIUS_M)
         nearby.sort(key=lambda t: t[0])
         nearest = nearby[: profile.NEAREST_STATION_COUNT]
+        candidates = [
+            (stop_id, int(round(d / WALK_SPEED_MPS / 60))) for d, stop_id in nearest
+        ]
 
         to_anchors: dict[str, int] = {}
+        unreachable_reason: dict[str, str | None] = {}
         for anchor, by_stop in anchor_times.items():
-            best: int | None = None
-            for d, stop_id in nearest:
-                ride_s = by_stop.get(stop_id)
-                if ride_s is None:
-                    continue
-                total = int(round(d / WALK_SPEED_MPS / 60)) + int(round(ride_s / 60))
-                if best is None or total < best:
-                    best = total
-            to_anchors[anchor] = best if best is not None else -1
+            minutes, reason = profile._anchor_result(candidates, by_stop)
+            to_anchors[anchor] = minutes
+            unreachable_reason[anchor] = reason
 
-        out[c] = {"access": access, "to_anchors": to_anchors}
+        out[c] = {
+            "access": access,
+            "to_anchors": to_anchors,
+            "unreachable_reason": unreachable_reason,
+        }
     return out
 
 
@@ -399,6 +407,7 @@ def _bake_all() -> dict:
             "transit": {
                 "stations_within_500m": transit_by_cell[c]["access"],
                 "to_anchors": transit_by_cell[c]["to_anchors"],
+                "unreachable_reason": transit_by_cell[c]["unreachable_reason"],
                 "caveat": TRANSIT_CAVEAT,
                 "source": dict(TRANSIT_SOURCE),
             },
