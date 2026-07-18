@@ -33,6 +33,18 @@ name: CI
 # geocoder, but were never added to this list either -- a real gap, not
 # touched here since it's outside this dispatch's scope).
 #
+# Added 2026-07-18 (hybrid Geosupport-first/GeoSearch-fallback geocoder):
+# test_street_identity.py (pure function, no import of bearings.geocode at
+# all -- it's the module both geocode.py and geosupport_geocode.py import
+# FROM, not the other way around) and test_geosupport_geocode.py (imports
+# bearings.geosupport_geocode, not bearings.geocode -- its Tier 1 tests are
+# pure nyc-parser calls with no network; its Tier 2 tests, which need the
+# real ~1.9GB native Geosupport library this CI runner does not have
+# installed, self-skip via pytest.mark.skipif rather than failing -- see
+# that file's own module docstring). Neither file makes a live GeoSearch
+# call, so neither carries the 503-under-burst risk this comment exists to
+# avoid.
+#
 # Also excluded, added 2026-07-15: test_cellprofile.py (bearings.cellprofile,
 # SPEC-precompute-v2.md Phase 1) -- its own fixture geocodes the Empire State
 # Building address the same way test_mapgeo.py's does, so it chains through
@@ -120,6 +132,8 @@ jobs:
             tests/test_basemap.py \
             tests/test_neighborhoods.py \
             tests/test_citywide.py \
+            tests/test_street_identity.py \
+            tests/test_geosupport_geocode.py \
             -v
 
   frontend:
