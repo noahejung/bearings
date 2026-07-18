@@ -436,22 +436,40 @@ body {
 /* ---------- field grid & field chrome (the metric rows) ---------- */
 /* Six cards total: one --wide (spans the full row) plus five narrow ones.
    auto-fit sizes its tracks off the container width alone, with no notion
-   of how many items actually exist -- at a 300px floor a ~1274px report
-   column only ever fits 4 tracks, so the five narrow cards run 4-then-1
-   and that trailing single card (Building age and violations) sits alone
-   in its own row with three empty, unbordered grid tracks beside it: a
-   dead rectangle roughly the width of three cards. Lowering the floor to
-   250px (auto-fit's own empty-track-collapse rule, not a fixed column
-   count) lets exactly five 1fr tracks fit at this report's width, so the
-   five narrow cards line up in one row with no leftover track -- still
-   fully fluid, still real CSS Grid columns (VISUAL.md §4 "grid first"),
-   just sized so the actual card count divides evenly at this width. */
+   of how many items actually exist. A prior pass (34ac342) shrank the
+   floor to 250px specifically so five 1fr tracks would divide evenly into
+   the ~1274px report column at typical desktop widths, with no leftover
+   dead row -- but 250px is narrower than several cards' own content
+   needs, and at 100% browser zoom on ordinary desktop widths (1366-1920px,
+   confirmed via live Playwright measurement) that 254px column clips text:
+   the 8-item amenities sub-grid (Grocery card) overflows its own column
+   (needs ~296px of field width; a 250px floor field only had ~253px), and
+   field__title wraps to three lines fighting the CONFIRMED stamp for
+   space. Readability of content that's actually on the sheet outranks a
+   perfectly-divisible column count, so the floor moves back up to 320px --
+   the real measured minimum a narrow field needs so nothing inside it
+   clips or wraps to an unreadable one-word-per-line measure (verified
+   empirically, not guessed: see the fix's agent-report for widths
+   tested). Five is prime, so no column count other than 5 or 1 ever
+   divides five narrow cards evenly -- at a 320px floor the report column
+   (capped at ~1272px by .wrap's max-width) lands on 3 columns across
+   essentially the whole realistic desktop range (measured 1024-1920px),
+   which always leaves one trailing cell empty (5 cards = 3 + 2). That
+   reopens, and actually widens the range of, the "dead trailing row" this
+   rule used to specifically avoid (34ac342) -- an empty cell beside a lone
+   card is a real but purely cosmetic asymmetry; clipped or collided text
+   is a correctness bug, and between those two known trade-offs this file
+   chooses correctness. The border-bottom below closes the row off with a
+   rule (matching .band's own top+bottom bookend convention elsewhere in
+   this file) so the grid doesn't visually trail off mid-row even though
+   the cell itself stays blank. */
 .fields {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
   gap: 0;
   margin-top: 1.5rem;
   border-top: 1px solid var(--ink);
+  border-bottom: 1px solid var(--ink);
 }
 
 .field {
@@ -785,14 +803,24 @@ body {
   line-height: 1.55;
 }
 
+/* CellReportView's longer sentence ("Most buildings here went up around
+   1950 POST-WAR") reuses this same class from BuildingCard's short one
+   ("Built 1950"). Without flex-wrap, a flex row that doesn't fit on one
+   line shrinks its text item down to a narrow column and wraps THAT --
+   one or two words per line -- while the era badge stays pinned at fixed
+   width beside it (the "Most / buildings / here went up / around" defect).
+   flex-wrap lets the whole line break normally instead: the sentence
+   flows at full column width and the badge drops to its own line only
+   when it doesn't fit after the last word. */
 .building__facts {
   margin-top: 0.7rem;
   font-family: var(--font-mono);
   font-size: 0.86rem;
   color: var(--steel);
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 0.55rem;
+  gap: 0.3rem 0.55rem;
 }
 
 .era {
@@ -805,12 +833,23 @@ body {
   color: var(--ink);
 }
 
+/* A second instance of the same defect found one level deeper, inside the
+   very column the dispatch flagged: this class was hardcoded to 3 columns
+   for BuildingCard.tsx's 3 real stats (class A/B/C), but CellReportView.tsx
+   (the report's actual default view, SPEC-precompute-v2.md Phase 2) reuses
+   it with only ONE item -- the aggregated class-C count -- which a fixed
+   repeat(3, 1fr) still squeezes into a third of the field's width,
+   producing the same one-or-two-words-per-line wrap this whole fix exists
+   to remove. auto-fit/minmax replaces the fixed count: 3 short stat blocks
+   still line up as 3 columns at any realistic field width (a comfortable
+   fit above the ~90px floor), while a lone item now takes the full row
+   instead of a squeezed third. */
 .violations {
   margin-top: 1.1rem;
   padding-top: 1rem;
   border-top: 1px solid var(--ink);
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(auto-fit, minmax(90px, 1fr));
   gap: 0.75rem;
 }
 
