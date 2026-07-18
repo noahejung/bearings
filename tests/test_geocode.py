@@ -1,6 +1,16 @@
 import pytest
 
-from bearings import geocode
+from bearings import geocode, geosupport_geocode
+
+requires_geosupport_engine = pytest.mark.skipif(
+    geosupport_geocode._engine() is None,
+    reason=(
+        "Native Geosupport library not loaded in this process -- see "
+        "test_geosupport_geocode.py's module docstring. Verified for real "
+        "inside the Docker image built for this dispatch instead; see the "
+        "agent-report."
+    ),
+)
 
 
 def test_geocodes_a_known_address():
@@ -64,3 +74,64 @@ def test_street_guard_does_not_reject_real_addresses_on_abbreviation_differences
     regression than the bug it fixes."""
     r = geocode.geocode(address)
     assert r.lat and r.lng
+
+
+def test_caches_repeat_lookups_of_the_same_normalized_address():
+    """The measurement report this dispatch was handed recommends an
+    in-process cache on normalized address as a complement to whichever
+    geocoder handles first-time queries. Uses an address not touched by any
+    other test in this file, so the "before" cache_info() reading isn't
+    already warm from an earlier test sharing the same module-level cache."""
+    before = geocode._geocode_cached.cache_info()
+    geocode.geocode("120 Broadway, Manhattan")
+    # Deliberately different whitespace AND case -- proves normalization
+    # happens before the cache key is built, not just exact-string reuse.
+    geocode.geocode("  120   broadway,  MANHATTAN  ")
+    after = geocode._geocode_cached.cache_info()
+    assert after.hits == before.hits + 1
+    assert after.misses == before.misses + 1
+
+
+def test_does_not_cache_a_failed_lookup():
+    """Per the dispatch's explicit requirement: caching a transient failure
+    as a permanent "no match" would be a new bug class. functools.lru_cache
+    never caches a call that raised, which this proves for real rather than
+    asserting it as a property of the decorator alone."""
+    before = geocode._geocode_cached.cache_info()
+    for _ in range(2):
+        with pytest.raises(geocode.GeocodeError):
+            geocode.geocode("qqqqqqqqzzzzzzz not a real place, try again")
+    after = geocode._geocode_cached.cache_info()
+    assert after.misses == before.misses + 2
+    assert after.hits == before.hits
+
+
+def test_engine_counts_are_observable():
+    """Requirement: "make the fallback observable." Every real geocode()
+    call must be credited to exactly one engine bucket -- this is the
+    engine-agnostic form of that check (it passes locally, where every call
+    goes through the fallback because this dev machine has no Geosupport
+    binary installed, and would equally pass wherever the fast path is
+    live, without hardcoding which one)."""
+    before = geocode.engine_counts()
+    total_before = sum(before.values())
+    geocode.geocode("233 Spring St, Manhattan")
+    after = geocode.engine_counts()
+    total_after = sum(after.values())
+    assert total_after == total_before + 1
+
+
+@requires_geosupport_engine
+def test_geocode_rejects_the_regression_case_via_geosupport_without_falling_back():
+    """The direct, public-API-level assertion of requirement 3's hardest
+    case: once Geosupport can fully parse a (house_number, street, borough)
+    triple, a real rejection from its own matching engine must surface as
+    GeocodeError directly -- geocode() must NOT retry it through GeoSearch,
+    which (per this project's own already-shipped regression) might
+    fuzzy-match it to an unrelated real street instead of rejecting it."""
+    before = geocode.engine_counts()
+    with pytest.raises(geocode.GeocodeError):
+        geocode.geocode("1313 Disneyland Dr, Bronx, NY")
+    after = geocode.engine_counts()
+    assert after["geosupport_rejected"] == before["geosupport_rejected"] + 1
+    assert after["geosearch_fallback"] == before["geosearch_fallback"]

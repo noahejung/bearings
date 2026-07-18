@@ -1,11 +1,40 @@
-"""Address -> point, via NYC Planning Labs GeoSearch (free, keyless)."""
+"""Address -> point. Hybrid geocoder: NYC Planning's Geosupport Desktop
+Edition (fast path, 13-40ms confirmed live, see this codebase's
+geosupport_geocode.py) tried first, falling back to NYC Planning Labs'
+GeoSearch API (free, keyless, ~3.1-3.3s median confirmed live -- the
+original, still-used implementation below) only when Geosupport signals
+"couldn't resolve," never when it signals a real rejection.
 
-import re
+Why a hybrid instead of Geosupport alone: Geosupport takes pre-parsed
+house-number/street/borough, not free text, so an address like "350 5th
+Ave" with no borough -- which GeoSearch resolves today by silently picking
+one -- is something Geosupport's own engine flatly can't attempt (missing
+borough is fatal to it). The fallback exists specifically to keep that
+casual-input UX working while still getting the fast path for everything
+Geosupport *can* fully parse.
+
+The load-bearing distinction, drawn in geocode() below: Geosupport raising
+GeosupportCouldNotParse or GeosupportUnavailable means "we don't know" --
+fall back to GeoSearch, exactly as if this were the only geocoder. Geosupport
+raising GeosupportRejected means its own matching engine looked at a
+complete, well-formed (house_number, street, borough) triple and determined
+it is not a real address -- that is a real, authoritative answer from the
+same PAD data GeoSearch itself is built from, and must NOT be laundered
+into a fuzzy GeoSearch match. Getting this backwards would reintroduce the
+exact class of bug _street_identity() below already exists to prevent (a
+confident wrong match, not a rejection) via a different path.
+"""
+
+import logging
 from dataclasses import dataclass
+from functools import lru_cache
 
 import httpx
 
-from bearings import cells, config
+from bearings import cells, config, geosupport_geocode
+from bearings.street_identity import street_identity as _street_identity
+
+logger = logging.getLogger("bearings.geocode")
 
 
 class GeocodeError(Exception):
@@ -21,66 +50,78 @@ class GeocodeResult:
 
 
 # ---------------------------------------------------------------------------
-# Street-name fuzzy-match guard.
+# Engine-selection observability (dispatch requirement: "make the fallback
+# observable" -- a silent fallback that fires on most queries would mean
+# shipping the ~480MB Geosupport image for nothing, with no way to notice).
+# Plain module-level counters, not a class, matching this codebase's own
+# `_state = {"warm": False}` pattern in api.py -- cheap to read in a test
+# without parsing log output, and logged at INFO/WARNING per-request too so
+# it's visible in Render's log stream without needing a dedicated endpoint.
+# ---------------------------------------------------------------------------
+ENGINE_COUNTS = {"geosupport": 0, "geosearch_fallback": 0, "geosupport_rejected": 0}
+
+
+def engine_counts() -> dict:
+    """A copy of the running per-process tally of which engine served each
+    geocode() call -- see ENGINE_COUNTS' own comment."""
+    return dict(ENGINE_COUNTS)
+
+
+# ---------------------------------------------------------------------------
+# In-process cache, keyed on a normalized address string. Per the measurement
+# report this dispatch was handed ("address search latency" 2026-07-18):
+# GeoSearch's own call is ~97-99% of a cold search's total time, so caching
+# repeat lookups (the demo UI's own example-address buttons, a user re-
+# submitting the same search) is a real, free win on top of the Geosupport
+# fast path, not a substitute for it -- most searches are still a genuinely
+# new address on first visit.
 #
-# The house-number guard below catches most out-of-NYC fuzzy matches, but not
-# all of them: GeoSearch's PAD index will happily match "1313 Disneyland Dr,
-# Anaheim, CA" to "1313 SHORE DRIVE, Bronx, NY" -- same house number,
-# unrelated street -- and return it as a confident HTTP 200 (confirmed live).
-# The house number alone is not sufficient; the street has to agree too.
-#
-# The one thing that makes this hard: PAD's `properties.street` and what a
-# person actually types are almost never byte-identical even for a *correct*
-# match -- "5th Ave" (typed) vs "5 AVENUE" (PAD), "W 42nd St" vs
-# "WEST 42 STREET", "Court St" vs "COURT STREET". So this can't be a string
-# equality check. Instead: strip generic suffix/direction words (whose
-# abbreviation style varies) and ordinal suffixes from both sides, and
-# compare what's left -- the words that actually identify the street. If
-# there is zero overlap, the two addresses are not on the same street.
+# Deliberately does NOT cache failures: functools.lru_cache's own documented
+# behaviour is that a call which raises is never cached (the exception just
+# propagates), which is exactly the right choice here -- caching a transient
+# GeoSearch hiccup (confirmed live elsewhere in this project: a burst of
+# calls measurably 503s the geocoder) as a permanent "no match" would be a
+# new, different bug class from the ones this project has already hit.
 # ---------------------------------------------------------------------------
 
-_GENERIC_STREET_WORDS = {
-    "ST", "STREET", "AVE", "AVENUE", "DR", "DRIVE", "RD", "ROAD",
-    "BLVD", "BOULEVARD", "PL", "PLACE", "LN", "LANE", "CT", "COURT",
-    "PKWY", "PARKWAY", "TER", "TERRACE", "CIR", "CIRCLE", "SQ", "SQUARE",
-    "EXPY", "EXPRESSWAY", "HWY", "HIGHWAY", "TPKE", "TURNPIKE", "PLZ", "PLAZA",
-    "N", "S", "E", "W", "NORTH", "SOUTH", "EAST", "WEST",
-}
 
-# A small number of PAD-specific abbreviations that aren't decomposable by
-# stripping a generic suffix word -- confirmed live: PAD renders "Broadway"
-# as "B'WAY". Extend this as new quirks turn up; an *unlisted* quirk fails
-# safe (the address is rejected as a false mismatch) rather than silently
-# waving through a wrong street, which is the direction this guard exists
-# to be wrong in.
-_STREET_ALIASES = {"BWAY": "BROADWAY"}
-
-_ORDINAL_SUFFIX = re.compile(r"^(\d+)(ST|ND|RD|TH)$")
-
-
-def _street_identity(street: str) -> set[str]:
-    """The set of tokens that actually identify a street name, for a
-    same-street comparison that survives abbreviation differences.
-
-    Not a proof of sameness -- two genuinely different streets that happen
-    to share a non-generic word (e.g. "Infinite Loop" vs "Ash Loop") can
-    still slip past this. It is a guard against the *unrelated* street case
-    this bug was found on, not a complete street-equality oracle. See the
-    README's Known Simplifications.
-    """
-    cleaned = re.sub(r"[.']", "", street.upper())
-    tokens = (t for t in re.split(r"[\s\-]+", cleaned) if t)
-    out: set[str] = set()
-    for token in tokens:
-        if token in _GENERIC_STREET_WORDS:
-            continue
-        token = _STREET_ALIASES.get(token, token)
-        token = _ORDINAL_SUFFIX.sub(r"\1", token)
-        out.add(token)
-    return out
+def _normalize(address: str) -> str:
+    return " ".join(address.split()).upper()
 
 
 def geocode(address: str) -> GeocodeResult:
+    normalized = _normalize(address)
+    if not normalized:
+        raise GeocodeError(f"No match for {address!r}")
+    return _geocode_cached(normalized)
+
+
+@lru_cache(maxsize=512)
+def _geocode_cached(address: str) -> GeocodeResult:
+    try:
+        hit = geosupport_geocode.try_geocode(address)
+    except geosupport_geocode.GeosupportRejected as e:
+        # A real, authoritative "no" -- never fall back (see this module's
+        # own docstring for why laundering this into GeoSearch would be the
+        # exact wrong-borough bug class this project has already shipped
+        # once, via a different path).
+        ENGINE_COUNTS["geosupport_rejected"] += 1
+        logger.info("engine=geosupport-rejected address=%r reason=%r", address, str(e))
+        raise GeocodeError(str(e)) from e
+    except (geosupport_geocode.GeosupportCouldNotParse, geosupport_geocode.GeosupportUnavailable) as e:
+        ENGINE_COUNTS["geosearch_fallback"] += 1
+        logger.info(
+            "engine=geosearch-fallback address=%r reason=%s: %s",
+            address, type(e).__name__, e,
+        )
+        return _geocode_via_geosearch(address)
+
+    ENGINE_COUNTS["geosupport"] += 1
+    logger.info("engine=geosupport address=%r bbl=%s", address, hit.bbl)
+    return GeocodeResult(label=hit.label, lat=hit.lat, lng=hit.lng, bbl=hit.bbl)
+
+
+def _geocode_via_geosearch(address: str) -> GeocodeResult:
     resp = httpx.get(
         config.GEOSEARCH_URL,
         params={"text": address, "size": 1},

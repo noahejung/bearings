@@ -354,12 +354,14 @@ from-scratch re-deploy (e.g. a new Render account).
   cache, so the first `/api/profile` request for any precinct after an idle
   period pays a few real seconds fetching + parsing a live NYPD PDF again,
   not just the very first request ever. Not a bug, just worth knowing.
-- **The NYC GeoSearch geocoder rate-limits under a burst of calls.**
+- **The NYC GeoSearch fallback rate-limits under a burst of calls.**
   Confirmed live (see `.github/workflows/ci.yml`'s own comment): a
   concentrated burst of geocoding calls in a short window measurably 503s
-  the geocoder, unrelated to any defect in this code. Every `/api/profile`
-  request geocodes once; a traffic spike (e.g. a link shared widely at
-  once) could hit that same wall. `geocode.GeocodeError` is caught and
+  GeoSearch, unrelated to any defect in this code. Since the Geosupport
+  hybrid change, most real addresses never reach GeoSearch at all (see
+  "Known simplifications" below) -- but any address Geosupport can't fully
+  parse (no borough given, etc.) still falls back to it, so this remains a
+  real, if narrower, exposure. `geocode.GeocodeError` is caught and
   surfaces as a real 422/502-shaped error rather than crashing the
   process, but there's no retry/backoff or client-side rate limiting here
   yet.
@@ -386,7 +388,8 @@ simplifications).
 
 | Source | What we take | Access | License / terms |
 | --- | --- | --- | --- |
-| [NYC Planning Labs GeoSearch](https://geosearch.planninglabs.nyc/) | Address -> (lat, lng, BBL) | Free, keyless REST API | Public NYC service; no key or attribution requirement published |
+| [NYC Geosupport Desktop Edition](https://www.nyc.gov/content/planning/pages/resources/geocoding/geosupport-desktop-edition) | Address -> (lat, lng, BBL); fast path (13-40ms confirmed live), tried first | Native library baked into the Docker image at build time (see Dockerfile), pulled from NYC Planning's own published `nycplanning/docker-geosupport` image | No explicit redistribution grant found, no explicit prohibition either -- NYC Planning's own data-engineering team publishes and maintains this exact Docker-image pattern publicly; see this project's geosupport-spike agent-report for the full license read |
+| [NYC Planning Labs GeoSearch](https://geosearch.planninglabs.nyc/) | Address -> (lat, lng, BBL); fallback when Geosupport can't parse the input (e.g. no borough given) or when Geosupport itself is unavailable in this process | Free, keyless REST API | Public NYC service; no key or attribution requirement published |
 | [MTA GTFS (subway)](http://web.mta.info/developers/data-nyct-subway.html) | Station locations + full timetable | Free zip download | MTA Developer Data Terms of Use (free use, attribution requested) |
 | [PATH GTFS](https://www.panynj.gov/path/en/schedules-maps/gtfs-realtime.html) (served via Trillium Transit) | Station locations + full timetable for the 13 PATH stations | Free zip download | Published by the Port Authority as open transit data |
 | [Overture Maps Places](https://overturemaps.org/) | POIs (name, category, location) for all of NYC | Free, keyless Parquet-over-S3, queried with DuckDB | See [overturemaps.org/data](https://overturemaps.org/data) for the current per-theme license and attribution requirements before any public-facing use |
@@ -488,11 +491,38 @@ a stated simplification and distrust a hidden one.
   fail -- it fuzzy-matches a same-numbered NYC address on an unrelated
   street. `geocode.py` catches this by comparing the *identity* of the
   requested and matched street names (stripped of suffix/direction-word
-  abbreviation noise), which reliably rejects a mismatch like "1313
-  Disneyland Dr, Anaheim" -> "1313 Shore Drive, Bronx" (confirmed live).
-  It can still be fooled by two genuinely different streets that happen to
-  share a non-generic word (e.g. "Infinite Loop" vs. "Ash Loop") -- a real
-  residual gap, not a claim of a solved problem.
+  abbreviation noise, `street_identity.py`), which reliably rejects a
+  mismatch like "1313 Disneyland Dr, Anaheim" -> "1313 Shore Drive, Bronx"
+  (confirmed live). It can still be fooled by two genuinely different
+  streets that happen to share a non-generic word (e.g. "Infinite Loop" vs.
+  "Ash Loop") -- a real residual gap, not a claim of a solved problem.
+- **The Geosupport fast path never falls back to GeoSearch on a real
+  rejection, only on "couldn't resolve."** `geocode.py` tries Geosupport
+  (`geosupport_geocode.py`) first; it only retries via GeoSearch when
+  Geosupport signals it doesn't have enough information to attempt a match
+  at all (no borough found, e.g. "350 Broadway", or the native library
+  isn't loaded in this process). A fully-formed address Geosupport's own
+  engine determines isn't real (e.g. an unrecognized street) surfaces as a
+  422 directly -- laundering that into a GeoSearch retry would risk
+  reintroducing the Disneyland Dr -> Shore Drive bug class through a
+  different path. Two real, live-confirmed edge cases this path guards
+  against, found by stress-testing rather than assumed correct: (1)
+  `nyc-parser`'s borough detection is a substring search over the whole
+  input, so a street name containing a borough word/alias ("Richmond" for
+  Staten Island, "Queens" for Queens) can get that word stripped out of the
+  street text itself, not just the city portion (e.g. "10 Richmond
+  Terrace, Staten Island" parses to a bare "TERRACE") -- guarded by
+  requiring `street_identity()` to find at least one real, non-generic
+  token before ever calling Geosupport, at the cost of a narrow, safe-
+  direction miss for the rare street whose entire name is itself generic
+  words (e.g. "Court St" in Brooklyn always takes the slower GeoSearch
+  path, not a wrong answer, just a missed fast path). (2) `python-
+  geosupport==1.1.0`'s own `.call()` wrapper only inspects the primary
+  Geosupport Return Code, never the secondary GRC 2 field the underlying C
+  library also sets -- a real, observed case ("147-31 Sanford Ave, Queens")
+  returns a "successful" GRC with a blank BBL/lat/lng because GRC 2 says
+  "ADDRESS NUMBER OUT OF RANGE"; `geosupport_geocode.py` checks BBL/lat/lng
+  are non-empty independently of the library's own success signal.
 - **Disk caches (POI table, anchor times, both GTFS zips, CompStat PDFs,
   precinct boundaries) never auto-refresh.** Deleting the file under
   `data/` is still how you force a refetch. What changed: serving a cache
@@ -546,7 +576,10 @@ implementation history. Short version:
 ```
 src/bearings/
   config.py            # constants: H3 res, NYC bbox, dataset IDs, paths, anchors
-  geocode.py            # address -> (lat, lng) via NYC GeoSearch
+  geocode.py            # address -> (lat, lng, bbl); hybrid: Geosupport fast path
+                         # (geosupport_geocode.py), NYC GeoSearch fallback, in-process cache
+  geosupport_geocode.py # the fast path: nyc-parser free-text split + python-geosupport
+  street_identity.py    # shared street-name-identity comparison (both geocode engines)
   cells.py              # pure H3 helpers, no I/O
   sources/
     socrata.py           # generic paginated NYC Open Data fetcher

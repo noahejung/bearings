@@ -51,7 +51,9 @@ dependencies = [
     { name = "h3" },
     { name = "httpx" },
     { name = "networkx" },
+    { name = "nyc-parser" },
     { name = "pandas" },
+    { name = "python-geosupport" },
     { name = "uvicorn" },
 ]
 
@@ -67,7 +69,9 @@ requires-dist = [
     { name = "h3" },
     { name = "httpx" },
     { name = "networkx" },
+    { name = "nyc-parser" },
     { name = "pandas" },
+    { name = "python-geosupport", specifier = ">=1.1.0" },
     { name = "uvicorn" },
 ]
 
@@ -294,6 +298,15 @@ wheels = [
 ]
 
 [[package]]
+name = "nyc-parser"
+version = "0.1.1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/26/5f/94663f1c43f7b34e44e6c0cd0400804e9802cd6b3a764c5dd4b8eae1bb72/nyc_parser-0.1.1.tar.gz", hash = "sha256:d18353301244c3dd9f6511a79e130417ec4cf47c12134d440476d8f4861ef529", size = 5728, upload-time = "2025-04-04T17:18:51.239Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/81/51/72b6f673bcb3b605be4094bef56d845a85aedaf64f19f487bd6d4d80540d/nyc_parser-0.1.1-py3-none-any.whl", hash = "sha256:839c0fc0574b99271e823897b0c5684d99e9849f28b53dff6a87862ef849b5e2", size = 6887, upload-time = "2025-04-04T17:18:50.106Z" },
+]
+
+[[package]]
 name = "packaging"
 version = "26.2"
 source = { registry = "https://pypi.org/simple" }
@@ -488,6 +501,15 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/66/c0/0c8b6ad9f17a802ee498c46e004a0eb49bc148f2fd230864601a86dcf6db/python-dateutil-2.9.0.post0.tar.gz", hash = "sha256:37dd54208da7e1cd875388217d5e00ebd4179249f90fb72437e91a35459a0ad3", size = 342432, upload-time = "2024-03-01T18:36:20.211Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/ec/57/56b9bcc3c9c6a792fcbaf139543cee77261f3651ca9da0c93f5c1221264b/python_dateutil-2.9.0.post0-py2.py3-none-any.whl", hash = "sha256:a8b2bc7bffae282281c8140a97d3aa9c14da0b136dfe83f850eea9a5f7470427", size = 229892, upload-time = "2024-03-01T18:36:18.57Z" },
+]
+
+[[package]]
+name = "python-geosupport"
+version = "1.1.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/31/ac/0ad95fcd87727835448b43f5ad353423f87e458c5f83f9a9c5ee2a913a01/python_geosupport-1.1.0.tar.gz", hash = "sha256:7798714c725f6e65a4f52808e01965ea107760dec19be2cad60ade3ec12647ff", size = 36959, upload-time = "2025-03-31T19:58:44.051Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/b6/2d/162ec539f06f3cc32215ce90f968d55c8fb80b0d9a03ae992973f372c9f0/python_geosupport-1.1.0-py2.py3-none-any.whl", hash = "sha256:917a2c5bef54e4711e6688dd3bf440df59c79cbb0efa891212aff0b8eaa74d1a", size = 53014, upload-time = "2025-03-31T19:58:42.99Z" },
 ]
 
 [[package]]

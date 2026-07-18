@@ -20,6 +20,33 @@ RUN npm run build
 
 
 # ============================================================================
+# Stage 1.5: NYC Planning's own published Geosupport Desktop Edition (GDE)
+# image -- the fast geocoder src/bearings/geosupport_geocode.py wraps (see
+# that module's docstring and src/bearings/geocode.py's for how the hybrid
+# fast-path/GeoSearch-fallback split works). A labeled-but-unused-until-
+# COPY'd stage, exactly like frontend-build above -- BuildKit pulls this in
+# parallel with the Node build rather than serializing it.
+#
+# Pulled from NYC Planning's own `nycplanning/docker-geosupport` (Docker Hub,
+# public, 5,999 pulls, last updated days before this was verified -- see
+# this dispatch's agent-report) rather than downloading NYC Planning's raw
+# Geosupport zip and extracting it by hand: same binary + data either way,
+# but this is the narrower position on the "no explicit redistribution
+# grant, no explicit prohibition, but the source agency itself runs exactly
+# this pattern in public" license read this dispatch's own agent-report
+# documents in full (this stays a build-time COPY from NYC Planning's own
+# artifact, never a binary committed to this repo's git history).
+#
+# Confirmed live (this dispatch): its /geocode directory (~1.9GB, GEOFILES
+# data + libgeo.so and friends) is glibc-2.41/Debian-trixie built, matching
+# this Dockerfile's own python:3.12-slim base bit-for-bit (`ldd --version`
+# identical on both) -- so copying just /geocode across, rather than
+# swapping this whole image's base to nycplanning's, works cleanly with no
+# further OS-dependency reconciliation.
+FROM nycplanning/docker-geosupport:latest AS geosupport-data
+
+
+# ============================================================================
 # Stage 2: runtime image.
 # ============================================================================
 FROM python:3.12-slim AS runtime
@@ -58,6 +85,29 @@ RUN curl -sL \
       https://github.com/protomaps/go-pmtiles/releases/download/v1.31.1/go-pmtiles_1.31.1_Linux_x86_64.tar.gz \
       | tar -xz -C /usr/local/bin pmtiles \
     && chmod +x /usr/local/bin/pmtiles
+
+# Geosupport Desktop Edition data + native library (see the geosupport-data
+# stage above for provenance). ~1.9GB uncompressed -- the bulk of it is
+# fls/PAD (~490MB) and the GRID1/GRID1R/GRID2/GRID3 index files (~715MB
+# combined), Geosupport's own data, not compressible source; confirmed live
+# this dispatch that despite that on-disk size, RESIDENT MEMORY is tiny
+# (~14-20MB RSS after Geosupport() construction plus real address() calls,
+# measured with Python's resource.getrusage inside the real container --
+# the C library does indexed/random-access file reads at query time rather
+# than loading the dataset into RAM, so this does not meaningfully move
+# render.yaml's own documented ~260-270MB free-tier memory headroom; see
+# this dispatch's agent-report for the full measurement).
+#
+# GEOFILES/LD_LIBRARY_PATH values match nycplanning/docker-geosupport's own
+# image Config.Env exactly (confirmed via `docker inspect`), not guessed --
+# the version string ("version-26b_26.2") is baked into the path by NYC
+# Planning's own image, so this is intentionally not made "self-resolving"
+# the way OVERTURE_RELEASE/PMTILES_BUILD_HOST are elsewhere in this repo:
+# there is nothing to resolve, it's whatever path the upstream image
+# actually contains, read directly rather than pattern-guessed.
+COPY --from=geosupport-data /geocode /geocode
+ENV GEOFILES=/geocode/version-26b_26.2/fls/
+ENV LD_LIBRARY_PATH=:/geocode/version-26b_26.2/lib/
 
 WORKDIR /app
 
