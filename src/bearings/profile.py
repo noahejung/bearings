@@ -34,7 +34,48 @@ from bearings.sources import (
 )
 from bearings.transit import WALK_SPEED_MPS, _haversine_m
 
-NEAREST_STATION_COUNT = 3
+# A COUNT cap, not a distance cap -- only the N geometrically-nearest
+# stations within STATION_SEARCH_M are ever passed to _to_anchors(), even
+# when a farther-but-reachable station also sits inside that radius. This
+# was 3 until 2026-07-18, when it was found to independently compound the
+# gtfs.stations() dedup bug (see that module's docstring): with 3 of the
+# Astoria (N/W) line's stations silently dropped from the transit graph,
+# a 3-station cap meant western Long Island City cells picked all three of
+# their geometrically-nearest (but broken) Astoria stations over four
+# farther-but-healthy alternates that were also within STATION_SEARCH_M --
+# 9 confirmed cell failures, on top of the dedup bug's own 48.
+#
+# Raised to 6, not removed, after measuring both the correctness and the
+# cost live (2026-07-18):
+#   - Correctness only ever improves or stays flat as the cap rises.
+#     _to_anchors()/cellprofile._transit_by_cell() both take the *minimum*
+#     ride time over the candidate list, independently per anchor -- adding
+#     a candidate can lower that minimum or leave it unchanged, never raise
+#     it. A wider net can only find an equal-or-better route, never a worse
+#     one -- 3 was fragile specifically because it made correctness depend
+#     on all 3 closest stations being healthy, which the Astoria case
+#     proved false. 6 gives real margin against the same failure shape
+#     recurring (one bad station among the geometrically-closest few)
+#     without a second graph-connectivity bug required to trigger it.
+#   - Cost is negligible even across the full ~7,000-cell bake. The
+#     expensive part of a per-cell lookup is already the O(num_stations)
+#     haversine scan against every station within STATION_SEARCH_M -- paid
+#     identically regardless of this cap's value. Raising the cap only adds
+#     a few more O(1) dict lookups per anchor in the downstream min-search.
+#     Timed live against the real ~7,017-cell bake: cellprofile.
+#     _transit_by_cell() over every real cell took ~10.4s at
+#     NEAREST_STATION_COUNT=3 and ~6.7s at 6 -- no measurable regression
+#     (the run-to-run variance here is larger than the delta).
+#   - Not removed entirely (i.e. not "every station within
+#     STATION_SEARCH_M"): dense Manhattan hubs have as many as 25-27
+#     distinct named stations within 1200m (confirmed live: Times Sq,
+#     Union Sq, Herald Sq, Fulton St all >= 25) -- nearest_stations is also
+#     a *display* list (profile_for()'s API contract, factcheck.py's
+#     "steps from the subway" check), and an uncapped list would turn that
+#     into an unreadable 25+-row dump for exactly the addresses where it
+#     matters least (Manhattan is already well-served; a longer list there
+#     tells a reader nothing a 6-station list doesn't already say).
+NEAREST_STATION_COUNT = 6
 STATION_SEARCH_M = 1200.0
 
 # One merged citation for the building block: PLUTO supplies year_built/era,

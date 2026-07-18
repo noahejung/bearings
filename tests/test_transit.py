@@ -84,6 +84,57 @@ def test_path_and_subway_wtc_are_transfer_connected(graph):
     )
 
 
+# ---------------------------------------------------------------------------
+# Named-station regression guards for the 2026-07-18 dedup bug (see
+# test_gtfs.py's own block of these for the full mechanism). A +-60-wide
+# node-count band (test_graph_has_all_stations above) cannot detect one
+# missing node; these assert a specific real station and a specific real
+# edge instead.
+# ---------------------------------------------------------------------------
+
+
+def test_queensboro_plaza_nw_parent_is_a_graph_node(graph):
+    # R09 -- the N/W line's own parent stop at Queensboro Plaza -- was
+    # silently dropped by the old (name, lat, lon) dedup because it shares
+    # coordinates with 718 (the 7/7X's parent stop). Both must be nodes.
+    assert "R09" in graph, "Queensboro Plaza's N/W parent stop (R09) is not a graph node"
+    assert "718" in graph, "Queensboro Plaza's 7/7X parent stop (718) is not a graph node"
+
+
+def test_astoria_ride_edge_into_queensboro_plaza_exists(graph):
+    # A real, scheduled N-train edge (confirmed live against stop_times.txt
+    # 2026-07-18: trip BSP26GEN-N058-Saturday-00_001050_N..S20R runs
+    # ...R06 -> R08 -> R09... as part of its real sequence). This edge only
+    # exists if R09 survived the dedup as a graph node -- build_graph()'s
+    # edge guard (`if leg.src in g and leg.dst in g`) silently drops any
+    # ride edge whose endpoint isn't a node, with no error.
+    assert graph.has_edge("R08", "R09"), (
+        "R08 (39 Av-Dutch Kills) -> R09 (Queensboro Plaza) ride edge is missing -- "
+        "the real N-train edge exists in the timetable but was dropped at "
+        "graph-build time because R09 was not registered as a node"
+    )
+
+
+def test_all_six_orphaned_astoria_stations_are_reachable_from_an_anchor(times):
+    # The full set of real, currently-running N/W stations the 2026-07-18
+    # dedup bug orphaned from the graph (Ditmars Blvd through 39 Av-Dutch
+    # Kills, north of the Queensboro Plaza collision). Every one must be
+    # reachable from at least one of the four commute anchors -- this is
+    # the actual outcome that matters (a rider can get a real commute time
+    # from any of these), not just "the node exists."
+    astoria_ids = {
+        "R01": "Astoria-Ditmars Blvd",
+        "R03": "Astoria Blvd",
+        "R04": "30 Av",
+        "R05": "Broadway",
+        "R06": "36 Av",
+        "R08": "39 Av-Dutch Kills",
+    }
+    for stop_id, name in astoria_ids.items():
+        reachable = any(stop_id in by_stop for by_stop in times.values())
+        assert reachable, f"{name} ({stop_id}) is unreachable from every anchor"
+
+
 def test_farther_stations_take_longer(times):
     """Sanity: Coney Island must be farther from Midtown than Union Sq."""
     from bearings.sources import gtfs

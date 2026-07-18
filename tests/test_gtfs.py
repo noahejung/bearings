@@ -33,6 +33,57 @@ def test_times_square_serves_many_routes(stations):
     assert {"1", "2", "3", "7", "N", "Q", "R"} <= routes
 
 
+# ---------------------------------------------------------------------------
+# Named-station regression guards for the 2026-07-18 dedup bug.
+#
+# A plausible-range count check (test_station_count_is_plausible above) is
+# structurally incapable of catching a single silently-dropped station --
+# 496 vs. a "true" 497 is invisible to a +-60-wide band, which is exactly
+# how the original bug shipped and stayed shipped. These assert specific,
+# real, live-confirmed stop_ids by name instead. All three pairs below are
+# real MTA stations.txt rows confirmed live 2026-07-18 to share an
+# identical (stop_name, stop_lat, stop_lon) with a genuinely distinct
+# sibling parent station -- see gtfs.stations()'s own docstring for the
+# full mechanism. A dedup keyed on (name, lat, lon) instead of stop_id
+# collapses each pair to one row and silently drops the other.
+# ---------------------------------------------------------------------------
+
+
+def test_queensboro_plaza_keeps_both_parent_stations(stations):
+    # R09 (N/W's parent stop) and 718 (7/7X's parent stop) share the exact
+    # same name and coordinates (40.750582, -73.940202) but are genuinely
+    # distinct stations. Losing R09 here is what orphaned the entire
+    # Astoria (N/W) line north of it from the routing graph.
+    ids = set(stations["stop_id"])
+    assert "R09" in ids, "Queensboro Plaza's N/W parent stop (R09) is missing"
+    assert "718" in ids, "Queensboro Plaza's 7/7X parent stop (718) is missing"
+
+
+def test_145_st_keeps_both_parent_stations(stations):
+    # A12 (A/C's parent stop) and D13 (B/D's parent stop), both at
+    # (40.824783, -73.944216) -- the same real name+coordinate collision
+    # shape as Queensboro Plaza, a different line pair.
+    ids = set(stations["stop_id"])
+    assert "A12" in ids, "145 St's A/C parent stop (A12) is missing"
+    assert "D13" in ids, "145 St's B/D parent stop (D13) is missing"
+
+
+def test_w4_st_keeps_both_parent_stations(stations):
+    # A32 (A/C/E's parent stop) and D20 (B/D/F/M's parent stop), both at
+    # (40.732338, -74.000495) -- the third of the three real collisions
+    # confirmed live in the current MTA feed.
+    ids = set(stations["stop_id"])
+    assert "A32" in ids, "W 4 St-Wash Sq's A/C/E parent stop (A32) is missing"
+    assert "D20" in ids, "W 4 St-Wash Sq's B/D/F/M parent stop (D20) is missing"
+
+
+def test_no_duplicate_stop_ids_survive_the_dedup(stations):
+    # The defense-in-depth guard the dedup line is actually for: stop_id is
+    # stops.txt's real primary key, so no two output rows should ever share
+    # one, regardless of name/coordinate collisions.
+    assert not stations["stop_id"].duplicated().any()
+
+
 def test_stop_times_are_loaded():
     st = gtfs.stop_times()
     assert len(st) > 100_000

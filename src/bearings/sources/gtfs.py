@@ -103,10 +103,39 @@ def stations(feed: str = "mta") -> pd.DataFrame:
     Collapsing to the parent is mandatory -- skip it and every station in
     the system is counted once per platform (and, for PATH, once per
     entrance too -- Hoboken alone has three non-platform rows sharing its
-    name). Filtering to location_type==1 already gives one row per station,
-    so no additional name+coords dedup is needed for either feed; the
-    dedup subset dropna guard below is defense-in-depth against a feed that
-    ever emits a duplicate parent row.
+    name).
+
+    Dedup key is `stop_id`, not (name, lat, lon). A prior version of this
+    function deduped on (stop_name, stop_lat, stop_lon), on the assumption
+    that filtering to location_type==1 already gives one row per station
+    and that a name+coords dedup was purely defense-in-depth against a
+    malformed feed. That assumption is false against the real, live MTA
+    feed: three real station complexes legitimately have two distinct
+    parent-station rows sharing an identical name and identical
+    coordinates, because two different line groups were assigned separate
+    parent stop_ids for what riders experience as "one" station --
+    confirmed live 2026-07-18 by grouping stops.txt's own location_type==1
+    rows:
+      - Queensboro Plaza: R09 (N/W's parent stop) and 718 (7/7X's parent
+        stop), both at (40.750582, -73.940202).
+      - 145 St: A12 (A/C's parent stop) and D13 (B/D's parent stop), both
+        at (40.824783, -73.944216).
+      - W 4 St-Wash Sq: A32 (A/C/E's parent stop) and D20 (B/D/F/M's
+        parent stop), both at (40.732338, -74.000495).
+    The old dedup silently kept one of each pair and discarded the other --
+    for Queensboro Plaza, discarding R09 removed it as a graph node
+    entirely, which severed every ride edge referencing it as source or
+    destination, which orphaned all six N/W stations north of it
+    (Ditmars Blvd through 39 Av-Dutch Kills) from the whole transit graph.
+    `stop_id` is stops.txt's actual primary key (unique per row by the GTFS
+    spec, confirmed live: zero duplicate stop_ids among either feed's
+    location_type==1 rows) and is what should have been deduped on from the
+    start -- two stations that are the *same* row can only share a
+    stop_id, never merely a name and a coordinate. Deduping on stop_id
+    keeps the original defense-in-depth intent (a feed that ever emits a
+    truly duplicate parent row -- the identical stop_id twice -- still
+    collapses to one) without discarding a station that is only a
+    coordinate-and-name twin of another, distinct, real station.
     """
     stops = _read(feed, "stops.txt")
     trips = _read(feed, "trips.txt")
@@ -118,7 +147,7 @@ def stations(feed: str = "mta") -> pd.DataFrame:
         stops[stops["location_type"] == 1][
             ["stop_id", "stop_name", "stop_lat", "stop_lon"]
         ]
-        .drop_duplicates(subset=["stop_name", "stop_lat", "stop_lon"])
+        .drop_duplicates(subset=["stop_id"])
         .copy()
     )
 
