@@ -38,7 +38,26 @@ logger = logging.getLogger("bearings.geocode")
 
 
 class GeocodeError(Exception):
-    """No usable NYC match for the given address."""
+    """No usable NYC match for the given address.
+
+    `str(e)` (the exception's own `args[0]`) stays the full internal
+    diagnostic -- guard reasoning, raw GeoSearch/Geosupport text -- exactly
+    as before, for server-side logs. `user_message` is new: a short, honest,
+    plain-language string that is safe to show directly to a person. Every
+    HTTP boundary in api.py must use `user_message`, never `str(e)`, for
+    anything that reaches the response body -- see the 2026-07-28 UX audit
+    finding #2, where the internal string (house-number/street "fuzzy-
+    matched" wording, meant for a developer reading logs) was passing
+    through HTTPException's `detail` unmodified into the frontend's error
+    box. The underlying guards themselves are correct and stay untouched;
+    this is presentation only."""
+
+    def __init__(self, internal: str, user_message: str | None = None):
+        super().__init__(internal)
+        self.user_message = user_message or (
+            "We couldn't find that address in New York City. Double-check "
+            "the house number, street, and borough."
+        )
 
 
 @dataclass(frozen=True)
@@ -92,7 +111,10 @@ def _normalize(address: str) -> str:
 def geocode(address: str) -> GeocodeResult:
     normalized = _normalize(address)
     if not normalized:
-        raise GeocodeError(f"No match for {address!r}")
+        raise GeocodeError(
+            f"No match for {address!r}",
+            user_message="Type an address to search — a house number and street, at least.",
+        )
     return _geocode_cached(normalized)
 
 
@@ -132,13 +154,25 @@ def _geocode_via_geosearch(address: str) -> GeocodeResult:
     features = body.get("features", [])
 
     if not features:
-        raise GeocodeError(f"No match for {address!r}")
+        raise GeocodeError(
+            f"No match for {address!r}",
+            user_message=(
+                "We couldn't find that address in New York City. Double-check "
+                "the house number, street, and borough."
+            ),
+        )
 
     feat = features[0]
     lng, lat = feat["geometry"]["coordinates"]
 
     if not cells.in_nyc(lat, lng):
-        raise GeocodeError(f"{address!r} resolved to ({lat}, {lng}), outside NYC")
+        raise GeocodeError(
+            f"{address!r} resolved to ({lat}, {lng}), outside NYC",
+            user_message=(
+                "That address looks like it's outside New York City — bearings "
+                "only covers the five boroughs."
+            ),
+        )
 
     props = feat.get("properties", {})
 
@@ -159,7 +193,11 @@ def _geocode_via_geosearch(address: str) -> GeocodeResult:
     ):
         raise GeocodeError(
             f"{address!r} only fuzzy-matched house number {result_housenumber!r} "
-            f"(asked for {query_housenumber!r}) -- treating as no real match"
+            f"(asked for {query_housenumber!r}) -- treating as no real match",
+            user_message=(
+                f"We couldn't find house number {query_housenumber} on that "
+                f"street — the nearest match on file was {result_housenumber}."
+            ),
         )
 
     # The house number can agree by coincidence while the street is
@@ -173,7 +211,12 @@ def _geocode_via_geosearch(address: str) -> GeocodeResult:
         if query_ids and result_ids and query_ids.isdisjoint(result_ids):
             raise GeocodeError(
                 f"{address!r} only fuzzy-matched street {result_street!r} "
-                f"(asked for {query_street!r}) -- treating as no real match"
+                f"(asked for {query_street!r}) -- treating as no real match",
+                user_message=(
+                    f"We couldn't find a street matching {query_street!r} in New "
+                    f"York City — the nearest match on file was a different "
+                    f"street ({result_street!r})."
+                ),
             )
 
     bbl = props.get("addendum", {}).get("pad", {}).get("bbl")

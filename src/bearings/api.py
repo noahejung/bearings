@@ -145,7 +145,14 @@ def get_profile(address: str = Query(..., min_length=1)) -> dict:
     try:
         prof = profile.profile_for(address)
     except geocode.GeocodeError as e:
-        raise HTTPException(status_code=422, detail=str(e)) from e
+        # str(e) is the internal diagnostic (guard reasoning, raw
+        # GeoSearch/Geosupport text) -- kept in the server log only.
+        # e.user_message is the honest, plain-language string safe to put
+        # in the HTTP response; see GeocodeError's own docstring (2026-07-28
+        # UX audit finding #2 -- the raw internal string used to leak here
+        # verbatim, into the frontend's error box).
+        logger.info("geocode failed: %s", e)
+        raise HTTPException(status_code=422, detail=e.user_message) from e
     return _to_contract(prof)
 
 
@@ -154,7 +161,14 @@ def post_factcheck(body: FactcheckRequest) -> dict:
     try:
         return factcheck.check(body.address, body.listing_text)
     except geocode.GeocodeError as e:
-        raise HTTPException(status_code=422, detail=str(e)) from e
+        # str(e) is the internal diagnostic (guard reasoning, raw
+        # GeoSearch/Geosupport text) -- kept in the server log only.
+        # e.user_message is the honest, plain-language string safe to put
+        # in the HTTP response; see GeocodeError's own docstring (2026-07-28
+        # UX audit finding #2 -- the raw internal string used to leak here
+        # verbatim, into the frontend's error box).
+        logger.info("geocode failed: %s", e)
+        raise HTTPException(status_code=422, detail=e.user_message) from e
 
 
 @app.get("/api/map")
@@ -166,7 +180,14 @@ def get_map(address: str = Query(..., min_length=1)) -> dict:
     try:
         loc = geocode.geocode(address)
     except geocode.GeocodeError as e:
-        raise HTTPException(status_code=422, detail=str(e)) from e
+        # str(e) is the internal diagnostic (guard reasoning, raw
+        # GeoSearch/Geosupport text) -- kept in the server log only.
+        # e.user_message is the honest, plain-language string safe to put
+        # in the HTTP response; see GeocodeError's own docstring (2026-07-28
+        # UX audit finding #2 -- the raw internal string used to leak here
+        # verbatim, into the frontend's error box).
+        logger.info("geocode failed: %s", e)
+        raise HTTPException(status_code=422, detail=e.user_message) from e
     return mapgeo.map_geometry(loc.lat, loc.lng, loc.bbl)
 
 
@@ -199,7 +220,14 @@ def get_geocode(address: str = Query(..., min_length=1)) -> dict:
     try:
         loc = geocode.geocode(address)
     except geocode.GeocodeError as e:
-        raise HTTPException(status_code=422, detail=str(e)) from e
+        # str(e) is the internal diagnostic (guard reasoning, raw
+        # GeoSearch/Geosupport text) -- kept in the server log only.
+        # e.user_message is the honest, plain-language string safe to put
+        # in the HTTP response; see GeocodeError's own docstring (2026-07-28
+        # UX audit finding #2 -- the raw internal string used to leak here
+        # verbatim, into the frontend's error box).
+        logger.info("geocode failed: %s", e)
+        raise HTTPException(status_code=422, detail=e.user_message) from e
     return {
         "label": loc.label,
         "lat": loc.lat,
