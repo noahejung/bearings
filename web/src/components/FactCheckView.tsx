@@ -82,7 +82,7 @@ export function FactCheckView({
         </div>
         <div className="factcheck__actions">
           <button type="button" className="button button--ghost" onClick={onLoadExample} disabled={loading}>
-            Load the example listing
+            See a worked example (swaps to Sedgwick Ave)
           </button>
           <button type="submit" className="button" disabled={!canSubmit}>
             {loading ? "Checking…" : "Check this listing"}
