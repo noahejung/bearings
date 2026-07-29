@@ -157,12 +157,12 @@ export function CellReportView({ cell }: { cell: CellProfile }) {
           <span className="field__caveat-kicker" aria-hidden="true">
             note
           </span>
-          {cell.transit.caveat} Calculated from this block&rsquo;s centre to the nearest stations —
-          not from one specific building&rsquo;s front door.
+          {cell.transit.caveat} Calculated from this block&rsquo;s centre — not one specific
+          building&rsquo;s front door.
         </p>
         <p className="field__provenance">
-          Real MTA and PATH train schedules · typical weekday 8am departure · fastest calculated
-          route to four key destinations in the city.
+          Real MTA/PATH schedules · weekday 8am departure · fastest route to four key
+          destinations in the city.
           <br />
           <SourceTag source={cell.transit.source} />
         </p>
@@ -188,9 +188,8 @@ export function CellReportView({ cell }: { cell: CellProfile }) {
           ))}
         </ul>
         <p className="field__provenance">
-          Counted from a map of real, named places in this block only — measured as a
-          straight line, not an actual walking route, so it can over- or under-count near
-          rivers, parks, or highways.
+          Real, named places in this block only — measured as a straight line, not an
+          actual route, so it can over- or under-count near rivers, parks, or highways.
           <br />
           <SourceTag source={cell.amenities.source} />
         </p>
@@ -260,8 +259,8 @@ export function CellReportView({ cell }: { cell: CellProfile }) {
           <Stat value={cell.trees.street_trees} />
         </p>
         <p className="field__provenance">
-          From the city's last official street-tree count, in 2015 · in this block. Trees
-          planted since then won't show up here.
+          From the city's last street-tree count, 2015 · in this block. Trees planted
+          since won't show here.
           <br />
           <SourceTag source={cell.trees.source} />
         </p>
