@@ -63,9 +63,9 @@ export function FactCheckView({
           Check a listing's claims against the record above.
         </h2>
         <p className="factcheck__lede">
-          Every claim in the listing is checked against the same data behind the report
-          above. Four outcomes are possible: confirmed, contradicted, no record on file,
-          or unfalsifiable — a claim that no dataset here can check.
+          Checked against the same data as the report above. Four outcomes: confirmed,
+          contradicted, no record on file, or unfalsifiable — a claim no dataset here can
+          check.
         </p>
       </header>
 
@@ -103,8 +103,8 @@ export function FactCheckView({
         <div className="factcheck-results">
           {result.claims.length === 0 ? (
             <p className="field__empty">
-              No checkable marketing phrases found in that text. Try pasting a fuller
-              listing description, or load the example.
+              No checkable marketing phrases in that text. Try a fuller listing, or load
+              the example.
             </p>
           ) : (
             <>
