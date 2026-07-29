@@ -373,6 +373,38 @@ const CITYWIDE = {
     "Shown as this precinct's percentile position among all NYC precincts, ranked by raw year-to-date major-crime count -- not a per-resident rate.",
 };
 
+// The real GET /api/reach CONTRACT SHAPE (bearings/reach.py's reach()),
+// with real place/station names for the same Empire State Building address
+// tests/test_reach.py verifies live -- the exact `radius_m` values are the
+// real WALK_SPEED_MPS*minutes*60 numbers, but `polygon` here is a
+// simplified 3-point placeholder (this file only needs to prove the fetch
+// wiring and rendering work, not re-assert reach.py's own live-geometry
+// tests, which already do that against the real backend).
+const REACH = {
+  center: { lat: 40.748441, lng: -73.985656 },
+  bands: [
+    { minutes: 5, radius_m: 405.0, polygon: [[40.7488, -73.9857], [40.7481, -73.9857], [40.7488, -73.9857]] },
+    { minutes: 10, radius_m: 810.0, polygon: [[40.7492, -73.9857], [40.7477, -73.9857], [40.7492, -73.9857]] },
+    { minutes: 15, radius_m: 1215.0, polygon: [[40.7496, -73.9857], [40.7473, -73.9857], [40.7496, -73.9857]] },
+  ],
+  places: [
+    { name: "Blue Bottle Coffee", category: "cafe", lat: 40.749, lng: -73.986, band_minutes: 5 },
+    { name: "Keens Steakhouse", category: "bar", lat: 40.7505, lng: -73.9877, band_minutes: 10 },
+  ],
+  stations: [
+    { name: "34 St-Herald Sq", lat: 40.7497, lng: -73.9877, routes: ["B", "D", "F", "M"], band_minutes: 5 },
+  ],
+  method_note:
+    "Roughly how far you could walk in 5, 10, and 15 minutes at a normal walking pace, measured as a straight line.",
+  sources: {
+    places: { name: "Overture Maps Places", url: "https://docs.overturemaps.org/guides/places/" },
+    stations: {
+      name: "MTA GTFS + PATH GTFS",
+      url: "http://web.mta.info/developers/data/nyct/subway/google_transit.zip",
+    },
+  },
+};
+
 function stubFetch() {
   vi.stubGlobal(
     "fetch",
@@ -394,6 +426,9 @@ function stubFetch() {
       }
       if (url.includes("/api/citywide")) {
         return Promise.resolve(new Response(JSON.stringify(CITYWIDE), { status: 200 }));
+      }
+      if (url.includes("/api/reach")) {
+        return Promise.resolve(new Response(JSON.stringify(REACH), { status: 200 }));
       }
       if (url.includes("/api/profile")) {
         // The whole point of Phase 2: the primary report path must NEVER
@@ -498,6 +533,9 @@ describe("App (full mount)", () => {
         }
         if (url.includes("/api/citywide")) {
           return Promise.resolve(new Response(JSON.stringify(CITYWIDE), { status: 200 }));
+        }
+        if (url.includes("/api/reach")) {
+          return Promise.resolve(new Response(JSON.stringify(REACH), { status: 200 }));
         }
         return Promise.reject(new Error(`unexpected fetch: ${url}`));
       }),

@@ -1435,6 +1435,164 @@ body {
   line-height: 1.6;
 }
 
+/* ---------- preference bar (SPEC-lens-report.md §2) ---------- */
+.prefbar {
+  margin-top: 1.5rem;
+  padding: 0.9rem 0;
+  border-top: 1px solid var(--ink);
+  border-bottom: 1px solid var(--ink);
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.prefbar__chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.prefbar__chip {
+  border: 1.5px solid var(--ink);
+  background: transparent;
+  color: var(--ink);
+  padding: 0.35rem 0.7rem;
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  letter-spacing: 0.04em;
+}
+
+.prefbar__chip[aria-pressed="true"] {
+  background: var(--ink);
+  color: var(--bone);
+}
+
+.prefbar__pin {
+  display: flex;
+  gap: 0.5rem;
+  max-width: 32rem;
+}
+
+.prefbar__pin input {
+  flex: 1;
+  border: 1.5px solid var(--ink);
+  background: transparent;
+  padding: 0.4rem 0.6rem;
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  color: var(--ink);
+}
+
+.prefbar__pin .button {
+  padding: 0.4rem 0.85rem;
+  font-size: 0.7rem;
+}
+
+.prefbar__error {
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  color: var(--red);
+}
+
+.prefbar__pins {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.prefbar__pinitem {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  border: 1px dashed var(--steel);
+  padding: 0.25rem 0.3rem 0.25rem 0.55rem;
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  color: var(--ink);
+}
+
+.prefbar__pinremove {
+  border: none;
+  background: transparent;
+  color: var(--steel);
+  font-size: 0.9rem;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 0.15rem;
+}
+
+.prefbar__pinremove:hover {
+  color: var(--red);
+}
+
+/* ---------- lens switcher (SPEC-lens-report.md §4 stub) ---------- */
+.lensbar {
+  display: inline-flex;
+  gap: 0.4rem;
+}
+
+.lensbar__option {
+  border: 1.5px solid var(--ink);
+  background: transparent;
+  color: var(--ink);
+  padding: 0.35rem 0.7rem;
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  letter-spacing: 0.04em;
+}
+
+.lensbar__option[aria-pressed="true"] {
+  background: var(--ink);
+  color: var(--bone);
+}
+
+.lensbar__option:disabled {
+  border-style: dashed;
+  border-color: var(--steel);
+  color: var(--steel);
+  cursor: not-allowed;
+}
+
+/* ---------- subject marker + pinned-place markers ---------- */
+.mapsubject {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--red);
+  border: 2px solid var(--bone);
+  box-shadow: 0 0 0 1px var(--ink);
+}
+
+.pinmarker {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.pinmarker__dot {
+  display: block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--red);
+  border: 1.6px solid var(--bone);
+  flex-shrink: 0;
+}
+
+.pinmarker__badge {
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  letter-spacing: 0.03em;
+  color: var(--ink);
+  background: var(--bone);
+  border: 1px solid var(--red);
+  padding: 1px 5px;
+  white-space: nowrap;
+}
+
 /* ---------- responsive ---------- */
 @media (max-width: 640px) {
   .wrap {

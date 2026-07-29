@@ -24,7 +24,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from bearings import cellprofile, cells, citywide, config, factcheck, geocode, mapgeo, profile, transit
+from bearings import cellprofile, cells, citywide, config, factcheck, geocode, mapgeo, profile, reach, transit
 from bearings.sources import basemap, compstat, overture
 
 logging.basicConfig(
@@ -189,6 +189,20 @@ def get_map(address: str = Query(..., min_length=1)) -> dict:
         logger.info("geocode failed: %s", e)
         raise HTTPException(status_code=422, detail=e.user_message) from e
     return mapgeo.map_geometry(loc.lat, loc.lng, loc.bbl)
+
+
+@app.get("/api/reach")
+def get_reach(address: str = Query(..., min_length=1)) -> dict:
+    """Reach rings for `address` -- three real 5/10/15-minute walk bands
+    (see reach.py's own module docstring for the straight-line-vs-routed
+    plan-time decision) plus every real named place/station inside them.
+    Same geocode-error handling as GET /api/map (this endpoint geocodes
+    independently, same established pattern)."""
+    try:
+        return reach.reach(address)
+    except geocode.GeocodeError as e:
+        logger.info("geocode failed: %s", e)
+        raise HTTPException(status_code=422, detail=e.user_message) from e
 
 
 @app.get("/api/cell/{h3}")

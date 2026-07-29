@@ -129,62 +129,38 @@ export function buildMapStyle(tilesUrl: string): StyleSpecification {
 }
 
 // MapView's own local overlay layers -- building mass, street hairlines,
-// subway/PATH, the crime-choropleth precinct layer, and the H3 metric
-// disk -- extracted out of MapView.tsx (a pure, exported function rather
-// than inline `map.addLayer()` calls) so this exact layer set is
+// subway/PATH, the citywide click-to-load hit layer, and the reach-rings/
+// dots feature -- extracted out of MapView.tsx (a pure, exported function
+// rather than inline `map.addLayer()` calls) so this exact layer set is
 // unit-testable with MapLibre's real style validator
 // (`@maplibre/maplibre-gl-style-spec`'s `validateStyleMin`, the same
 // function `map.addLayer` calls internally) without needing a live WebGL
-// map. Order matters: MapLibre paints layers bottom-to-top in array
-// order, so this array's order (precinct choropleth under everything,
-// H3 cell disk on top) must match the draw order MapView.tsx wants.
+// map. Order matters: MapLibre paints layers bottom-to-top in array order,
+// so this array's order (building/street/subway mass under everything,
+// reach rings/dots on top) must match the draw order MapView.tsx wants.
 //
-// FIXED 2026-07-15: four of these seven layers (streets-line x2,
-// cells-fill, cells-outline) used to nest a `["zoom"]` expression inside
-// `*`/`case` instead of using it as the direct top-level input to a
-// `step`/`interpolate` -- a MapLibre style-spec violation that
-// `map.addLayer` rejects SILENTLY (no thrown error, no console warning
-// visible without opening devtools; the layer is simply never added),
-// which is why this shipped and stayed broken through a normal
-// API/console-exception smoke test. See mapStyle.test.ts for the
-// regression test.
+// FIXED 2026-07-15: two of these layers (streets-line's line-width/
+// line-opacity) used to nest a `["zoom"]` expression inside `*`/`case`
+// instead of using it as the direct top-level input to a `step`/
+// `interpolate` -- a MapLibre style-spec violation that `map.addLayer`
+// rejects SILENTLY (no thrown error, no console warning visible without
+// opening devtools; the layer is simply never added), which is why this
+// shipped and stayed broken through a normal API/console-exception smoke
+// test. See mapStyle.test.ts for the regression test.
+//
+// RETIRED 2026-07-29 (SPEC-lens-report.md, "hex grid styling... too much
+// visual clutter"): the local per-address metric-shaded H3 disk
+// (cells-fill/cells-outline) and the crime-choropleth precinct layer
+// (precinct-fill/precinct-outline, whose only UI trigger -- the "Shade the
+// map by" dropdown -- was retired alongside it) are both deleted, not
+// hidden. Every number they used to shade (noise/amenities/trees/
+// building_age/transit_access/crime) is still fully visible in the
+// per-cell report card below the map (CellReportView.tsx) -- no data was
+// lost, only a redundant hex/choropleth map-shading affordance the spec
+// explicitly asked to retire. See buildCitywideGridLayers()/
+// buildReachLayers() below for what replaced them.
 export function buildOverlayLayers(): StyleSpecification["layers"] {
-  // Subject cell always visible (VISUAL.md: "Subject cell always
-  // visible") -- every other cell fades in from zoom 12 to 14, which is
-  // also when the hex grid becomes "large enough to read". Plain numbers,
-  // not a reusable `["interpolate", ..., ["zoom"], ...]` array, because a
-  // `["zoom"]` expression must be the *direct* top-level value of a paint
-  // property -- it cannot be nested inside `*`/`case`/etc. (that nesting
-  // is exactly what silently dropped cells-fill/cells-outline before this
-  // fix). cells-fill and cells-outline below instead fold this fade
-  // window and their data-driven `case`/`match` logic into one single
-  // top-level `interpolate` on `zoom`, matching values at each stop.
-  const CELL_FADE_MIN_ZOOM = 12;
-  const CELL_FADE_MAX_ZOOM = 14;
-
   return [
-    {
-      id: "precinct-fill",
-      type: "fill",
-      source: "precincts",
-      layout: { visibility: "none" },
-      paint: {
-        "fill-color": RED,
-        "fill-opacity": [
-          "case",
-          ["==", ["get", "hasCrime"], 0],
-          0,
-          ["interpolate", ["linear"], ["get", "w"], 0, 0.08, 1, 0.6],
-        ],
-      },
-    },
-    {
-      id: "precinct-outline",
-      type: "line",
-      source: "precincts",
-      layout: { visibility: "none" },
-      paint: { "line-color": INK, "line-width": 0.6, "line-opacity": 0.5 },
-    },
     {
       // Level-of-detail by zoom (VISUAL.md §5, REVISED 2026-07-15), the
       // same idea the basemap's own roads-minor/roads-major apply above:
@@ -245,98 +221,24 @@ export function buildOverlayLayers(): StyleSpecification["layers"] {
       layout: { "line-cap": "round", "line-join": "round" },
       paint: { "line-color": RED, "line-width": 2.4, "line-opacity": 0.92 },
     },
-    {
-      // The H3 disk is the only STRONG ink on the sheet (VISUAL.md §5) --
-      // thin outline, subject cell red. Fill only carries a value when a
-      // cell-resolution metric is selected -- `hasValue`/`w` are computed
-      // once per metric selection in MapView's cellsGeoJSON(), so this
-      // paint expression stays static regardless of which metric is
-      // active.
-      id: "cells-fill",
-      type: "fill",
-      source: "cells",
-      paint: {
-        "fill-color": RED,
-        // Top-level zoom interpolate (12 -> 14, the CELL_FADE window)
-        // whose stop outputs carry the isSubject/hasValue `case` and the
-        // `w`-percentile `interpolate`. At zoom 12 the output is a flat 0
-        // for every feature; at zoom 14 it's the real per-feature value.
-        // Linear interpolation between "0" and "real value" over the same
-        // 12->14 window is mathematically identical to a
-        // `fade(zoom) * realValue` where fade is linear 0->1 across that
-        // exact range.
-        "fill-opacity": [
-          "interpolate",
-          ["linear"],
-          ["zoom"],
-          CELL_FADE_MIN_ZOOM,
-          0,
-          CELL_FADE_MAX_ZOOM,
-          [
-            "case",
-            ["==", ["get", "isSubject"], 1],
-            0,
-            ["==", ["get", "hasValue"], 1],
-            ["interpolate", ["linear"], ["get", "w"], 0, 0.08, 1, 0.6],
-            0,
-          ],
-        ],
-      },
-    },
-    {
-      id: "cells-outline",
-      type: "line",
-      source: "cells",
-      paint: {
-        "line-color": ["case", ["==", ["get", "isSubject"], 1], RED, INK],
-        "line-width": ["case", ["==", ["get", "isSubject"], 1], 1.6, 0.6],
-        // Same restructuring: the subject cell gets 1 at both zoom stops
-        // (so it stays flat at "always visible" across the whole range --
-        // interpolate clamps to the nearest stop past its ends), every
-        // other cell fades 0 -> 0.45 across 12-14.
-        "line-opacity": [
-          "interpolate",
-          ["linear"],
-          ["zoom"],
-          CELL_FADE_MIN_ZOOM,
-          ["case", ["==", ["get", "isSubject"], 1], 1, 0],
-          CELL_FADE_MAX_ZOOM,
-          ["case", ["==", ["get", "isSubject"], 1], 1, 0.45],
-        ],
-      },
-    },
     ...buildCitywideGridLayers(),
+    ...buildReachLayers(),
   ];
 }
 
-// The citywide clickable grid (SPEC-precompute-v2.md Phase 2, VISUAL.md §5
-// REVISED 2026-07-15: "The hex grid COVERS THE WHOLE CITY... present
-// across the entire map at every zoom so any cell is clickable; style it
-// thin/subtle at city scale... clearer as you zoom in"). Deliberately a
-// SEPARATE source/layer pair from "cells" above, which stays exactly what
-// it always was: the local, address-scoped, k=3 disk that the metric
-// dropdown shades. This pair instead covers every one of the ~7,000 real
-// cells citywide (MapView's own citywideCellsGeoJSON(), built from
-// GET /api/cells) and exists purely for navigation + click-to-load, not
-// metric shading -- so its paint never varies by any per-feature `w`/
-// `hasValue`, only by whether a cell is the current SELECTION (toggled via
-// MapLibre feature-state, not a full GeoJSON rebuild -- see MapView.tsx's
-// own selection effect for why: rebuilding ~7,000 polygons' `properties`
-// on every click would be real, avoidable work this data volume doesn't
-// need).
-//
-// "citywide-cells-fill" is a genuinely-transparent fill (VISUAL.md's own
-// "transparent fill for hit-testing") -- MapLibre still dispatches
-// mousemove/click events against a 0-opacity fill's real geometry, which
-// is exactly why a fill (not just the thin outline line) is needed here:
-// a line layer only registers a hit within a few pixels of the drawn
-// stroke, but a full hex must be clickable anywhere inside it.
-//
-// Split into its own exported function (not inlined into
-// buildOverlayLayers() above) so a future citywide heat-map (VISUAL.md
-// §5's still-open item) can extend just this pair without touching the
-// unrelated local-disk layers, and so mapStyle.test.ts can assert on it
-// independently.
+// The citywide clickable grid (SPEC-precompute-v2.md Phase 2). RETIRED
+// 2026-07-29 (SPEC-lens-report.md, Noah: "i wanna move away from hex grid
+// styling anyways, its too much visual clutter and doesnt make a lot of
+// sense for the average user"): the visible faint grid line layer
+// ("citywide-cells-outline") is deleted, not just hidden -- H3 stays the
+// backend's own data/aggregation layer (untouched, see reach.py/mapgeo.py/
+// cellprofile.py), it is simply never drawn on the map anymore. Only the
+// already-transparent hit-test fill survives, because "click any real
+// block to load its report" (SPEC-precompute-v2.md Phase 2) is existing
+// report functionality this slice must keep working, just invisibly --
+// MapLibre still dispatches mousemove/click events against a 0-opacity
+// fill's real geometry, which is exactly why a fill (not the deleted
+// outline) is what carries the click.
 export function buildCitywideGridLayers(): StyleSpecification["layers"] {
   return [
     {
@@ -345,40 +247,55 @@ export function buildCitywideGridLayers(): StyleSpecification["layers"] {
       source: "citywide-cells",
       paint: { "fill-color": RED, "fill-opacity": 0 },
     },
+  ];
+}
+
+// Reach rings (SPEC-lens-report.md §3): three 5/10/15-minute walk bands,
+// straight-line circles (see bearings/reach.py's own module docstring for
+// why -- no routable pedestrian graph exists in this codebase yet), plus
+// one uniform-ink dot layer for chip-selected amenities/stations inside
+// them. "Uniform ink" (not a per-category colour) is deliberate: VISUAL.md's
+// four-token palette (bone/ink/steel/red) has no room for a 6th hue per
+// category without breaking that rule -- MapView.tsx differentiates dots by
+// content (name/category in a future hover), not colour.
+//
+// Draw order for the three nested bands is the GeoJSON FEATURE ARRAY order
+// (MapView's reachRingsGeoJSON() emits largest-band-first), not a MapLibre
+// z-index primitive -- a later feature in the same source/layer paints on
+// top of an earlier one, so the smallest/darkest band always ends up
+// visually "inside" the larger/fainter ones without needing three separate
+// layers.
+export function buildReachLayers(): StyleSpecification["layers"] {
+  return [
     {
-      id: "citywide-cells-outline",
-      type: "line",
-      source: "citywide-cells",
+      id: "reach-rings-fill",
+      type: "fill",
+      source: "reach-rings",
       paint: {
-        "line-color": ["case", ["boolean", ["feature-state", "selected"], false], RED, INK],
-        // Top-level zoom interpolate whose stop outputs carry the
-        // selected/not-selected `case` -- same restructuring cells-outline
-        // above already uses, required because a `["zoom"]`-consuming
-        // expression must be the direct top-level paint value, never
-        // nested inside `case` (see this file's own 2026-07-15 FIXED note
-        // above buildOverlayLayers() for the silent-failure this guards
-        // against). Faint citywide overlay at city scale (VISUAL.md: "a
-        // faint overlay, not noise"), thicker and more legible once
-        // zoomed past neighborhood scale; the selected cell stays fully
-        // emphasized across the whole range.
-        "line-width": [
-          "interpolate",
-          ["linear"],
-          ["zoom"],
-          9,
-          ["case", ["boolean", ["feature-state", "selected"], false], 1.6, 0.12],
-          14,
-          ["case", ["boolean", ["feature-state", "selected"], false], 2.2, 0.55],
-        ],
-        "line-opacity": [
-          "interpolate",
-          ["linear"],
-          ["zoom"],
-          9,
-          ["case", ["boolean", ["feature-state", "selected"], false], 1, 0.14],
-          14,
-          ["case", ["boolean", ["feature-state", "selected"], false], 1, 0.5],
-        ],
+        "fill-color": RED,
+        "fill-opacity": ["match", ["get", "minutes"], 5, 0.26, 10, 0.17, 15, 0.1, 0.1],
+      },
+    },
+    {
+      id: "reach-rings-outline",
+      type: "line",
+      source: "reach-rings",
+      paint: {
+        "line-color": RED,
+        "line-width": 1,
+        "line-opacity": ["match", ["get", "minutes"], 5, 0.55, 10, 0.4, 15, 0.28, 0.28],
+      },
+    },
+    {
+      id: "reach-dots",
+      type: "circle",
+      source: "reach-dots",
+      paint: {
+        "circle-radius": 3.4,
+        "circle-color": INK,
+        "circle-opacity": 0.82,
+        "circle-stroke-width": 1,
+        "circle-stroke-color": BONE,
       },
     },
   ];

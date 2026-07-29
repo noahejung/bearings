@@ -5,7 +5,9 @@ import { CellReportView } from "./components/CellReportView";
 import { FactCheckView } from "./components/FactCheckView";
 import { Header } from "./components/Header";
 import { MapView } from "./components/MapView";
+import { PreferenceBar } from "./components/PreferenceBar";
 import { EXAMPLE_ADDRESSES, EXAMPLE_LISTING_ADDRESS, EXAMPLE_LISTING_TEXT } from "./data/examples";
+import type { PinnedPlace } from "./lib/preferences";
 import type { CellProfile, FactcheckResult } from "./types";
 
 function scrollToId(id: string) {
@@ -43,6 +45,33 @@ export default function App() {
   const [factcheckResult, setFactcheckResult] = useState<FactcheckResult | null>(null);
   const [factcheckLoading, setFactcheckLoading] = useState(false);
   const [factcheckError, setFactcheckError] = useState<string | null>(null);
+
+  // The preference bar's own state (SPEC-lens-report.md §2) -- session-only,
+  // plain useState, no persistence of any kind (no localStorage, no URL
+  // encoding, no accounts -- "every visit starts clean"). Lifted here
+  // because both PreferenceBar (the controls) and MapView (the rendering)
+  // need to read/write it.
+  const [activeCategories, setActiveCategories] = useState<Set<string>>(new Set());
+  const [pins, setPins] = useState<PinnedPlace[]>([]);
+
+  function toggleCategory(key: string) {
+    setActiveCategories((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }
+
+  function addPin(pin: PinnedPlace) {
+    // A place pinned twice by the same label just replaces itself -- never
+    // a silently-duplicated marker sitting on top of another.
+    setPins((prev) => [...prev.filter((p) => p.label !== pin.label), pin]);
+  }
+
+  function removePin(label: string) {
+    setPins((prev) => prev.filter((p) => p.label !== label));
+  }
 
   function resetFactcheck() {
     // A new selection invalidates any fact-check results computed against
@@ -152,10 +181,26 @@ export default function App() {
           compact={cellReport !== null}
         />
 
+        {/* Slim bar above the map (SPEC-lens-report.md §2) -- category
+            chips + pin search, both session-only. */}
+        <PreferenceBar
+          activeCategories={activeCategories}
+          onToggleCategory={toggleCategory}
+          pins={pins}
+          onAddPin={addPin}
+          onRemovePin={removePin}
+        />
+
         {/* The map mounts immediately, independent of any search or click
             (Task 4/VISUAL.md §5) -- it fetches the citywide grid on its
             own and is interactive before any report has ever loaded. */}
-        <MapView address={searchedAddress} selectedCell={selectedCell} onCellClick={handleCellClick} />
+        <MapView
+          address={searchedAddress}
+          selectedCell={selectedCell}
+          onCellClick={handleCellClick}
+          activeCategories={activeCategories}
+          pins={pins}
+        />
 
         {reportLoading && !cellReport && (
           <p className="loading mono" role="status">

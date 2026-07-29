@@ -357,6 +357,50 @@ export interface CellHousingHazards {
   source: Source;
 }
 
+// Mirrors GET /api/reach exactly (bearings/reach.py's reach()) -- the
+// 5/10/15-minute walk-ring feature (SPEC-lens-report.md §3). Every band's
+// `polygon` is a real circle (STRAIGHT-LINE, not street-network-routed --
+// see reach.py's own module docstring for the plan-time decision and why),
+// so the UI must always caption these "roughly", never claim routing
+// precision. `band_minutes` on a place/station is the smallest real band
+// it falls inside; a place/station outside every band is simply absent
+// from these two lists (never a fabricated null entry).
+export interface ReachCenter {
+  lat: number;
+  lng: number;
+}
+
+export interface ReachBand {
+  minutes: 5 | 10 | 15;
+  radius_m: number;
+  polygon: [number, number][]; // [lat, lng], closed ring
+}
+
+export interface ReachPlace {
+  name: string;
+  category: string; // one of overture.py's 8 real buckets -- see AMENITY_CATEGORIES
+  lat: number;
+  lng: number;
+  band_minutes: 5 | 10 | 15;
+}
+
+export interface ReachStation {
+  name: string;
+  lat: number;
+  lng: number;
+  routes: string[];
+  band_minutes: 5 | 10 | 15;
+}
+
+export interface Reach {
+  center: ReachCenter;
+  bands: ReachBand[];
+  places: ReachPlace[];
+  stations: ReachStation[];
+  method_note: string;
+  sources: { places: Source; stations: Source };
+}
+
 export interface CellProfile {
   h3: string;
   shard: string;

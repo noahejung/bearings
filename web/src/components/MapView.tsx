@@ -1,14 +1,13 @@
 import * as h3 from "h3-js";
-import type { Feature, FeatureCollection, Geometry } from "geojson";
+import type { Feature, FeatureCollection } from "geojson";
 import maplibregl, { type LngLat, type Map as MapLibreMap, type Marker } from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import { Protocol } from "pmtiles";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ApiError, getCellsIndex, getCitywide, getMapGeometry } from "../api";
-import { crimeRelativeLabel, formatPercentile, ordinalSuffix } from "../lib/crime";
+import { ApiError, getCellsIndex, getCitywide, getMapGeometry, getReach } from "../api";
 import { buildMapStyle, buildOverlayLayers } from "../lib/mapStyle";
-import { percentileRank } from "../lib/relativeScale";
-import type { CellsIndexEntry, Citywide, MapCell, MapGeometry, Source } from "../types";
+import type { PinnedPlace } from "../lib/preferences";
+import type { CellsIndexEntry, Citywide, MapGeometry, Reach } from "../types";
 import { colorFor } from "./RouteBullet";
 
 // VISUAL.md §5, REVISED 2026-07-15 -- MapLibre GL reading a self-hosted
@@ -17,22 +16,35 @@ import { colorFor } from "./RouteBullet";
 // tile server at request time). The base map (mapStyle.ts) is authored to
 // this app's own palette; everything on top of it is real geometry from
 // GET /api/map (the neighbourhood around the searched address -- building
-// mass, street hairlines, subway/PATH, H3 noise cells) and GET /api/citywide
-// (address-independent: NTA neighbourhood labels and every NYPD precinct's
-// boundary + CompStat crime total, fetched once, not once per address).
+// mass, street hairlines, subway/PATH) and GET /api/citywide (address-
+// independent: NTA neighbourhood labels and NYPD precinct centroids, for
+// the label markers only -- see effect 5/7 below).
 //
 // SPEC-precompute-v2.md Phase 2 (2026-07-15): the map is no longer gated
 // behind a loaded report. It mounts immediately with GET /api/cells (every
-// real H3 res-9 cell citywide, painted as a thin, always-on, CLICKABLE grid
-// -- VISUAL.md §5's "the hex grid COVERS THE WHOLE CITY... any cell is
-// clickable"), independent of whether `address` is set. `address` now only
-// drives the local building/street/subway overlay for whichever address was
-// actually searched -- it can be `null` (a bare cell click has no address),
-// in which case that overlay is simply empty, never fetched, never blocking.
+// real H3 res-9 cell citywide) as an invisible, always-on, CLICKABLE hit
+// layer, independent of whether `address` is set. `address` drives the
+// local building/street/subway overlay AND the reach-rings feature for
+// whichever address was actually searched -- it can be `null` (a bare cell
+// click has no address), in which case both are simply empty, never
+// fetched, never blocking.
+//
+// RETIRED 2026-07-29 (SPEC-lens-report.md, Noah: "i wanna move away from
+// hex grid styling anyways, its too much visual clutter and doesnt make a
+// lot of sense for the average user"): the visible H3 grid, the local
+// per-address metric-shaded disk, and the crime-choropleth precinct layer
+// are all gone from the map. H3 stays the backend's own data/aggregation
+// layer (untouched -- reach.py/mapgeo.py/cellprofile.py), it is simply
+// never drawn here anymore; "click any block to load its report" survives
+// via the already-transparent hit-test fill (see mapStyle.ts's own
+// updated comment). Replacing them: reach rings + chip-selected amenity/
+// station dots + pinned-place badges (SPEC-lens-report.md §2-4), and a
+// two-entry lens-switcher stub ("minimal" is the only real lens this
+// slice; a disabled second slot exists so slice 2's transit/green/3D-tilt
+// lenses have somewhere to land).
 
 // Mirrors bearings/config.py's NYC_BBOX -- used ONLY to frame the initial
-// view so the whole city is visible on first paint (VISUAL.md/the dispatch's
-// own "grid visibly covers the whole city" check). This is NOT how "real
+// view so the whole city is visible on first paint. This is NOT how "real
 // cell" is decided (that stays the backend's data-derived job, see
 // cellprofile.py's own module docstring) -- it is purely a camera bound.
 const NYC_BBOX = { south: 40.47, north: 40.93, west: -74.30, east: -73.70 };
@@ -41,192 +53,49 @@ const INK = "#111111";
 const RED = "#D7263D";
 const STEEL = "#8A8D8F";
 
-// The metric DROPDOWN (VISUAL.md §5, REVISED 2026-07-15), replacing the old
-// hardcoded noise/crime toggle. "Shading the whole map needs a citywide
-// value per area. Never fabricate a citywide surface" -- every entry here
-// is triaged, honestly, into one of three buckets:
-//   - "ship": a real, honestly-computed value backs every area shown.
-//   - "proxy": a real value, but standing in for something this codebase
-//     genuinely cannot compute (there is no citywide "commute time" --
-//     a commute is always time to somewhere -- so transit_access offers
-//     "how much real transit is within reach", named as access, not
-//     commute) -- see mapgeo.py's own module docstring.
-//   - "disabled": no honest citywide (or even honest per-cell-on-demand)
-//     surface can be built -- shown greyed, with the real reason, never
-//     silently hidden. Same rule this project already applies to NO_DATA
-//     gaps elsewhere in the report.
-type MetricStatus = "ship" | "proxy" | "disabled";
-type MetricResolution = "cell" | "precinct" | "none";
+// Mirrors bearings/transit.py's WALK_SPEED_MPS -- the same "Mirrors ..."
+// duplication pattern NYC_BBOX above already uses. Only ever used here for
+// a single scalar (a pinned place's own walk-time badge), never a rendered
+// geometry -- reach.py computes and returns the actual ring polygons
+// server-side (see reachRingsGeoJSON() below), so the one real duplication
+// risk (the ring SHAPE itself drifting from the backend) doesn't exist;
+// only the badge's minute count could ever disagree, and by how the two
+// are computed identically it won't.
+const WALK_SPEED_MPS = 1.35;
 
-interface MetricDef {
-  id: string;
-  label: string;
-  resolution: MetricResolution;
-  status: MetricStatus;
-  cellField?: keyof MapCell;
-  reason?: string; // only set (and only shown) for status === "disabled"
-}
-
-const METRICS: MetricDef[] = [
-  { id: "none", label: "Off", resolution: "none", status: "ship" },
-  { id: "noise", label: "Noise complaints", resolution: "cell", status: "ship", cellField: "noise" },
-  { id: "crime", label: "Major crime (by police area)", resolution: "precinct", status: "ship" },
-  {
-    id: "amenities",
-    label: "Grocery & everyday places",
-    resolution: "cell",
-    status: "ship",
-    cellField: "amenities",
-  },
-  { id: "trees", label: "Living street trees", resolution: "cell", status: "ship", cellField: "trees" },
-  {
-    id: "building_age",
-    label: "Building age (typical for the block)",
-    resolution: "cell",
-    status: "ship",
-    cellField: "building_age_years",
-  },
-  {
-    id: "transit_access",
-    label: "Transit access (an estimate, not exact commute time)",
-    resolution: "cell",
-    status: "proxy",
-    cellField: "transit_access",
-  },
-  {
-    id: "flood",
-    label: "Flood zone",
-    resolution: "none",
-    status: "disabled",
-    reason:
-      "The federal government's flood-risk map can only be checked one address at a time, and it fails on enough real requests that it isn't reliable enough to shade a whole map with.",
-  },
-  {
-    id: "rodents",
-    label: "Rodent inspections",
-    resolution: "none",
-    status: "disabled",
-    reason:
-      "Only inspected buildings show up in this data — a quiet-looking block could mean no rodents, or could just mean nobody filed a complaint there. There's no fair way to show this across the whole city yet.",
-  },
-  {
-    id: "heat",
-    label: "Heat / hot-water complaints",
-    resolution: "none",
-    status: "disabled",
-    reason: "This is complaint data for individual buildings, not a full survey of every building — the same gap as the rodent data above.",
-  },
-  {
-    id: "bedbugs",
-    label: "Bedbug filings",
-    resolution: "none",
-    status: "disabled",
-    reason: "Landlords file these once a year, and it's voluntary — no filing doesn't mean no bedbugs, just that nobody reported one.",
-  },
-];
-
-// Label + unit for each cell metric's hover readout.
-const CELL_METRIC_READOUT: Record<string, { label: string; unit: string }> = {
-  noise: { label: "Noise complaints · last 12 months", unit: "calls" },
-  amenities: { label: "Grocery & everyday places · in this block", unit: "places" },
-  trees: { label: "Living street trees · in this block", unit: "trees" },
-  building_age: { label: "Typical building year built", unit: "" },
-  transit_access: { label: "Subway/PATH stations within ~6min walk", unit: "stations" },
-};
-
-function cellSourceFor(id: string, geo: MapGeometry | null): Source | undefined {
-  if (!geo) return undefined;
-  const key: Record<string, string> = {
-    noise: "cells",
-    amenities: "amenities",
-    trees: "trees",
-    building_age: "building_age",
-    transit_access: "transit_access",
-  };
-  const sourceKey = key[id];
-  return sourceKey ? geo.sources[sourceKey] : undefined;
+function haversineM(a: { lat: number; lng: number }, b: { lat: number; lng: number }): number {
+  const r = 6_371_000.0;
+  const lat1 = (a.lat * Math.PI) / 180;
+  const lat2 = (b.lat * Math.PI) / 180;
+  const dLat = ((b.lat - a.lat) * Math.PI) / 180;
+  const dLng = ((b.lng - a.lng) * Math.PI) / 180;
+  const h = Math.sin(dLat / 2) ** 2 + Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLng / 2) ** 2;
+  return 2 * r * Math.asin(Math.sqrt(h));
 }
 
 // ---------------------------------------------------------------------------
 // GeoJSON builders -- pure functions from the API contract to what MapLibre
 // wants. GeoJSON is always [lng, lat]; every upstream field here (h3-js
-// boundaries, MapGeometry coords, precinct geometry) is [lat, lng] like the
-// rest of this codebase, so every builder below flips it once, here, rather
-// than leaving that inversion to be rediscovered per-consumer.
+// boundaries, MapGeometry coords, reach.py's ring polygons) is [lat, lng]
+// like the rest of this codebase, so every builder below flips it once,
+// here, rather than leaving that inversion to be rediscovered per-consumer.
 // ---------------------------------------------------------------------------
 
-// `cellField` is the currently-selected cell metric's raw field (or `null`
-// when the metric picker is "Off", a precinct metric, or a disabled entry
-// -- every cell then gets w=0/hasValue=0, so the fill layer's data-driven
-// opacity naturally renders nothing without a separate visibility toggle).
-//
-// `w` is a PERCENTILE, not value/max (VISUAL.md §5: "Apply relative
-// scaling ... to any metric where absolute counts would mislead, not just
-// crime") -- computed via the same mean-rank method citywide.py's crime
-// percentile uses, but ranked only against the other cells in this k=3
-// disk (relativeScale.ts's own docstring states this distinction plainly:
-// this is neighbourhood-relative, not citywide-relative like crime).
-function cellsGeoJSON(geo: MapGeometry, cellField: keyof MapCell | null): FeatureCollection {
-  const population = cellField
-    ? geo.cells.map((c) => c[cellField]).filter((v): v is number => typeof v === "number")
-    : [];
-  const features: Feature[] = geo.cells.map((c) => {
-    const boundary = h3.cellToBoundary(c.h3) as [number, number][]; // [lat, lng]
-    const ring: [number, number][] = boundary.map(([lat, lng]) => [lng, lat]);
-    ring.push(ring[0]); // close the polygon ring
-    const isSubject = c.h3 === geo.subject.cell;
-    const raw = cellField ? c[cellField] : null;
-    const hasValue = typeof raw === "number";
-    const w = hasValue && population.length > 0 ? percentileRank(population, raw) / 100 : 0;
-    return {
-      type: "Feature",
-      properties: {
-        h3: c.h3,
-        isSubject: isSubject ? 1 : 0,
-        hasValue: hasValue ? 1 : 0,
-        w,
-        percentile: hasValue && population.length > 0 ? percentileRank(population, raw) : null,
-        noise: c.noise,
-        amenities: c.amenities,
-        trees: c.trees,
-        building_age_years: c.building_age_years,
-        transit_access: c.transit_access,
-      },
-      geometry: { type: "Polygon", coordinates: [ring] },
-    };
-  });
-  return { type: "FeatureCollection", features };
-}
-
-// The citywide clickable grid (mapStyle.ts's buildCitywideGridLayers()) --
-// every real cell from GET /api/cells, as one GeoJSON polygon per cell.
-// Deliberately carries NO per-feature metric value (`w`/`hasValue`, unlike
-// cellsGeoJSON() below): this grid's job is navigation and click-to-load,
-// not metric shading, so the only thing that ever varies its paint is
-// SELECTION, toggled via MapLibre feature-state (see MapView's own
-// selection effect) rather than rebuilding this FeatureCollection on every
-// click -- cheap once, at data-load time, for ~7,000 features, rather than
-// on every one of a user's clicks.
-// `id` is the ARRAY INDEX, not the h3 string -- confirmed live (a small
-// isolated MapLibre GL JS repro, not a guess): a GeoJSON feature's
-// setFeatureState/getFeatureState bookkeeping accepts a string id fine
-// (getFeatureState reports it back correctly), but the PAINT expression
-// (`["feature-state", "selected"]` in mapStyle.ts) only actually picks up
-// the state for a NUMERIC feature id on a GeoJSON source -- a string-id
-// feature's state is stored but never rendered. This is exactly the class
-// of thing that "only shows in a real render", not in `getFeatureState`'s
-// own return value. `properties.h3` still carries the real h3 string
-// (unaffected -- the click handler already reads it from there), so
-// nothing downstream needs to know the numeric id exists except the
-// selection effect's own h3->index lookup (built alongside this).
+// The citywide clickable grid (SPEC-precompute-v2.md Phase 2) -- every real
+// cell from GET /api/cells, as one GeoJSON polygon per cell, carrying only
+// its own h3 id (the click handler reads `properties.h3`). Deliberately no
+// numeric `id`/feature-state anymore (RETIRED 2026-07-29): the only reason
+// citywideCellsGeoJSON() used to assign one was to drive the now-deleted
+// visible outline's "selected" emphasis (MapLibre's setFeatureState only
+// renders for a numeric GeoJSON feature id, confirmed live 2026-07-15) --
+// with that outline gone, plain hit-testing needs no id at all.
 function citywideCellsGeoJSON(entries: CellsIndexEntry[]): FeatureCollection {
-  const features: Feature[] = entries.map((c, i) => {
+  const features: Feature[] = entries.map((c) => {
     const boundary = h3.cellToBoundary(c.h3) as [number, number][]; // [lat, lng]
     const ring: [number, number][] = boundary.map(([lat, lng]) => [lng, lat]);
     ring.push(ring[0]); // close the polygon ring
     return {
       type: "Feature",
-      id: i,
       properties: { h3: c.h3 },
       geometry: { type: "Polygon", coordinates: [ring] },
     };
@@ -276,32 +145,55 @@ function subwayGeoJSON(geo: MapGeometry): FeatureCollection {
   };
 }
 
-function precinctsGeoJSON(citywide: Citywide): FeatureCollection {
-  // Crime is shaded RELATIVE to the rest of NYC, never on an absolute
-  // scale (VISUAL.md §5, REVISED 2026-07-15): `w` used to be
-  // total_ytd/maxCrime, which put nearly every precinct near the low end
-  // of the ramp and only the single worst precinct at full colour --
-  // exactly the "NYC just looks bad all around" failure the design brief
-  // named. `crime_percentile` (bearings/citywide.py's percentile_rank(),
-  // already baked into every precinct's crime block) is median-neutral by
-  // construction, so reusing the SAME 0-1 fill-opacity ramp against
-  // percentile/100 instead makes the median precinct read as the ramp's
-  // own midpoint automatically, with no change to the ramp itself.
+// Reach rings (SPEC-lens-report.md §3) -- one Feature per real 5/10/15-min
+// band, ordered LARGEST FIRST: mapStyle.ts's buildReachLayers() draws a
+// GeoJSON source's features in array order, so this ordering IS the "5-min
+// band paints on top of 10, which paints on top of 15" nesting, not a
+// z-index primitive. Sorted defensively rather than trusting the backend's
+// own array order, since draw order is load-bearing here.
+function reachRingsGeoJSON(reach: Reach): FeatureCollection {
+  const ordered = [...reach.bands].sort((a, b) => b.minutes - a.minutes);
   return {
     type: "FeatureCollection",
-    features: citywide.precincts.map((p) => ({
+    features: ordered.map((band) => ({
       type: "Feature",
-      properties: {
-        precinct: p.precinct,
-        hasCrime: p.crime ? 1 : 0,
-        w: p.crime ? p.crime.crime_percentile / 100 : 0,
-        total_ytd: p.crime?.total_ytd ?? null,
-        crime_percentile: p.crime?.crime_percentile ?? null,
-        week_ending: p.crime?.week_ending ?? null,
+      properties: { minutes: band.minutes },
+      geometry: {
+        type: "Polygon",
+        coordinates: [band.polygon.map(([lat, lng]): [number, number] => [lng, lat])],
       },
-      geometry: p.geometry as unknown as Geometry,
     })),
   };
+}
+
+// Chip-selected amenity/station dots (SPEC-lens-report.md §2/§4) -- a pure
+// CLIENT-SIDE filter of the already-fetched `reach.places`/`reach.stations`
+// against `activeCategories`, never a new network round-trip on chip
+// toggle (spec: "updates the map live without re-searching the address").
+// `activeCategories` uses the exact same string keys reach.py's real
+// Overture category buckets do (see lib/preferences.ts's REACH_CHIPS),
+// plus the literal string "transit" for GTFS stations, which aren't an
+// Overture category at all.
+function reachDotsGeoJSON(reach: Reach, activeCategories: Set<string>): FeatureCollection {
+  const features: Feature[] = [];
+  for (const p of reach.places) {
+    if (!activeCategories.has(p.category)) continue;
+    features.push({
+      type: "Feature",
+      properties: { name: p.name, category: p.category, band_minutes: p.band_minutes },
+      geometry: { type: "Point", coordinates: [p.lng, p.lat] },
+    });
+  }
+  if (activeCategories.has("transit")) {
+    for (const s of reach.stations) {
+      features.push({
+        type: "Feature",
+        properties: { name: s.name, category: "transit", band_minutes: s.band_minutes },
+        geometry: { type: "Point", coordinates: [s.lng, s.lat] },
+      });
+    }
+  }
+  return { type: "FeatureCollection", features };
 }
 
 const EMPTY_FC: FeatureCollection = { type: "FeatureCollection", features: [] };
@@ -314,153 +206,30 @@ function roughDist(a: { lat: number; lng: number }, b: LngLat): number {
 
 // ---------------------------------------------------------------------------
 
-interface HoveredCell {
-  h3: string;
-  isSubject: boolean;
-  percentile: number | null;
-  noise: number;
-  amenities: number;
-  trees: number;
-  building_age_years: number | null;
-  transit_access: number;
-}
-
-interface HoveredPrecinct {
-  precinct: number;
-  totalYtd: number | null;
-  crimePercentile: number | null;
-  weekEnding: string | null;
-}
-
-function formatCellValue(metricId: string, raw: number): string {
-  if (metricId === "building_age") return String(Math.round(raw));
-  return raw.toLocaleString();
-}
-
-function CellReadout({ cell, metric, source }: { cell: HoveredCell; metric: MetricDef; source?: Source }) {
-  const info = CELL_METRIC_READOUT[metric.id];
-  const raw = metric.cellField ? cell[metric.cellField] : null;
-  return (
-    <dl>
-      <dt>{info?.label ?? metric.label}</dt>
-      <dd>
-        {typeof raw !== "number" ? (
-          <span style={{ fontSize: 13, fontStyle: "italic", color: STEEL }}>NO DATA</span>
-        ) : (
-          <>
-            {formatCellValue(metric.id, raw)}
-            {info?.unit && <span style={{ fontSize: 11, color: STEEL, marginLeft: 6 }}>{info.unit}</span>}
-          </>
-        )}
-      </dd>
-      {cell.percentile !== null && (
-        <>
-          <dt>Relative to this neighbourhood</dt>
-          <dd className="small">
-            Ranks {Math.round(cell.percentile)}
-            {ordinalSuffix(Math.round(cell.percentile))} out of 100 among the blocks shown here —
-            not compared to the rest of the city.
-          </dd>
-        </>
-      )}
-      <dt>Area of this block</dt>
-      <dd className="small">0.105 km²</dd>
-      {cell.isSubject && (
-        <>
-          <dt>Status</dt>
-          <dd className="small" style={{ color: RED }}>
-            THIS ADDRESS&rsquo;S BLOCK
-          </dd>
-        </>
-      )}
-      {metric.status === "proxy" && (
-        <>
-          <dt>Note</dt>
-          <dd className="small">
-            An estimate, not an exact commute time — see the note above for what this measures.
-          </dd>
-        </>
-      )}
-      {source && (
-        <>
-          <dt>Source</dt>
-          <dd className="small">{source.name}</dd>
-        </>
-      )}
-    </dl>
-  );
-}
-
-function PrecinctReadout({
-  precinct,
-  source,
-  caveat,
-}: {
-  precinct: HoveredPrecinct;
-  source?: { name: string; url: string };
-  caveat?: string;
-}) {
-  return (
-    <dl>
-      <dt>Police area</dt>
-      <dd>{precinct.precinct}</dd>
-      <dt>Crime here, compared to the city</dt>
-      <dd>
-        {precinct.crimePercentile === null ? (
-          <span style={{ fontSize: 13, fontStyle: "italic", color: STEEL }}>NO DATA</span>
-        ) : (
-          crimeRelativeLabel(precinct.crimePercentile)
-        )}
-      </dd>
-      {precinct.crimePercentile !== null && (
-        <>
-          <dt>Rank · crimes so far this year</dt>
-          <dd className="small">
-            {formatPercentile(precinct.crimePercentile)} · {precinct.totalYtd?.toLocaleString()} major
-            crimes so far this year
-          </dd>
-        </>
-      )}
-      {precinct.weekEnding && (
-        <>
-          <dt>Week ending</dt>
-          <dd className="small">{precinct.weekEnding}</dd>
-        </>
-      )}
-      {source && (
-        <>
-          <dt>Source</dt>
-          <dd className="small">{source.name}</dd>
-        </>
-      )}
-      {caveat && (
-        <>
-          <dt>Note</dt>
-          <dd className="small">{caveat}</dd>
-        </>
-      )}
-    </dl>
-  );
-}
-
 export function MapView({
   address,
   selectedCell,
   onCellClick,
+  activeCategories,
+  pins,
 }: {
   // The real searched address, or `null` when the current selection came
-  // from a bare grid click (no address) -- drives ONLY the local building/
-  // street/subway overlay fetch (GET /api/map) below, never the citywide
-  // grid itself, which is address-independent.
+  // from a bare grid click (no address) -- drives the local building/
+  // street/subway overlay fetch (GET /api/map) AND the reach-rings fetch
+  // (GET /api/reach) below, neither of which makes sense without a real
+  // searched address.
   address: string | null;
   // The h3 id currently driving the report panel (App.tsx owns this) --
-  // used to fly the camera there and to emphasize that cell on the
-  // citywide grid, regardless of whether it came from a click or a search.
+  // used to fly the camera there and to place the subject marker.
   selectedCell: string | null;
   // Fired when the user clicks any real cell on the citywide grid -- the
   // "click any hex to swap the report" feature (SPEC-precompute-v2.md
   // Phase 2). App.tsx owns what happens next (GET /api/cell/{h3}).
   onCellClick: (h3: string) => void;
+  // Session-only preference-bar state (App.tsx owns it, no persistence
+  // anywhere -- see lib/preferences.ts's own module docstring).
+  activeCategories: Set<string>;
+  pins: PinnedPlace[];
 }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<MapLibreMap | null>(null);
@@ -470,31 +239,22 @@ export function MapView({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const [reach, setReach] = useState<Reach | null>(null);
+
   const [citywide, setCitywide] = useState<Citywide | null>(null);
   const citywideRef = useRef<Citywide | null>(null);
   citywideRef.current = citywide;
 
   // The citywide grid's own data (GET /api/cells) -- fetched exactly once
-  // on mount, independent of `address`/`selectedCell`, so the grid covers
-  // the whole city before any search or click ever happens.
+  // on mount, independent of `address`/`selectedCell`, so the (invisible)
+  // click-anywhere hit layer covers the whole city before any search or
+  // click ever happens.
   const [cellsIndex, setCellsIndex] = useState<CellsIndexEntry[] | null>(null);
-
-  // h3 string -> the NUMERIC feature id citywideCellsGeoJSON() assigned it
-  // (its array index) -- see that function's own comment for why the
-  // selection effect (10 below) needs this rather than addressing
-  // setFeatureState with the h3 string directly.
-  const h3ToFeatureId = useMemo(() => {
-    const m = new Map<string, number>();
-    cellsIndex?.forEach((c, i) => m.set(c.h3, i));
-    return m;
-  }, [cellsIndex]);
-
-  const [metricId, setMetricId] = useState<string>("none");
-  const [hoveredCell, setHoveredCell] = useState<HoveredCell | null>(null);
-  const [hoveredPrecinct, setHoveredPrecinct] = useState<HoveredPrecinct | null>(null);
 
   const labelMarkersRef = useRef<Marker[]>([]);
   const stationMarkersRef = useRef<Marker[]>([]);
+  const pinMarkersRef = useRef<Marker[]>([]);
+  const subjectMarkerRef = useRef<Marker | null>(null);
 
   // Always-current ref for the click callback -- effect 2 (below) registers
   // its MapLibre click listener exactly once per `mapReady` transition, not
@@ -503,13 +263,6 @@ export function MapView({
   // added and never see a newer one App.tsx passes down on a later render.
   const onCellClickRef = useRef(onCellClick);
   onCellClickRef.current = onCellClick;
-
-  // The NUMERIC feature id this component itself last marked
-  // `selected: true` -- so the selection effect (10 below) can clear the
-  // PREVIOUS cell's highlight without clearing every other cell's state
-  // (there is no "clear all feature state" primitive that wouldn't also be
-  // real, avoidable work across ~7,000 features).
-  const prevSelectedFeatureIdRef = useRef<number | null>(null);
 
   // ---- 1. create the map exactly once. ----
   useEffect(() => {
@@ -523,10 +276,9 @@ export function MapView({
     const map = new maplibregl.Map({
       container,
       style: buildMapStyle(tilesUrl),
-      // The whole city visible on first paint (the dispatch's own "grid
-      // visibly covers the whole city" check) -- a real bounds fit, not a
-      // guessed center/zoom pair. `selectedCell`'s own flyTo effect (8
-      // below) takes over once a real location is searched or clicked.
+      // The whole city visible on first paint -- a real bounds fit, not a
+      // guessed center/zoom pair. `selectedCell`'s own flyTo effect takes
+      // over once a real location is searched or clicked.
       bounds: [
         [NYC_BBOX.west, NYC_BBOX.south],
         [NYC_BBOX.east, NYC_BBOX.north],
@@ -544,6 +296,10 @@ export function MapView({
       labelMarkersRef.current = [];
       stationMarkersRef.current.forEach((m) => m.remove());
       stationMarkersRef.current = [];
+      pinMarkersRef.current.forEach((m) => m.remove());
+      pinMarkersRef.current = [];
+      subjectMarkerRef.current?.remove();
+      subjectMarkerRef.current = null;
       map.remove();
       maplibregl.removeProtocol("pmtiles");
       mapRef.current = null;
@@ -557,18 +313,16 @@ export function MapView({
     if (!map || !mapReady) return;
 
     // Sources for MapView's own local overlay layers -- populated later
-    // (effects 5/6/7 below) once real geometry has actually loaded; empty
-    // here so the layers below have something to attach to at init.
-    map.addSource("precincts", { type: "geojson", data: EMPTY_FC });
+    // (effects below) once real geometry has actually loaded; empty here
+    // so the layers below have something to attach to at init.
     map.addSource("buildings", { type: "geojson", data: EMPTY_FC });
     map.addSource("streets", { type: "geojson", data: EMPTY_FC });
     map.addSource("subway", { type: "geojson", data: EMPTY_FC });
-    map.addSource("cells", { type: "geojson", data: EMPTY_FC });
-    // The citywide clickable grid's source (populated by effect 6 below,
-    // once GET /api/cells resolves) -- `promoteId` is unnecessary here
-    // since citywideCellsGeoJSON() already sets each Feature's own real
-    // `id` (the h3 string), which is exactly what MapLibre's
-    // setFeatureState({source, id}) addresses.
+    map.addSource("reach-rings", { type: "geojson", data: EMPTY_FC });
+    map.addSource("reach-dots", { type: "geojson", data: EMPTY_FC });
+    // The citywide clickable grid's source (populated once GET /api/cells
+    // resolves) -- hit-testing only (RETIRED 2026-07-29: no visible
+    // outline, no feature-state selection, see this file's own top comment).
     map.addSource("citywide-cells", { type: "geojson", data: EMPTY_FC });
 
     // The actual layer definitions (paint/layout/filter) live in
@@ -581,48 +335,14 @@ export function MapView({
       map.addLayer(layer);
     }
 
-    const onCellMove = (e: maplibregl.MapLayerMouseEvent) => {
-      const f = e.features?.[0];
-      if (!f?.properties) return;
-      map.getCanvas().style.cursor = "crosshair";
-      setHoveredCell({
-        h3: f.properties.h3 as string,
-        isSubject: f.properties.isSubject === 1,
-        percentile: (f.properties.percentile as number | null) ?? null,
-        noise: f.properties.noise as number,
-        amenities: f.properties.amenities as number,
-        trees: f.properties.trees as number,
-        building_age_years: (f.properties.building_age_years as number | null) ?? null,
-        transit_access: f.properties.transit_access as number,
-      });
-    };
-    const onCellLeave = () => {
-      map.getCanvas().style.cursor = "";
-      setHoveredCell(null);
-    };
-    const onPrecinctMove = (e: maplibregl.MapLayerMouseEvent) => {
-      const f = e.features?.[0];
-      if (!f?.properties) return;
-      map.getCanvas().style.cursor = "crosshair";
-      setHoveredPrecinct({
-        precinct: f.properties.precinct as number,
-        totalYtd: (f.properties.total_ytd as number | null) ?? null,
-        crimePercentile: (f.properties.crime_percentile as number | null) ?? null,
-        weekEnding: (f.properties.week_ending as string | null) ?? null,
-      });
-    };
-    const onPrecinctLeave = () => {
-      map.getCanvas().style.cursor = "";
-      setHoveredPrecinct(null);
-    };
     const onMoveEnd = () => updateLabelMarkers();
 
     // The click-to-load feature (SPEC-precompute-v2.md Phase 2): clicking
     // any real cell on the citywide grid swaps the report panel to that
     // cell. Registered on "citywide-cells-fill" -- a genuinely-transparent
     // fill layer (see mapStyle.ts's own comment) whose only job is
-    // registering a hit anywhere inside a hex, not just within a few
-    // pixels of its outline the way a line layer would.
+    // registering a hit anywhere inside a real block, not just within a
+    // few pixels of an outline the way a line layer would.
     const onCitywideCellClick = (e: maplibregl.MapLayerMouseEvent) => {
       const f = e.features?.[0];
       const h3id = f?.properties?.h3 as string | undefined;
@@ -635,20 +355,12 @@ export function MapView({
       map.getCanvas().style.cursor = "";
     };
 
-    map.on("mousemove", "cells-fill", onCellMove);
-    map.on("mouseleave", "cells-fill", onCellLeave);
-    map.on("mousemove", "precinct-fill", onPrecinctMove);
-    map.on("mouseleave", "precinct-fill", onPrecinctLeave);
     map.on("click", "citywide-cells-fill", onCitywideCellClick);
     map.on("mouseenter", "citywide-cells-fill", onCitywideCellEnter);
     map.on("mouseleave", "citywide-cells-fill", onCitywideCellLeave);
     map.on("moveend", onMoveEnd);
 
     return () => {
-      map.off("mousemove", "cells-fill", onCellMove);
-      map.off("mouseleave", "cells-fill", onCellLeave);
-      map.off("mousemove", "precinct-fill", onPrecinctMove);
-      map.off("mouseleave", "precinct-fill", onPrecinctLeave);
       map.off("click", "citywide-cells-fill", onCitywideCellClick);
       map.off("mouseenter", "citywide-cells-fill", onCitywideCellEnter);
       map.off("mouseleave", "citywide-cells-fill", onCitywideCellLeave);
@@ -658,10 +370,9 @@ export function MapView({
   }, [mapReady]);
 
   // ---- 3. fetch the citywide grid's own data exactly once, independent
-  // of any address/selection -- this is what lets the grid cover the whole
-  // city before any search or click happens (VISUAL.md §5, REVISED
-  // 2026-07-15). Non-fatal on failure: the map/basemap/report flow all
-  // still work without the grid, it just quietly has no clickable overlay.
+  // of any address/selection. Non-fatal on failure: the map/basemap/report
+  // flow all still work without it, it just quietly has no clickable
+  // overlay. ----
   useEffect(() => {
     let cancelled = false;
     getCellsIndex()
@@ -678,11 +389,8 @@ export function MapView({
 
   // ---- 4. fetch the local building/street/subway overlay for whichever
   // real address was actually searched -- `address` is `null` for a bare
-  // grid click (Task 4: this must never block the citywide grid or the
-  // report panel, both of which are already interactive by the time this
-  // starts, still 18-24s slow per Phase 1's measured baseline; see
-  // api.py's get_map() docstring for the Phase 2b follow-up this is
-  // waiting on). ----
+  // grid click. This must never block the citywide grid or the report
+  // panel, both of which are already interactive by the time this starts. ----
   useEffect(() => {
     if (!address) {
       setGeo(null);
@@ -693,7 +401,6 @@ export function MapView({
     let cancelled = false;
     setLoading(true);
     setError(null);
-    setHoveredCell(null);
     getMapGeometry(address)
       .then((g) => {
         if (!cancelled) setGeo(g);
@@ -709,7 +416,31 @@ export function MapView({
     };
   }, [address]);
 
-  // ---- 5. fetch citywide (address-independent) label/crime data once. ----
+  // ---- 4b. fetch reach rings (SPEC-lens-report.md §3) for whichever real
+  // address was actually searched -- same null-address gating effect 4
+  // already uses. Non-fatal on failure (matching effect 3/5's own
+  // established pattern): a failed reach fetch simply means no rings/dots
+  // this address, not a crash -- /api/map's own `error` state already
+  // reports a genuinely bad address. ----
+  useEffect(() => {
+    if (!address) {
+      setReach(null);
+      return;
+    }
+    let cancelled = false;
+    getReach(address)
+      .then((r) => {
+        if (!cancelled) setReach(r);
+      })
+      .catch(() => {
+        if (!cancelled) setReach(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [address]);
+
+  // ---- 5. fetch citywide (address-independent) label data once. ----
   useEffect(() => {
     let cancelled = false;
     getCitywide()
@@ -717,8 +448,8 @@ export function MapView({
         if (!cancelled) setCitywide(c);
       })
       .catch(() => {
-        // Non-fatal: the map still works without labels/the crime
-        // choropleth -- it just quietly has fewer layers, never a crash.
+        // Non-fatal: the map still works without neighbourhood/precinct
+        // labels, it just quietly has fewer layers, never a crash.
       });
     return () => {
       cancelled = true;
@@ -773,29 +504,11 @@ export function MapView({
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !mapReady || !citywide) return;
-    (map.getSource("precincts") as maplibregl.GeoJSONSource | undefined)?.setData(precinctsGeoJSON(citywide));
     updateLabelMarkers();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [citywide, mapReady]);
 
-  // ---- 8. metric picker: recompute the cell percentiles for whichever
-  // metric is selected, and toggle the precinct choropleth's visibility.
-  // cells-fill's paint expression (effect 2) is static -- it already reads
-  // per-feature `hasValue`/`w`, which is what changes here, not the
-  // expression itself.
-  useEffect(() => {
-    const map = mapRef.current;
-    if (!map || !mapReady || !geo) return;
-    const active = METRICS.find((m) => m.id === metricId);
-    const cellField = active?.resolution === "cell" ? (active.cellField ?? null) : null;
-    (map.getSource("cells") as maplibregl.GeoJSONSource | undefined)?.setData(cellsGeoJSON(geo, cellField));
-
-    const precinctVisible = active?.resolution === "precinct" ? "visible" : "none";
-    map.setLayoutProperty("precinct-fill", "visibility", precinctVisible);
-    map.setLayoutProperty("precinct-outline", "visibility", precinctVisible);
-  }, [metricId, geo, mapReady]);
-
-  // ---- 9. push the citywide grid's own data into the map once it's
+  // ---- 8. push the citywide grid's own data into the map once it's
   // loaded (independent of mapReady/data ordering -- whichever resolves
   // second triggers this). ----
   useEffect(() => {
@@ -806,36 +519,88 @@ export function MapView({
     );
   }, [cellsIndex, mapReady]);
 
-  // ---- 10. emphasize whichever cell is currently driving the report
-  // panel on the citywide grid, via MapLibre feature-state (not a
-  // GeoJSON rebuild -- see citywideCellsGeoJSON()'s own comment), using
-  // the cell's NUMERIC feature id (h3ToFeatureId), not its h3 string --
-  // see citywideCellsGeoJSON()'s own comment for the confirmed-live
-  // MapLibre GL JS limitation this works around. Also depends on
-  // `cellsIndex`/`h3ToFeatureId` (not just `selectedCell`/`mapReady`): a
-  // search can resolve a cell before GET /api/cells has finished loading,
-  // and feature-state set before a feature exists needs re-applying once
-  // it does -- this re-run is what closes that race, and it's a harmless
-  // no-op the rest of the time. ----
+  // ---- 9. push reach rings into the map whenever the fetched data
+  // changes. ----
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !mapReady) return;
-    const prevId = prevSelectedFeatureIdRef.current;
-    const nextId = selectedCell ? h3ToFeatureId.get(selectedCell) : undefined;
-    if (prevId !== null && prevId !== undefined && prevId !== nextId) {
-      map.setFeatureState({ source: "citywide-cells", id: prevId }, { selected: false });
-    }
-    if (nextId !== undefined) {
-      map.setFeatureState({ source: "citywide-cells", id: nextId }, { selected: true });
-    }
-    prevSelectedFeatureIdRef.current = nextId ?? null;
-  }, [selectedCell, mapReady, cellsIndex, h3ToFeatureId]);
+    (map.getSource("reach-rings") as maplibregl.GeoJSONSource | undefined)?.setData(
+      reach ? reachRingsGeoJSON(reach) : EMPTY_FC,
+    );
+  }, [reach, mapReady]);
 
-  // ---- 11. fly the camera to whichever cell is selected -- computed
+  // ---- 10. push chip-selected amenity/station dots -- a pure client-side
+  // filter (spec: chip toggles must update the map "without re-searching
+  // the address"), no network call here. ----
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !mapReady) return;
+    (map.getSource("reach-dots") as maplibregl.GeoJSONSource | undefined)?.setData(
+      reach ? reachDotsGeoJSON(reach, activeCategories) : EMPTY_FC,
+    );
+  }, [reach, activeCategories, mapReady]);
+
+  // ---- 11. pinned-place markers (SPEC-lens-report.md §3: "a pinned place
+  // is never silently absent" -- always rendered, even outside every real
+  // band). Walk-time badge is computed client-side from the subject point
+  // (see WALK_SPEED_MPS's own comment for why this one scalar, unlike the
+  // ring geometry itself, is a legitimate frontend computation) -- `null`
+  // when no address/cell is currently selected, in which case the badge
+  // shows the pin's own label with no fabricated minute count. ----
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !mapReady) return;
+    pinMarkersRef.current.forEach((m) => m.remove());
+    pinMarkersRef.current = [];
+
+    const subject = reach?.center ?? geo?.subject ?? null;
+    for (const pin of pins) {
+      const el = document.createElement("div");
+      el.className = "pinmarker";
+      const dot = document.createElement("span");
+      dot.className = "pinmarker__dot";
+      el.appendChild(dot);
+      const badge = document.createElement("span");
+      badge.className = "pinmarker__badge";
+      const minutes = subject ? Math.round(haversineM(subject, pin) / WALK_SPEED_MPS / 60) : null;
+      badge.textContent = minutes === null ? pin.label : `${pin.label} — ${minutes} min`;
+      el.appendChild(badge);
+      pinMarkersRef.current.push(
+        new maplibregl.Marker({ element: el, anchor: "left" }).setLngLat([pin.lng, pin.lat]).addTo(map),
+      );
+    }
+  }, [pins, reach, geo, mapReady]);
+
+  // ---- 12. the subject marker -- replaces the old hex-outline "which
+  // block is selected" signal (RETIRED 2026-07-29, see this file's own top
+  // comment) with one small, real DOM marker at the exact geocoded point
+  // for a searched address, or the cell's own centroid for a bare grid
+  // click (no exact point exists for that case). ----
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !mapReady) return;
+    subjectMarkerRef.current?.remove();
+    subjectMarkerRef.current = null;
+
+    let point: { lat: number; lng: number } | null = geo?.subject ?? null;
+    if (!point && selectedCell) {
+      const [lat, lng] = h3.cellToLatLng(selectedCell);
+      point = { lat, lng };
+    }
+    if (!point) return;
+
+    const el = document.createElement("div");
+    el.className = "mapsubject";
+    subjectMarkerRef.current = new maplibregl.Marker({ element: el, anchor: "center" })
+      .setLngLat([point.lng, point.lat])
+      .addTo(map);
+  }, [geo, selectedCell, mapReady]);
+
+  // ---- 13. fly the camera to whichever cell is selected -- computed
   // straight from the real h3 id via h3-js's own cellToLatLng(), so this
   // never has to wait on GET /api/cells or GET /api/map to know where to
-  // go (Task 4: the map must stay responsive even while the slower local
-  // overlay is still loading). ----
+  // go (the map must stay responsive even while the slower local overlay
+  // is still loading). ----
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !mapReady || !selectedCell) return;
@@ -855,8 +620,7 @@ export function MapView({
     const center = map.getCenter();
     const zoom = map.getZoom();
 
-    // Level-of-detail by zoom (VISUAL.md §5): "Zoomed out (city): ...
-    // neighbourhood labels [visible]" -- neighbourhood names are the
+    // Level-of-detail by zoom (VISUAL.md §5): neighbourhood names are the
     // city-scale orientation label, so they appear near this map's own
     // minZoom (9); precinct numbers are a finer, more technical label and
     // only resolve in once you're already zoomed past city scale. 262
@@ -896,20 +660,9 @@ export function MapView({
     }
   }
 
-  const activeMetric = METRICS.find((m) => m.id === metricId) ?? METRICS[0];
-  const cellMetricSource = cellSourceFor(metricId, geo);
-  const crimeSource = citywide?.crime_source;
-  const crimeCaveat = citywide?.crime_caveat;
-
-  const activeCellReadout = activeMetric.resolution === "cell" && hoveredCell;
-  const activePrecinctReadout = activeMetric.resolution === "precinct" && hoveredPrecinct;
-
   const legend = useMemo(
     () => [
-      {
-        swatch: { border: `1px solid ${INK}`, background: "none", opacity: 0.4 },
-        label: "Every real city block · click any one to see its record",
-      },
+      { swatch: undefined, label: "Click anywhere on the map to see that block's real record" },
       ...(geo
         ? [
             { swatch: { background: STEEL, opacity: 0.34 }, label: "Buildings" },
@@ -918,27 +671,35 @@ export function MapView({
           ]
         : []),
       {
-        swatch: { border: `1px solid ${RED}`, background: "none" },
-        label: "The selected block · about 0.105 km²",
+        swatch: { background: RED, borderRadius: "50%", width: 8, height: 8 },
+        label: "The searched or selected block",
       },
-      ...(activeMetric.resolution === "precinct"
+      ...(reach
         ? [
             {
-              swatch: { background: RED, opacity: 0.34 },
-              label: "Crime shading · compared with the rest of NYC, an average area is neutral",
+              swatch: { background: RED, opacity: 0.22, borderRadius: "50%", width: 12, height: 12 },
+              label: "Roughly a 5, 10, and 15-minute walk — a straight line, not a real route",
             },
           ]
         : []),
-      ...(activeMetric.resolution === "cell" && activeMetric.id !== "none"
+      ...(reach && activeCategories.size > 0
         ? [
             {
-              swatch: { background: RED, opacity: 0.34 },
-              label: `${activeMetric.label} · relative to the surrounding blocks`,
+              swatch: { background: INK, borderRadius: "50%", width: 7, height: 7 },
+              label: "Nearby places you've turned on above",
+            },
+          ]
+        : []),
+      ...(pins.length > 0
+        ? [
+            {
+              swatch: { background: RED, borderRadius: "50%", width: 8, height: 8 },
+              label: "Pinned places, however far",
             },
           ]
         : []),
     ],
-    [activeMetric, geo],
+    [geo, reach, activeCategories, pins],
   );
 
   return (
@@ -946,30 +707,16 @@ export function MapView({
       <h2 className="field__title">The neighbourhood, navigable</h2>
 
       <div className="mapfield__controls">
-        <label htmlFor="mapfield-metric">Shade the map by</label>
-        <select
-          id="mapfield-metric"
-          className="mapfield__select"
-          value={metricId}
-          onChange={(e) => setMetricId(e.target.value)}
-        >
-          {METRICS.map((m) => (
-            <option key={m.id} value={m.id} disabled={m.status === "disabled"} title={m.reason}>
-              {m.label}
-              {m.status === "disabled" ? " — greyed, see note below" : ""}
-            </option>
-          ))}
-        </select>
-        {activeMetric.status === "proxy" && (
-          <span className="mapfield__metricnote small">An estimate, not an exact commute time.</span>
-        )}
+        <span>Map view</span>
+        <div className="lensbar" role="group" aria-label="Map view">
+          <button type="button" className="lensbar__option" aria-pressed="true">
+            minimal
+          </button>
+          <button type="button" className="lensbar__option" disabled aria-disabled="true" title="Coming in a future update">
+            transit + 3d — coming soon
+          </button>
+        </div>
       </div>
-      {METRICS.some((m) => m.status === "disabled") && (
-        <p className="mapfield__note mono">
-          Greyed-out options don&rsquo;t have reliable data for the whole city yet — hover one for
-          the real reason.
-        </p>
-      )}
 
       <div className="mapfield__stage">
         <div>
@@ -978,13 +725,13 @@ export function MapView({
               ref={containerRef}
               className="mapfield__map"
               role="img"
-              aria-label="Navigable map of all of New York City, with every real city block outlined and clickable to load its own record, plus real building outlines, streets, and subway lines around whichever address or block is currently selected"
+              aria-label="Navigable map of all of New York City, with every real city block clickable to load its own record, plus real building outlines, streets, subway lines, and walk-time rings around whichever address is currently selected"
             />
           </div>
           <div className="mapfield__legend">
             {legend.map((item, i) => (
               <span key={i}>
-                <i style={item.swatch} />
+                {item.swatch && <i style={item.swatch} />}
                 {item.label}
               </span>
             ))}
@@ -995,26 +742,29 @@ export function MapView({
 
         <div className="readout">
           <h3>What&rsquo;s here</h3>
-          {activeCellReadout ? (
-            <CellReadout cell={hoveredCell} metric={activeMetric} source={cellMetricSource} />
-          ) : activePrecinctReadout ? (
-            <PrecinctReadout precinct={hoveredPrecinct} source={crimeSource} caveat={crimeCaveat} />
-          ) : (
-            <p className="readout__empty">
-              Hover a block{citywide ? " or area" : ""}.
-              <br />
-              <br />
-              Pan and zoom freely — the map covers all of New York City, and every real block is
-              outlined. Click any block to load its own record, or search an address above.
-            </p>
-          )}
+          <p className="readout__empty">
+            Click anywhere on the map to load that block&rsquo;s real record below.
+            <br />
+            <br />
+            {reach ? (
+              <>
+                The rings above show roughly how far you could walk from the searched address in 5,
+                10, and 15 minutes — a straight line, not a real walking route. Turn on a category
+                above to see real nearby places as dots, or pin a specific place to always see it,
+                with its own walk time.
+              </>
+            ) : (
+              <>
+                Search an address to see 5, 10, and 15-minute walk rings, plus any real nearby
+                places you turn on above.
+              </>
+            )}
+          </p>
         </div>
       </div>
 
       {geo && <p className="mapfield__note mono">{geo.basemap_note}</p>}
-      {activeMetric.resolution === "precinct" && crimeCaveat && (
-        <p className="mapfield__note mono">{crimeCaveat}</p>
-      )}
+      {reach && <p className="mapfield__note mono">{reach.method_note}</p>}
     </div>
   );
 }

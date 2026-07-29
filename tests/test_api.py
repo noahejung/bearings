@@ -308,6 +308,38 @@ def test_citywide_crime_is_shaded_relative_to_the_city(client):
     assert len(body["crime_caveat"]) > 40
 
 
+def test_reach_returns_the_full_contract_shape(client):
+    resp = client.get("/api/reach", params={"address": EMPIRE_STATE})
+    assert resp.status_code == 200
+    body = resp.json()
+    assert set(body) == {"center", "bands", "places", "stations", "method_note", "sources"}
+    assert set(body["center"]) == {"lat", "lng"}
+    assert len(body["bands"]) == 3
+    minutes_seen = {b["minutes"] for b in body["bands"]}
+    assert minutes_seen == {5, 10, 15}
+    for band in body["bands"]:
+        assert band["radius_m"] > 0
+        assert len(band["polygon"]) > 3
+    # A dense Midtown address has real, non-trivial places/stations, not
+    # just structural empty lists.
+    assert len(body["places"]) > 20
+    assert len(body["stations"]) > 0
+    for p in body["places"]:
+        assert set(p) == {"name", "category", "lat", "lng", "band_minutes"}
+    for s in body["stations"]:
+        assert set(s) == {"name", "lat", "lng", "routes", "band_minutes"}
+    assert "roughly" in body["method_note"].lower()
+    for source in body["sources"].values():
+        assert source["name"]
+        assert source["url"].startswith("http")
+
+
+def test_reach_bad_address_is_422_not_500(client):
+    resp = client.get("/api/reach", params={"address": "qqqqqqqqzzzzzzz not a real place"})
+    assert resp.status_code == 422
+    assert "detail" in resp.json()
+
+
 def test_cell_returns_the_precomputed_block_level_profile(client):
     loc = geocode.geocode(EMPIRE_STATE)
     h3 = cells.cell_for(loc.lat, loc.lng)

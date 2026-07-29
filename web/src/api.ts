@@ -6,6 +6,7 @@ import type {
   GeocodeResult,
   MapGeometry,
   Profile,
+  Reach,
 } from "./types";
 
 // Empty string -> relative "/api/..." paths, which the Vite dev proxy (vite.config.ts)
@@ -102,4 +103,12 @@ export function getCell(h3: string): Promise<CellProfile> {
 // per-cell shards getCell() reads from.
 export function getCellsIndex(): Promise<CellsIndex> {
   return request<CellsIndex>("/api/cells");
+}
+
+// The 5/10/15-minute reach rings for a searched address (SPEC-lens-report.md
+// §3) -- real places/stations inside them plus the ring geometry itself.
+// See bearings/reach.py's own module docstring for why the rings are a
+// straight-line approximation, not routed street-network isochrones.
+export function getReach(address: string): Promise<Reach> {
+  return request<Reach>(`/api/reach?address=${encodeURIComponent(address)}`);
 }
