@@ -99,6 +99,14 @@ export default function App() {
     } catch (e) {
       setCellReport(null);
       setSearchedAddress(null);
+      // A failed search resets every other piece of on-screen state tied to
+      // the attempted address (report, address band) -- selectedCell was the
+      // one exception, leaving the map's red highlight + flown-in camera
+      // pointed at whatever the PREVIOUS successful search or click had
+      // selected, with nothing on the page left to explain why (2026-07-28
+      // UX audit finding #5). Clearing it here matches the reset everything
+      // else already gets.
+      setSelectedCell(null);
       setReportError(e instanceof ApiError ? e.message : "Something went wrong pulling that record.");
     } finally {
       setReportLoading(false);
