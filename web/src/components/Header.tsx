@@ -17,7 +17,7 @@ export function Header({ address }: { address?: string | null }) {
       </div>
       <a className="masthead" href="/">
         <h1 className="masthead__word">Bearings</h1>
-        <p className="masthead__tag">Enter a New York City address to see what public records say about it.</p>
+        <p className="masthead__tag">Public records for any New York City address.</p>
       </a>
     </>
   );

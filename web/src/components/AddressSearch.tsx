@@ -39,8 +39,8 @@ export function AddressSearch({
           </h2>
           <p className="search__sub">
             Real train times, not distance to the platform. Noise complaints, tree counts,
-            nearby crime, and a building's own safety record — every number sourced, none of
-            it opinion.
+            nearby crime, and a building's safety record — every number sourced, none of it
+            opinion.
           </p>
         </div>
       )}

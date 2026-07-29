@@ -237,7 +237,7 @@ export default function App() {
       </main>
 
       <footer className="footer">
-        <p>Built on public data. Every number here traces back to a source you can click.</p>
+        <p>Built on public data — every number traces to a source you can click.</p>
       </footer>
     </div>
   );
