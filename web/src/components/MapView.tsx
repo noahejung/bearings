@@ -678,7 +678,7 @@ export function MapView({
         ? [
             {
               swatch: { background: RED, opacity: 0.22, borderRadius: "50%", width: 12, height: 12 },
-              label: "Roughly a 5, 10, and 15-minute walk — a straight line, not a real route",
+              label: "Roughly a 5, 10, 15-minute walk — a straight line, not a real route",
             },
           ]
         : []),
@@ -725,7 +725,7 @@ export function MapView({
               ref={containerRef}
               className="mapfield__map"
               role="img"
-              aria-label="Navigable map of all of New York City, with every real city block clickable to load its own record, plus real building outlines, streets, subway lines, and walk-time rings around whichever address is currently selected"
+              aria-label="Navigable map of New York City. Every real city block is clickable to load its record; shows building outlines, streets, subway lines, and walk-time rings for the selected address."
             />
           </div>
           <div className="mapfield__legend">
@@ -743,20 +743,16 @@ export function MapView({
         <div className="readout">
           <h3>What&rsquo;s here</h3>
           <p className="readout__empty">
-            Click anywhere on the map to load that block&rsquo;s real record below.
-            <br />
-            <br />
             {reach ? (
               <>
-                The rings above show roughly how far you could walk from the searched address in 5,
-                10, and 15 minutes — a straight line, not a real walking route. Turn on a category
-                above to see real nearby places as dots, or pin a specific place to always see it,
-                with its own walk time.
+                The rings show roughly how far you could walk from here in 5, 10, and 15 minutes
+                (how they&rsquo;re measured is noted below). Turn on a category above for real
+                nearby places, or pin one to always see it with its own walk time.
               </>
             ) : (
               <>
-                Search an address to see 5, 10, and 15-minute walk rings, plus any real nearby
-                places you turn on above.
+                Click any block for its real record, or search an address for 5, 10, and
+                15-minute walk rings plus nearby places you turn on above.
               </>
             )}
           </p>

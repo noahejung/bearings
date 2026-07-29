@@ -469,7 +469,7 @@ describe("App (full mount)", () => {
     // The map is visible before any search or click -- Task 1/4: it must
     // not be gated behind a loaded report.
     expect(screen.getByRole("heading", { name: /the neighbourhood, navigable/i })).toBeInTheDocument();
-    expect(screen.getByLabelText(/Navigable map of all of New York City/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/Navigable map of New York City/i)).toBeInTheDocument();
 
     const input = screen.getByPlaceholderText(/5TH AVE/i);
     fireEvent.change(input, { target: { value: ADDRESS } });
