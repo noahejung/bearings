@@ -104,7 +104,22 @@ export function CellReportView({ cell }: { cell: CellProfile }) {
               Getting around
             </h2>
           </div>
-          <Stamp variant={cell.transit.stations_within_500m > 0 ? "confirmed" : "no_data"} compact />
+          {/* Every other card's stamp answers "does this card have real
+              content" (crime: !crime -> no_data; building age: !hasBuildingAge
+              -> no_data). Transit's cell block ALWAYS has real content --
+              cellprofile.py's _transit_by_cell() fills all 4 anchors with
+              either a real ride time or a real, honest unreachable_reason,
+              never nothing -- so it's hardcoded confirmed to match, same as
+              amenities/noise/trees below. Previously scoped to
+              `stations_within_500m > 0`, a real but much narrower fact (no
+              station within ~500m) that isn't "no data": a cell with zero
+              nearby stations can still show four fully-populated ride times
+              via farther stations, and used to show a red NO DATA badge
+              above them anyway (2026-07-28 UX audit finding #4). That
+              narrower fact still has its own honest sentence right below,
+              via stationCountLabel() -- it never needed the card-level
+              stamp's visual authority. */}
+          <Stamp variant="confirmed" compact />
         </header>
 
         <p className="field__empty">{stationCountLabel(cell.transit.stations_within_500m)}</p>
