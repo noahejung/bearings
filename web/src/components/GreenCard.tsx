@@ -19,7 +19,8 @@ export function GreenCard({ green }: { green: Green }) {
         <Stat value={green.street_trees_nearby} />
       </p>
       <p className="field__provenance">
-        2015 Street Tree Census · within a 5-minute walk (400m radius).
+        From the city's last official street-tree count, in 2015 · within a 5-minute walk
+        (400m radius). Trees planted since then won't show up here.
         <br />
         <SourceTag source={green.source} />
       </p>

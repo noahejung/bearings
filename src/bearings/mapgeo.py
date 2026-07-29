@@ -113,17 +113,14 @@ TRANSIT_ACCESS_RADIUS_M = 500.0
 _POIS_PATH = config.DERIVED_DIR / "pois.parquet"
 
 BASEMAP_NOTE = (
-    "The base map is a self-hosted PMTiles extract of the Protomaps daily "
-    "OpenStreetMap build (styled to this report's own palette, served from "
-    "this app's own origin -- no third-party tile server at request time; "
-    "see sources/basemap.py). Every layer drawn on top of it is real, "
-    "computed from public records: building footprints and street "
-    "centrelines (NYC Open Data, baked once at build time -- see "
-    "sources/buildings.py and sources/streets.py), subway/PATH alignments "
-    "and route labels (GTFS shapes.txt), and five real per-cell metrics -- "
-    "311 noise, Overture daily-life amenity counts, living street trees, "
-    "median PLUTO building age, and nearby-transit-station counts. Every "
-    "line on this sheet was computed from a dataset this report also cites."
+    "Everything on this map is real. The streets, land, and water underneath come from "
+    "OpenStreetMap, a free, publicly-maintained map of the world. Everything drawn on top "
+    "is computed fresh from the city's own records: building outlines and street lines from "
+    "the city's property maps, subway and PATH lines from the transit agencies' own "
+    "published schedules, and five per-block numbers -- noise complaints, nearby everyday "
+    "places like groceries and cafes, street trees, typical building age, and nearby "
+    "transit stations. Every one of those numbers traces back to the same real source cited "
+    "elsewhere in this report -- nothing here is estimated or filled in."
 )
 
 SOURCES = {

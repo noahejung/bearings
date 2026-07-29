@@ -76,11 +76,13 @@ PATH = config.DERIVED_DIR / "citywide.json"
 # reflect reporting and policing intensity as well as public safety, and
 # precinct boundaries are coarse.
 CRIME_RELATIVE_CAVEAT = (
-    "Shown as this precinct's percentile position among all NYC precincts, "
-    "ranked by raw year-to-date major-crime count -- not a per-resident "
-    "rate; NYC Open Data publishes no population figure per precinct. "
-    "Reported counts reflect policing and reporting intensity as well as "
-    "public safety, and precinct boundaries are coarse."
+    "This rank compares raw crime counts between police areas, not crime "
+    "per person -- the city doesn't publish a population figure for each "
+    "police area, so a busy commercial area with few residents can rank "
+    "the same as a crowded residential one. Reported counts also reflect "
+    "how much police attention and citizen reporting an area gets, not "
+    "just how much crime happens there, and police-area boundaries are "
+    "drawn coarsely, not block by block."
 )
 
 

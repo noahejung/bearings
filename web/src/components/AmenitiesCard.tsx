@@ -42,8 +42,8 @@ export function AmenitiesCard({ amenities }: { amenities: Amenities }) {
         ))}
       </ul>
       <p className="field__provenance">
-        Overture Maps Places, current release · counted in this block and the blocks right
-        around it, as the crow flies rather than actual walking routes — can over- or
+        Counted from a map of real, named places in this block and the blocks right around
+        it — measured as a straight line, not an actual walking route, so it can over- or
         under-count near rivers, parks, or highways.
         <br />
         <SourceTag source={amenities.source} />

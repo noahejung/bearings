@@ -26,9 +26,10 @@ SOURCE = {
 # codebase's own convention for shared copy (BASEMAP_NOTE, TRANSIT_CAVEAT
 # used to be an api.py-local literal only the address-level endpoint saw).
 TRANSIT_CAVEAT = (
-    "In-vehicle time plus a nominal transfer penalty. Excludes the walk "
-    "from your door and the wait on the platform. Treat as a floor, not "
-    "a door-to-door estimate."
+    "Time on the train, plus a few extra minutes added for each transfer "
+    "between lines. Doesn't include the walk from your door to the "
+    "station or the wait for a train to arrive, so treat it as the "
+    "fastest possible time, not a real door-to-door estimate."
 )
 
 WALK_SPEED_MPS = 1.35        # ~4.9 km/h, a normal walking pace

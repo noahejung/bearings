@@ -66,8 +66,8 @@ export function BuildingCard({ building }: { building: Building }) {
         </>
       )}
       <p className="field__provenance">
-        New York City property and building-safety records, current release · open safety issues
-        by severity.
+        From the city's own property and building-safety records, most recently published ·
+        open safety issues at this address, grouped by how serious the city rated them.
         <br />
         <SourceTag source={building.source} />
       </p>

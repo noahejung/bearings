@@ -188,8 +188,9 @@ export function CellReportView({ cell }: { cell: CellProfile }) {
           ))}
         </ul>
         <p className="field__provenance">
-          Overture Maps Places, current release · counted in this block only — can over- or
-          under-count near rivers, parks, or highways.
+          Counted from a map of real, named places in this block only — measured as a
+          straight line, not an actual walking route, so it can over- or under-count near
+          rivers, parks, or highways.
           <br />
           <SourceTag source={cell.amenities.source} />
         </p>
@@ -259,7 +260,8 @@ export function CellReportView({ cell }: { cell: CellProfile }) {
           <Stat value={cell.trees.street_trees} />
         </p>
         <p className="field__provenance">
-          2015 Street Tree Census · in this block.
+          From the city's last official street-tree count, in 2015 · in this block. Trees
+          planted since then won't show up here.
           <br />
           <SourceTag source={cell.trees.source} />
         </p>
