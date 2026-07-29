@@ -113,14 +113,13 @@ TRANSIT_ACCESS_RADIUS_M = 500.0
 _POIS_PATH = config.DERIVED_DIR / "pois.parquet"
 
 BASEMAP_NOTE = (
-    "Everything on this map is real. The streets, land, and water underneath come from "
-    "OpenStreetMap, a free, publicly-maintained map of the world. Everything drawn on top "
-    "is computed fresh from the city's own records: building outlines and street lines from "
-    "the city's property maps, subway and PATH lines from the transit agencies' own "
-    "published schedules, and five per-block numbers -- noise complaints, nearby everyday "
-    "places like groceries and cafes, street trees, typical building age, and nearby "
-    "transit stations. Every one of those numbers traces back to the same real source cited "
-    "elsewhere in this report -- nothing here is estimated or filled in."
+    "Everything on this map is real. The base layer -- streets, land, water -- is "
+    "OpenStreetMap, a free public map. Everything on top is computed fresh from the "
+    "city's own records: building outlines and streets from city property maps, "
+    "subway/PATH lines from the transit agencies' own schedules, plus five per-block "
+    "numbers (noise complaints, nearby places, street trees, building age, transit "
+    "stations) -- each cited to its real source elsewhere in this report, nothing "
+    "estimated."
 )
 
 SOURCES = {

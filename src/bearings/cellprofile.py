@@ -116,15 +116,13 @@ _CELLS_INDEX_PATH = config.DERIVED_DIR / "cells_index.json"
 _NOISE_WINDOW_DAYS = 365
 
 HAZARD_NOTE = (
-    "Counts only the most serious kind of open violation (\"immediately "
-    "hazardous,\" the city's own top severity rating), summed across every "
-    "building on this block. A violation is only added after a city "
-    "housing inspector (HPD, the Department of Housing Preservation and "
-    "Development) confirms a real problem in person -- a step up from a "
-    "raw, unverified complaint. Still reflects how often a building gets "
-    "inspected and how often problems get reported, not necessarily every "
-    "real issue: a 0 here means no verified open hazard on record, not "
-    "that none could exist."
+    "Counts only the most serious violation class (\"immediately "
+    "hazardous,\" the city's top severity rating), summed across every "
+    "building on this block. Added only after an HPD (Housing "
+    "Preservation and Development) inspector confirms it in person -- a "
+    "step up from a raw, unverified complaint. Reflects inspection and "
+    "reporting frequency, not necessarily every real issue: a 0 means no "
+    "verified hazard on record, not that none exists."
 )
 
 

@@ -113,7 +113,7 @@ def geocode(address: str) -> GeocodeResult:
     if not normalized:
         raise GeocodeError(
             f"No match for {address!r}",
-            user_message="Type an address to search — a house number and street, at least.",
+            user_message="Type an address — a house number and street, at least.",
         )
     return _geocode_cached(normalized)
 

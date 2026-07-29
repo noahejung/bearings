@@ -76,13 +76,11 @@ PATH = config.DERIVED_DIR / "citywide.json"
 # reflect reporting and policing intensity as well as public safety, and
 # precinct boundaries are coarse.
 CRIME_RELATIVE_CAVEAT = (
-    "This rank compares raw crime counts between police areas, not crime "
-    "per person -- the city doesn't publish a population figure for each "
-    "police area, so a busy commercial area with few residents can rank "
-    "the same as a crowded residential one. Reported counts also reflect "
-    "how much police attention and citizen reporting an area gets, not "
-    "just how much crime happens there, and police-area boundaries are "
-    "drawn coarsely, not block by block."
+    "Ranks raw crime counts between police areas, not per person -- no "
+    "per-area population figure exists, so a busy commercial area with "
+    "few residents can rank like a crowded residential one. Counts also "
+    "reflect policing and reporting levels, not just crime, and area "
+    "boundaries are coarse, not block by block."
 )
 
 

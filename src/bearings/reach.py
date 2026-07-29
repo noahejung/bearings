@@ -46,10 +46,9 @@ REACH_BANDS_MINUTES: tuple[int, ...] = (5, 10, 15)
 _POIS_PATH = config.DERIVED_DIR / "pois.parquet"
 
 METHOD_NOTE = (
-    "Roughly how far you could walk in 5, 10, and 15 minutes at a normal walking pace "
-    "(about 3 miles an hour) -- measured as a straight line from the address, not an "
-    "actual walking route, so it can reach further than a real walk would near rivers, "
-    "parks, highways, or a long block."
+    "Roughly how far you could walk in 5, 10, and 15 minutes at a normal pace (about "
+    "3 mph) -- a straight line from the address, not an actual route, so it can "
+    "overreach near rivers, parks, highways, or a long block."
 )
 
 
