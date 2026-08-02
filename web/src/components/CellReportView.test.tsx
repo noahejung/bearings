@@ -1,6 +1,6 @@
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
-import { CellReportView } from "./CellReportView";
+import { CellReportView, GettingAroundField } from "./CellReportView";
 import type { CellProfile } from "../types";
 
 // Real shapes, live-captured 2026-07-18 from `bearings.cellprofile.
@@ -118,9 +118,14 @@ const CONTROL_CELL: CellProfile = {
   housing_hazards: { class_c_violations: 49, note: HAZARD_NOTE, source: HAZARD_SOURCE },
 };
 
-describe("CellReportView -- transit unreachable-reason copy", () => {
+// LAYOUT-V3 WAVE 1 (2026-08-02): CellReportView.tsx split "Getting around"
+// (transit) into its own GettingAroundField component -- see that file's
+// own top comment. These three tests were always testing transit-specific
+// copy only, so they now render GettingAroundField directly; the fixtures
+// and assertions themselves are unchanged.
+describe("GettingAroundField -- transit unreachable-reason copy", () => {
   it("shows real ride minutes and no explanation paragraph when every anchor is reachable", () => {
-    render(<CellReportView cell={CONTROL_CELL} />);
+    render(<GettingAroundField cell={CONTROL_CELL} />);
     expect(screen.getByText("10 min")).toBeInTheDocument();
     // wtc and downtown_brooklyn are both real 23-minute rides here --
     // two distinct rows legitimately share a value, so this asserts the
@@ -133,7 +138,7 @@ describe("CellReportView -- transit unreachable-reason copy", () => {
   });
 
   it("names Staten Island Railway and the ferry gap, not a generic 'no route found', for a real SIR-only cell", () => {
-    render(<CellReportView cell={SIR_CELL} />);
+    render(<GettingAroundField cell={SIR_CELL} />);
     // Four anchors, four short "no rail link" value slots.
     expect(screen.getAllByText("no rail link")).toHaveLength(4);
     expect(screen.queryByText(/no route found/)).not.toBeInTheDocument();
@@ -147,12 +152,28 @@ describe("CellReportView -- transit unreachable-reason copy", () => {
   });
 
   it("states the real search radius and the subway/PATH-only feed gap for a real no-station cell", () => {
-    render(<CellReportView cell={NO_STATION_CELL} />);
+    render(<GettingAroundField cell={NO_STATION_CELL} />);
     expect(screen.getAllByText("no station nearby")).toHaveLength(4);
     expect(screen.queryByText(/no route found/)).not.toBeInTheDocument();
     expect(screen.getByText(/about a 15-minute walk/)).toBeInTheDocument();
     // Must not imply the neighborhood has no transit at all -- only that
     // this report's subway+PATH-only feed found nothing within range.
     expect(screen.getByText(/doesn't check bus routes/)).toBeInTheDocument();
+  });
+});
+
+// LAYOUT-V3 WAVE 1 (2026-08-02): confirms CellReportView still renders its
+// five non-transit fields (now rendered beside the map, not below it) after
+// the split above -- a regression guard for the "content-identical" wave-1
+// constraint (SPEC-layout-v3.md §8 Wave 1 acceptance).
+describe("CellReportView -- five non-transit fields", () => {
+  it("renders grocery, crime, noise, trees, and building/hazards for the control cell", () => {
+    render(<CellReportView cell={CONTROL_CELL} />);
+    expect(screen.getByRole("heading", { name: /grocery & everyday places/i })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: /crime near here/i })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: /noise complaints/i })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: /living street trees/i })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: /building age & serious hazards/i })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: /getting around/i })).not.toBeInTheDocument();
   });
 });

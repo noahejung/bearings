@@ -36,6 +36,19 @@ import { Stat } from "./Stat";
 // copy, while reusing every real shared primitive (Stat, SourceTag, Stamp,
 // the crime-percentile framing, and the exact `.field`/`.fields` CSS
 // classes) so the visual chrome matches the building-level report exactly.
+//
+// LAYOUT-V3 WAVE 1 (2026-08-02, SPEC-layout-v3.md): this file used to
+// export ONE component rendering all six fields as a single grid. App.tsx
+// now needs to place them in two different places on the page -- "Getting
+// around" (transit) below the map, full width; the other five beside the
+// map in a narrow side panel -- so this file exports TWO components
+// instead. This is a pure structural split: every field's JSX/copy below
+// is byte-identical to the pre-split version, just moved into whichever of
+// the two functions now owns it. Confirmed via SPEC-layout-v3.md §2 that
+// the component this wave replaces beside the map is MapView.tsx's old
+// `readout` panel (the "What's here" hover-legend box), NOT this component
+// -- CellReportView's own five non-transit fields are what now FILLS that
+// space, they are not what got removed from it.
 const CATEGORY_LABELS: [keyof CellProfile["amenities"]["counts"], string][] = [
   ["grocery", "Grocery"],
   ["cafe", "Cafe"],
@@ -71,13 +84,15 @@ function stationCountLabel(n: number): string {
   return `${n} subway or PATH station${n === 1 ? "" : "s"} within about a 6-minute walk of this block's centre.`;
 }
 
-export function CellReportView({ cell }: { cell: CellProfile }) {
+// "Getting around" -- the one transit field, rendered below the map, full
+// width (SPEC-layout-v3.md §3/§5: moved out of the side panel deliberately,
+// since it's about to grow editable destination rows in a later wave that
+// need real width, not a narrow column).
+export function GettingAroundField({ cell }: { cell: CellProfile }) {
   const anchorEntries = Object.entries(cell.transit.to_anchors) as [
     keyof CellProfile["transit"]["to_anchors"],
     number,
   ][];
-  const crime = cell.safety.crime;
-  const hasBuildingAge = cell.building_age.median_year_built !== null;
 
   // Every anchor that failed carries its own real reason (see
   // web/src/types.ts's UnreachableReasons) -- collapse to the DISTINCT
@@ -167,7 +182,19 @@ export function CellReportView({ cell }: { cell: CellProfile }) {
           <SourceTag source={cell.transit.source} />
         </p>
       </article>
+    </div>
+  );
+}
 
+// The five non-transit fields -- grocery/amenities, crime, noise, trees,
+// building age + hazards -- rendered beside the map in the side panel
+// (SPEC-layout-v3.md §3/§4).
+export function CellReportView({ cell }: { cell: CellProfile }) {
+  const crime = cell.safety.crime;
+  const hasBuildingAge = cell.building_age.median_year_built !== null;
+
+  return (
+    <div className="fields">
       <article className="field" aria-labelledby="cell-amenities-heading">
         <header className="field__head">
           <div>

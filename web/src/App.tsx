@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { ApiError, getCell, getGeocode, postFactcheck } from "./api";
 import { AddressSearch } from "./components/AddressSearch";
-import { CellReportView } from "./components/CellReportView";
+import { CellReportView, GettingAroundField } from "./components/CellReportView";
 import { FactCheckView } from "./components/FactCheckView";
 import { Header } from "./components/Header";
 import { MapView } from "./components/MapView";
@@ -89,8 +89,11 @@ export default function App() {
     try {
       const report = await getCell(h3);
       setCellReport(report);
-      // Defer to the next paint so the report section actually exists before we scroll.
-      requestAnimationFrame(() => scrollToId("report"));
+      // LAYOUT-V3 WAVE 1 (2026-08-02, SPEC-layout-v3.md §3 "no-scroll-jump
+      // requirement"): this used to fire requestAnimationFrame(() =>
+      // scrollToId("report")) here -- clicking a cell no longer needs to
+      // scroll anywhere, because the side panel beside the map (already on
+      // screen) is what updates now, not a stat-card grid below the fold.
     } catch (e) {
       setCellReport(null);
       setReportError(
@@ -124,7 +127,8 @@ export default function App() {
       setSelectedCell(geo.cell);
       const report = await getCell(geo.cell);
       setCellReport(report);
-      requestAnimationFrame(() => scrollToId("report"));
+      // Same no-scroll-jump change as handleCellClick above -- a search
+      // result updates the side panel beside the map in place too.
     } catch (e) {
       setCellReport(null);
       setSearchedAddress(null);
@@ -191,34 +195,52 @@ export default function App() {
           onRemovePin={removePin}
         />
 
-        {/* The map mounts immediately, independent of any search or click
-            (Task 4/VISUAL.md §5) -- it fetches the citywide grid on its
-            own and is interactive before any report has ever loaded. */}
-        <MapView
-          address={searchedAddress}
-          selectedCell={selectedCell}
-          onCellClick={handleCellClick}
-          activeCategories={activeCategories}
-          pins={pins}
-        />
-
-        {reportLoading && !cellReport && (
-          <p className="loading mono" role="status">
-            Pulling the record<span className="loading__dots" aria-hidden="true" />
-          </p>
+        {cellReport && (
+          <header className="report__head">
+            <p className="report__kicker mono">The record</p>
+            <h2 className="report__title" id="report-heading">
+              {searchedAddress ?? "This block"}
+            </h2>
+          </header>
         )}
+
+        {/* LAYOUT-V3 WAVE 1 (2026-08-02, SPEC-layout-v3.md §3): the "answer
+            to what's here" now lives BESIDE the map, not below a scroll-
+            jump. .mapgrid is the page-level two-column grid (map | side
+            panel); MapView mounts unconditionally inside it either way
+            (Task 4/VISUAL.md §5 -- it fetches the citywide grid on its own
+            and is interactive before any report has ever loaded), while
+            the side panel's own content depends on report state: loading,
+            empty (nothing clicked/searched yet), or the five real
+            non-transit stat cards from CellReportView. */}
+        <div className="mapgrid" id="report">
+          <MapView
+            address={searchedAddress}
+            selectedCell={selectedCell}
+            onCellClick={handleCellClick}
+            activeCategories={activeCategories}
+            pins={pins}
+          />
+
+          <aside className="sidepanel" aria-label="This block's record">
+            {reportLoading && !cellReport && (
+              <p className="sidepanel__placeholder mono" role="status">
+                Pulling the record<span className="loading__dots" aria-hidden="true" />
+              </p>
+            )}
+            {!reportLoading && !cellReport && (
+              <p className="sidepanel__placeholder mono">
+                Click any block for its real record, or search an address for 5, 10, and
+                15-minute walk rings plus nearby places you turn on above.
+              </p>
+            )}
+            {cellReport && <CellReportView cell={cellReport} />}
+          </aside>
+        </div>
 
         {cellReport && (
           <>
-            <section className="report" id="report" aria-labelledby="report-heading">
-              <header className="report__head">
-                <p className="report__kicker mono">The record</p>
-                <h2 className="report__title" id="report-heading">
-                  {searchedAddress ?? "This block"}
-                </h2>
-              </header>
-              <CellReportView cell={cellReport} />
-            </section>
+            <GettingAroundField cell={cellReport} />
 
             {searchedAddress && (
               <FactCheckView

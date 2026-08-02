@@ -855,6 +855,14 @@ export function MapView({
     [geo, reach, activeCategories, pins],
   );
 
+  // LAYOUT-V3 WAVE 1 (2026-08-02, SPEC-layout-v3.md §2/§3): the old
+  // `.mapfield__stage` two-column grid and its second column -- the
+  // "What's here" hover-legend `.readout` panel -- are both gone from this
+  // component. App.tsx now owns the map + side-panel two-column grid at the
+  // page level (`.mapgrid`, wrapping this whole component plus the real
+  // per-block stat cards from CellReportView), so MapView renders as a
+  // single stacked column of its own map chrome (controls, frame, legend,
+  // notes) and lets the page-level grid decide what sits beside it.
   return (
     <div className="mapfield">
       <h2 className="field__title">The neighbourhood, navigable</h2>
@@ -871,46 +879,24 @@ export function MapView({
         </div>
       </div>
 
-      <div className="mapfield__stage">
-        <div>
-          <div className="mapfield__frame">
-            <div
-              ref={containerRef}
-              className="mapfield__map"
-              role="img"
-              aria-label="Navigable map of New York City. Every real city block is clickable to load its record; shows building outlines, streets, subway lines, and walk-time rings for the selected address."
-            />
-          </div>
-          <div className="mapfield__legend">
-            {legend.map((item, i) => (
-              <span key={i}>
-                {item.swatch && <i style={item.swatch} />}
-                {item.label}
-              </span>
-            ))}
-          </div>
-          {loading && <p className="mapfield__status mono">Loading the neighbourhood record…</p>}
-          {error && <p className="mapfield__status mapfield__status--error mono">{error}</p>}
-        </div>
-
-        <div className="readout">
-          <h3>What&rsquo;s here</h3>
-          <p className="readout__empty">
-            {reach ? (
-              <>
-                The rings show roughly how far you could walk from here in 5, 10, and 15 minutes
-                (how they&rsquo;re measured is noted below). Turn on a category above for real
-                nearby places, or pin one to always see it with its own walk time.
-              </>
-            ) : (
-              <>
-                Click any block for its real record, or search an address for 5, 10, and
-                15-minute walk rings plus nearby places you turn on above.
-              </>
-            )}
-          </p>
-        </div>
+      <div className="mapfield__frame">
+        <div
+          ref={containerRef}
+          className="mapfield__map"
+          role="img"
+          aria-label="Navigable map of New York City. Every real city block is clickable to load its record; shows building outlines, streets, subway lines, and walk-time rings for the selected address."
+        />
       </div>
+      <div className="mapfield__legend">
+        {legend.map((item, i) => (
+          <span key={i}>
+            {item.swatch && <i style={item.swatch} />}
+            {item.label}
+          </span>
+        ))}
+      </div>
+      {loading && <p className="mapfield__status mono">Loading the neighbourhood record…</p>}
+      {error && <p className="mapfield__status mapfield__status--error mono">{error}</p>}
 
       {geo && <p className="mapfield__note mono">{geo.basemap_note}</p>}
       {reach && <p className="mapfield__note mono">{reach.method_note}</p>}

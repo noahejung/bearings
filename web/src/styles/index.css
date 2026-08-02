@@ -130,10 +130,21 @@ body {
 }
 
 /* ---------- shell ---------- */
+/* LAYOUT-V3 WAVE 1 (2026-08-02, SPEC-layout-v3.md §3): side margins
+   tightened -- Noah: "we expand page space by decreasing margins on left
+   and right." Old clamp topped out at 44px per side; a 44px+44px cut
+   across the whole realistic desktop range (this margin is only ever
+   below its ceiling between ~1024px and .wrap's own 1360px max-width --
+   above that the wrap is already capped and centred, so the value stops
+   mattering) is exactly the width the new .mapgrid side panel (below)
+   needs to fit next to the map without narrowing it below a usable size.
+   Floor also nudged down 2px (16px -> 14px), which only ever applies at
+   the narrowest phones -- a real, if small, win against the 375px search
+   bar already being flagged as tight (2026-07-28 UX audit finding #3). */
 .wrap {
   max-width: 1360px;
   margin: 0 auto;
-  padding: 22px clamp(16px, 3vw, 44px) 90px;
+  padding: 22px clamp(14px, 1.8vw, 28px) 90px;
 }
 
 /* ---------- information band — the engineering-drawing register, top and
@@ -1234,21 +1245,8 @@ body {
   font-style: italic;
 }
 
-.mapfield__stage {
-  margin-top: 1rem;
-  display: grid;
-  grid-template-columns: 1fr 260px;
-  gap: 1.2rem;
-  align-items: start;
-}
-
-@media (max-width: 860px) {
-  .mapfield__stage {
-    grid-template-columns: 1fr;
-  }
-}
-
 .mapfield__frame {
+  margin-top: 1rem;
   border: 1.5px solid var(--ink);
   padding: 8px;
 }
@@ -1370,24 +1368,48 @@ body {
   vertical-align: middle;
 }
 
-.readout {
+/* ---------- map + side-panel grid (LAYOUT-V3 WAVE 1, 2026-08-02,
+   SPEC-layout-v3.md §3) -- the page-level two-column grid: MapView on the
+   left, the real per-block stat cards (CellReportView's five non-transit
+   fields) on the right, both inside the tightened .wrap margins. This
+   replaces the old .mapfield__stage grid MapView.tsx used to draw
+   internally around its now-removed "What's here" .readout hover-legend
+   panel -- that panel is fully gone (SPEC-layout-v3.md §2 confirmed it,
+   not some other component, is what Noah meant), not just relocated: its
+   own copy was navigational hint text about the map's chip/reach-ring UI,
+   already duplicated by .mapfield__legend below the map, not a caveat or
+   source citation this project's honesty rule would require preserving
+   verbatim. 420px was chosen for the side panel because .fields' own
+   320px column-floor rule (see that rule's own long comment) needs some
+   padding room beyond the bare floor before a card's content genuinely
+   stops clipping -- confirmed empirically via Playwright screenshots at
+   1366/1920px, not guessed. */
+.mapgrid {
+  display: grid;
+  grid-template-columns: 1fr 420px;
+  gap: 1.2rem;
+  align-items: start;
+  margin-top: 1.5rem;
+}
+
+@media (max-width: 900px) {
+  .mapgrid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.sidepanel {
+  min-width: 0; /* grid blowout guard -- a long unbroken token inside a card must not force the column wider than its 420px track */
+}
+
+/* The side panel's two non-card states (loading a report, or none loaded
+   yet) keep the exact bordered-box treatment the old .readout panel used,
+   so the space beside the map never looks structurally empty even before
+   a block has been clicked or searched. */
+.sidepanel__placeholder {
   border: 1.5px solid var(--ink);
   padding: 14px;
   min-height: 200px;
-}
-
-.readout h3 {
-  margin: 0 0 12px;
-  font-family: var(--font-mono);
-  font-size: 9.5px;
-  letter-spacing: 0.24em;
-  text-transform: uppercase;
-  border-bottom: 1.5px solid var(--ink);
-  padding-bottom: 7px;
-  font-weight: 700;
-}
-
-.readout__empty {
   font-family: var(--font-mono);
   font-size: 10.5px;
   line-height: 1.6;
@@ -1395,36 +1417,19 @@ body {
   letter-spacing: 0.04em;
 }
 
-.readout dl {
-  margin: 0;
-  font-family: var(--font-mono);
-  font-size: 10px;
-}
-
-.readout dt {
-  letter-spacing: 0.16em;
-  text-transform: uppercase;
-  color: var(--steel);
-  margin-top: 11px;
-}
-
-.readout dt:first-child {
+/* Once real cards are loaded, .fields' own auto-fit grid (see that rule's
+   comment) already collapses to one column at this panel's 420px width --
+   these two overrides only fix the two things that assume a MULTI-column
+   layout: the top-of-grid gap (irrelevant with nothing above it in this
+   context) and the nth-child(odd) left-border rule (in a genuine single
+   column every card is visually "first in its row", so every card should
+   get the left rule, not just the odd-numbered ones). */
+.sidepanel .fields {
   margin-top: 0;
 }
 
-.readout dd {
-  margin: 3px 0 0;
-  font-family: var(--font-display);
-  font-size: 20px;
-  letter-spacing: -0.01em;
-}
-
-.readout dd.small {
-  font-family: var(--font-mono);
-  font-size: 10px;
-  letter-spacing: 0.02em;
-  word-break: break-all;
-  line-height: 1.5;
+.sidepanel .field {
+  border-left: 1px solid var(--ink);
 }
 
 /* ---------- footer ---------- */
