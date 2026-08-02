@@ -396,7 +396,7 @@ simplifications).
 | [NYC 311 Service Requests](https://data.cityofnewyork.us/d/erm2-nwe9) | Noise complaint counts near an address (trailing 12 months) and heat/hot-water complaint counts per building (trailing legal heating season) | Free Socrata REST API, paginated | NYC Open Data Terms of Use -- public data, generally free to reuse |
 | [NYC HPD Housing Maintenance Code Violations](https://data.cityofnewyork.us/d/wvxf-dwi5) | Open violations by class (Class C = immediately hazardous) for a building's BBL | Free Socrata REST API | NYC Open Data Terms of Use |
 | [NYC PLUTO](https://data.cityofnewyork.us/d/64uk-42ks) | Year built, per tax lot | Free Socrata REST API | NYC Open Data Terms of Use |
-| [NYC Street Tree Census](https://data.cityofnewyork.us/d/uvpi-gqnh) (2015) | Living street tree counts near an address | Free Socrata REST API | NYC Open Data Terms of Use |
+| [NYC Forestry Tree Points (ForMS 2.0)](https://data.cityofnewyork.us/d/hn5i-inap) | Living tree point counts near an address -- updates roughly every 2 weeks, replaces the frozen 2015 Street Tree Census as of 2026-08-02 | Free Socrata REST API | NYC Open Data Terms of Use |
 | [NYC Police Precinct boundaries](https://data.cityofnewyork.us/resource/y76i-bdw7.geojson) | Point-in-polygon precinct lookup + citywide choropleth polygons | Free Socrata GeoJSON export | NYC Open Data Terms of Use |
 | [NYPD CompStat](https://www.nyc.gov/site/nypd/stats/crime-statistics/citywide-crime-stats.page) | Per-precinct YTD robbery / felony assault / total major crime | Public PDF, requires a browser User-Agent (bot-UA block, not auth) | Public NYPD statistical release |
 | [NYC Neighborhood Tabulation Areas (2020)](https://data.cityofnewyork.us/d/9nt8-h7nd) | Neighbourhood name + centroid, for the map's label layer | Free Socrata GeoJSON export | NYC Open Data Terms of Use |
@@ -437,6 +437,16 @@ a stated simplification and distrust a hidden one.
   three-state shape. `heat` and `flood` don't have this gap -- `heat`
   falls back to a point-radius join when there's no BBL (`joined_on` says
   which happened) and `flood` never needs a BBL at all.
+- **The tree dataset's scope broadened on 2026-08-02, not narrowed.**
+  Swapping the frozen 2015 Street Tree Census for NYC Parks' live ForMS
+  2.0 Forestry Tree Points also changed what counts as "a tree": the new
+  dataset is Parks' full inventory (curbside street trees plus
+  park-interior and other Parks-managed trees), not street trees
+  exclusively. At a typical dense street corner the count is
+  near-identical to the old census (confirmed live: 284 vs. 283 within
+  400m of the Empire State Building); near a park it reads materially
+  higher (2,171 vs. 830 in a box that reaches into Bryant Park). See
+  `sources/trees.py`'s own docstring.
 - **No dollar figure for flood insurance.** `flood.zone()` reports the FEMA
   zone and whether it's a Special Flood Hazard Area, never a premium
   estimate -- NFIP premiums depend on elevation certificates and structure

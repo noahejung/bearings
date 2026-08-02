@@ -148,8 +148,8 @@ def test_green_block_shape(empire_state):
     g = empire_state["green"]
     assert isinstance(g["street_trees_nearby"], int)
     assert g["source"] == {
-        "name": "NYC Street Tree Census",
-        "url": "https://data.cityofnewyork.us/d/uvpi-gqnh",
+        "name": "NYC Forestry Tree Points (ForMS 2.0)",
+        "url": "https://data.cityofnewyork.us/d/hn5i-inap",
     }
 
 

@@ -158,7 +158,15 @@ def test_dense_midtown_block_has_real_nontrivial_amenity_density(geo):
 
 
 def test_dense_midtown_block_has_real_nontrivial_tree_density(geo):
-    # Confirmed live 2026-07-15: 830 living trees in a comparable box.
+    # Confirmed live 2026-07-15 against the old 2015 Street Tree Census:
+    # 830 living trees in a comparable box. After the 2026-08-02 swap to
+    # NYC Parks' ForMS 2.0 Forestry Tree Points (sources/trees.py), a
+    # comparable box (this one reaches into Bryant Park) sees materially
+    # more -- confirmed live post-swap at ~2,000+ -- because this dataset's
+    # scope is Parks' full tree inventory, not curbside street trees only
+    # (see trees.py's module docstring). The >100 bound below still holds
+    # either way; not tightened, since the exact count depends on which
+    # cells the live geocode resolves into.
     assert sum(c["trees"] for c in geo["cells"]) > 100
 
 

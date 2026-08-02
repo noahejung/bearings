@@ -48,7 +48,15 @@ SOCRATA_DATASETS = {
     "311":              "erm2-nwe9",  # 311 Service Requests 2010-Present
     "hpd_violations":   "wvxf-dwi5",  # HPD Housing Maintenance Code Violations
     "restaurants":      "43nn-pn8j",  # DOHMH Restaurant Inspections (confirmed)
-    "trees":            "uvpi-gqnh",  # 2015 Street Tree Census
+    # NYC Parks Forestry Tree Points (ForMS 2.0) -- replaces the frozen 2015
+    # Street Tree Census (was uvpi-gqnh). Confirmed live 2026-08-02: updates
+    # roughly every 2 weeks (rowsUpdatedAt 2026-07-29 at the time of the
+    # swap), a real Point-typed `location` column (unlike the 2015 census,
+    # which had none -- see sources/trees.py's docstring on why that
+    # mattered), 1,120,697 rows total across every tpstructure state
+    # (Full/Retired/Shaft/Stump/Stump-Uprooted). See sources/trees.py for
+    # exactly which subset counts as "a living tree standing today."
+    "trees":            "hn5i-inap",
     "pluto":            "64uk-42ks",  # Primary Land Use Tax Lot Output (PLUTO)
     "bedbugs":          "wz6d-d3jb",  # Bedbug Reporting (confirmed live 2026-07-13)
     "rodents":          "p937-wjvj",  # DOHMH Rodent Inspections (confirmed live 2026-07-13)

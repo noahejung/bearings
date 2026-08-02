@@ -63,13 +63,18 @@ from bearings.sources import overture
 NOISE_QUIET_AT_OR_BELOW = 250
 NOISE_LOUD_AT_OR_ABOVE = 1200
 
-# "tree-lined" / "leafy" / "verdant" vs. living Street Tree Census trees in
-# the same 400m radius. NYC's post-MillionTreesNYC canopy is denser than
-# intuition suggests -- even a dense commercial Midtown corner carries
-# ~280 trees in that radius (confirmed live, see tests/test_trees.py) -- so
-# the bar for "genuinely leafy" has to sit well above zero, and "clearly
-# not tree-lined" has to be low enough to catch blocks with almost no
-# street trees at all (highway frontage, industrial waterfront, etc).
+# "tree-lined" / "leafy" / "verdant" vs. living tree points (sources/
+# trees.py -- NYC Parks' ForMS 2.0 Forestry Tree Points as of 2026-08-02,
+# was the 2015 Street Tree Census before) in the same 400m radius. NYC's
+# post-MillionTreesNYC canopy is denser than intuition suggests -- even a
+# dense commercial Midtown corner carries ~280 trees in that radius
+# (confirmed live both before and after the 2026-08-02 dataset swap, see
+# tests/test_trees.py) -- so the bar for "genuinely leafy" has to sit well
+# above zero, and "clearly not tree-lined" has to be low enough to catch
+# blocks with almost no trees at all (highway frontage, industrial
+# waterfront, etc). These thresholds were not recalibrated for the swap --
+# the near-identical live count at this same fixture meant they didn't
+# need to be.
 TREES_SPARSE_AT_OR_BELOW = 15
 TREES_LEAFY_AT_OR_ABOVE = 100
 
