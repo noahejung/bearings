@@ -205,6 +205,119 @@ function roughDist(a: { lat: number; lng: number }, b: LngLat): number {
 }
 
 // ---------------------------------------------------------------------------
+// Label-tier collision (2026-08-02): a client-side equivalent of MapLibre's
+// own symbol-sort-key + text-allow-overlap:false collision index. Real
+// `symbol` layers can't be used for this map's text (mapStyle.ts's own
+// comment: no glyphs key, every label is a real DOM element in this app's
+// own grotesk/mono fonts, not a pre-rendered glyph atlas) -- so
+// updateLabelMarkers() below reimplements the same greedy, priority-ordered
+// placement rule by hand: sort every candidate label by tier + on-screen
+// relevance, project it to pixel space, and only place it if its measured
+// bounding box doesn't intersect any higher- or equal-priority box already
+// placed this pass. A rejected label is simply never rendered (matches
+// MapLibre's default `text-optional: false` -- a colliding symbol is
+// dropped whole, never shown at reduced opacity or stacked on top).
+//
+// TIER SPEC (see MapView.tsx's own module docstring / mapStyle.ts's parallel
+// comment for why there is no third, symbol-layer-based tier):
+//   Tier 1 -- neighbourhood labels (.maplabel--neighborhood). Highest
+//     priority, placed first, always wins contested space against Tier 2.
+//     Zoom band: >= 9.5 (city-scale orientation label, unchanged from the
+//     pre-existing threshold). Within the tier, candidates are ordered by
+//     distance to the current viewport centre -- bearings' own NTA-derived
+//     neighbourhood data carries no population/rank field the way
+//     Protomaps' own `places` basemap layer does (docs.protomaps.com/
+//     basemaps/layers: real `population`/`min_zoom` attributes per place
+//     feature) -- proximity-to-centre is the honest, data-backed substitute
+//     for "most relevant right now," not a silently invented rank.
+//   Tier 2 -- precinct labels (.maplabel--precinct). Lower priority than
+//     Tier 1, placed second; a precinct label is dropped wherever it would
+//     collide with any already-placed box. Zoom band: >= 11 (unchanged --
+//     a finer, more technical label that only resolves once already
+//     zoomed past city scale). Same distance-to-centre ordering within the
+//     tier.
+//   Not tiered here, both by explicit invariant elsewhere in this file:
+//   pinned-place badges (effect 11's own comment: "a pinned place is never
+//   silently absent," SPEC-lens-report.md §3) must never be culled by this
+//   system. Subway station markers (effect 6) are bounded to a handful of
+//   stations for one searched address at a time, never citywide, so their
+//   collision risk is materially lower than the two citywide label sets
+//   this pass addresses -- left out of scope, not silently dropped.
+//   Recomputed on every `moveend` (already wired below), same as before.
+
+interface ScreenBox {
+  left: number;
+  right: number;
+  top: number;
+  bottom: number;
+}
+
+let labelMeasureCtx: CanvasRenderingContext2D | null | undefined;
+
+// Lazily-created, reused canvas 2D context -- text measurement is the only
+// thing it's for, so one shared offscreen context (never attached to the
+// DOM) is enough; recreating one per label per moveend would be wasteful.
+// Returns `null` (not throws) when unavailable -- jsdom's canvas element
+// has no real 2D context without the optional native `canvas` package
+// (App.test.tsx's fake MapLibre map runs this code path in exactly that
+// environment), so measureLabelWidth() below falls back to a heuristic
+// rather than crashing every map test.
+function getLabelMeasureCtx(): CanvasRenderingContext2D | null {
+  if (labelMeasureCtx === undefined) {
+    labelMeasureCtx = document.createElement("canvas").getContext("2d");
+  }
+  return labelMeasureCtx;
+}
+
+// Mirrors index.css's --font-mono stack exactly -- measuring against a
+// different font than the one actually rendered would make the estimated
+// box wrong in exactly the way that reintroduces the overlap bug this
+// system exists to fix.
+const LABEL_FONT_STACK = '"Cascadia Mono", "Consolas", ui-monospace, "SFMono-Regular", monospace';
+const LABEL_BOX_PAD_PX = 3; // breathing room between two accepted labels, not just zero-overlap
+
+function measureLabelWidth(upper: string, fontPx: number, letterSpacingEm: number): number {
+  const ctx = getLabelMeasureCtx();
+  const spacing = letterSpacingEm * fontPx * upper.length;
+  if (ctx) {
+    ctx.font = `${fontPx}px ${LABEL_FONT_STACK}`;
+    return ctx.measureText(upper).width + spacing;
+  }
+  // No real Canvas2D text metrics available (see getLabelMeasureCtx()'s own
+  // comment) -- fall back to a monospace-width heuristic (~0.6em per
+  // character, a reasonable approximation for Cascadia Mono/Consolas)
+  // rather than crashing. Only ever exercised in jsdom tests; every real
+  // browser this map ships to supports measureText().
+  return upper.length * fontPx * 0.6 + spacing;
+}
+
+// The screen-space box a DOM label marker will actually occupy, anchored at
+// its projected centre point (both .maplabel classes use `anchor: "center"`
+// in updateLabelMarkers()). `text` is measured post-uppercase since both
+// classes set `text-transform: uppercase` in CSS -- that's a paint-time-only
+// transform, so measuring the original mixed-case string would under-count
+// width for any label with lowercase letters.
+function labelBox(text: string, screenX: number, screenY: number, fontPx: number, letterSpacingEm: number): ScreenBox {
+  const upper = text.toUpperCase();
+  const width = measureLabelWidth(upper, fontPx, letterSpacingEm);
+  const height = fontPx * 1.5; // approximates line-height for a single-line label
+  return {
+    left: screenX - width / 2 - LABEL_BOX_PAD_PX,
+    right: screenX + width / 2 + LABEL_BOX_PAD_PX,
+    top: screenY - height / 2 - LABEL_BOX_PAD_PX,
+    bottom: screenY + height / 2 + LABEL_BOX_PAD_PX,
+  };
+}
+
+function boxesOverlap(a: ScreenBox, b: ScreenBox): boolean {
+  return a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top;
+}
+
+function collidesWithAny(box: ScreenBox, placed: ScreenBox[]): boolean {
+  return placed.some((p) => boxesOverlap(box, p));
+}
+
+// ---------------------------------------------------------------------------
 
 export function MapView({
   address,
@@ -284,11 +397,36 @@ export function MapView({
         [NYC_BBOX.east, NYC_BBOX.north],
       ],
       fitBoundsOptions: { padding: 20 },
+      // Panning is clamped to the same NYC_BBOX the basemap was actually
+      // baked for (basemap.py's `pmtiles extract --bbox=...`), never a
+      // separately-guessed margin -- beyond it there are no tiles, no
+      // buildings/streets overlay, and no citywide grid, just blank space
+      // (Noah, 2026-08-02: "can currently drag on the map to a border
+      // outside the loaded nyc preview, which is just blank space"). No
+      // padding added around it: MapLibre's maxBounds already keeps the
+      // full bbox reachable at min zoom (the initial `bounds` fit above
+      // proves the whole box fits on screen at once), so there is no
+      // "too tight at the edges" tradeoff to weigh against showing blank
+      // space -- see test_basemap.py's own `abs=0.2` tolerance for how
+      // imprecise "exact" bbox matching already is at the tile-snap level,
+      // which is a reason to stay at 0 extra margin, not add one.
+      maxBounds: [
+        [NYC_BBOX.west, NYC_BBOX.south],
+        [NYC_BBOX.east, NYC_BBOX.north],
+      ],
       minZoom: 9,
       maxZoom: 18,
     });
     map.addControl(new maplibregl.NavigationControl({ showCompass: false }), "top-right");
     mapRef.current = map;
+    // Dev-only: exposes the live MapLibre instance for Playwright/manual
+    // console verification (e.g. `map.getBounds()` after a drag, to check
+    // the maxBounds clamp above numerically instead of by eyeballing
+    // screenshots) -- stripped from the production bundle by Vite's
+    // `import.meta.env.DEV` dead-code elimination, never shipped.
+    if (import.meta.env.DEV) {
+      (window as unknown as { __bearingsMap?: MapLibreMap }).__bearingsMap = map;
+    }
     map.on("load", () => setMapReady(true));
 
     return () => {
@@ -628,13 +766,23 @@ export function MapView({
     // citywide would be unreadable clutter at any zoom either way, so both
     // are still capped to the nearest N actually inside the current view
     // (DOM markers, not GPU-rendered symbols, so an unbounded count would
-    // also be a real perf cost).
+    // also be a real perf cost). Placement within each tier -- and between
+    // Tier 1/Tier 2 -- now runs through the greedy collision placer
+    // (labelBox()/collidesWithAny(), see this file's own "Label-tier
+    // collision" spec comment above) so no two accepted labels' boxes
+    // overlap on screen, at any zoom.
+    const placedBoxes: ScreenBox[] = [];
+
     if (zoom >= 9.5) {
-      const visible = cw.neighborhoods
+      const candidates = cw.neighborhoods
         .filter((n) => bounds.contains([n.lng, n.lat]))
         .sort((a, b) => roughDist(a, center) - roughDist(b, center))
         .slice(0, 40);
-      for (const n of visible) {
+      for (const n of candidates) {
+        const p = map.project([n.lng, n.lat]);
+        const box = labelBox(n.name, p.x, p.y, 10, 0.05); // mirrors .maplabel--neighborhood
+        if (collidesWithAny(box, placedBoxes)) continue;
+        placedBoxes.push(box);
         const el = document.createElement("div");
         el.className = "maplabel maplabel--neighborhood";
         el.textContent = n.name;
@@ -645,16 +793,21 @@ export function MapView({
     }
 
     if (zoom >= 11) {
-      const visible = cw.precincts
+      const candidates = cw.precincts
         .filter((p) => bounds.contains([p.lng, p.lat]))
         .sort((a, b) => roughDist(a, center) - roughDist(b, center))
         .slice(0, 30);
-      for (const p of visible) {
+      for (const pr of candidates) {
+        const text = `Police area ${pr.precinct}`;
+        const p = map.project([pr.lng, pr.lat]);
+        const box = labelBox(text, p.x, p.y, 9, 0.08); // mirrors .maplabel--precinct
+        if (collidesWithAny(box, placedBoxes)) continue;
+        placedBoxes.push(box);
         const el = document.createElement("div");
         el.className = "maplabel maplabel--precinct";
-        el.textContent = `Police area ${p.precinct}`;
+        el.textContent = text;
         labelMarkersRef.current.push(
-          new maplibregl.Marker({ element: el, anchor: "center" }).setLngLat([p.lng, p.lat]).addTo(map),
+          new maplibregl.Marker({ element: el, anchor: "center" }).setLngLat([pr.lng, pr.lat]).addTo(map),
         );
       }
     }

@@ -112,6 +112,17 @@ vi.mock("maplibre-gl", () => {
     getCanvas() {
       return { style: {} };
     }
+    // A plausible (not geodesically real) lng/lat -> screen-pixel mapping --
+    // MapView.tsx's tiered-label collision placer (2026-08-02) calls the
+    // real map.project() to build each label's on-screen box; jsdom has no
+    // WebGL projection matrix to call for real, but tests here never assert
+    // an exact pixel position, only that real fetched label data reaches
+    // real DOM nodes, so a fixed linear scale (spread far enough apart that
+    // this file's own fixture entries, e.g. CITYWIDE below, don't spuriously
+    // collide with each other) is enough.
+    project([lng, lat]: [number, number]) {
+      return { x: (lng + 74) * 100_000, y: (41 - lat) * 100_000 };
+    }
   }
 
   class FakeMarker {
