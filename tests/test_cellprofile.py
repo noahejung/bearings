@@ -93,7 +93,7 @@ def test_empire_state_cell_carries_the_full_contract_shape(esb_cell, esb_profile
     assert esb_profile["h3"] == esb_cell
     assert esb_profile["shard"] == cells.shard_for(esb_cell)
     assert set(esb_profile["centroid"]) == {"lat", "lng"}
-    assert set(esb_profile["noise"]) == {"complaints_12mo", "source"}
+    assert set(esb_profile["noise"]) == {"complaints_12mo", "percentile", "caveat", "source"}
     assert set(esb_profile["amenities"]) == {"counts", "source"}
     assert set(esb_profile["trees"]) == {"street_trees", "source"}
     assert set(esb_profile["benches"]) == {"benches", "leaning_bars", "source"}
@@ -117,7 +117,22 @@ def test_empire_state_cell_carries_the_full_contract_shape(esb_cell, esb_profile
         "downtown_brooklyn",
         "newport_path",
     }
-    assert set(esb_profile["safety"]) == {"precinct", "crime", "crime_caveat", "source"}
+    assert set(esb_profile["safety"]) == {
+        "precinct",
+        "crime",
+        "crime_caveat",
+        "source",
+        "block_crime",
+    }
+    assert set(esb_profile["safety"]["block_crime"]) == {
+        "count",
+        "smoothed_count",
+        "percentile",
+        "lookback_months",
+        "offense_scope",
+        "caveat",
+        "source",
+    }
     assert set(esb_profile["housing_hazards"]) == {"class_c_violations", "note", "source"}
 
 
@@ -226,7 +241,131 @@ def test_safety_carries_a_real_precinct_and_percentile_when_resolved(esb_profile
     assert safety["precinct"] == 14  # Midtown South -- confirmed live 2026-07-15
     assert safety["crime"] is not None
     assert 0.0 <= safety["crime"]["crime_percentile"] <= 100.0
-    assert len(safety["crime_caveat"]) > 40
+
+
+# --- block-level crime + noise percentile (2026-08-02) ---
+#
+# Added after a live cross-check ("crime-noise-reality-check", 2026-08-02)
+# found the precinct-only crime figure pooled Astoria with Long Island
+# City (both share Precinct 114) and left two real LIC cells with no crime
+# figure at all (precinct join resolving to None). block_crime is computed
+# directly from raw NYPD Complaint Data per H3 cell, with no precinct join
+# anywhere in the path -- see cellprofile.py's own module docstring.
+
+
+def test_block_crime_never_none_even_where_the_precinct_join_fails():
+    # H3 892a100d08bffff / 892a100d01bffff -- two real, non-adjacent Long
+    # Island City cells, confirmed live 2026-08-02 (both geocode from real
+    # addresses: "5-19 46th Ave" / "47-20 Center Blvd, Long Island City")
+    # to return safety.precinct=None / safety.crime=None under the
+    # (unchanged) precinct-based path -- a real, reproducible data gap the
+    # 2026-08-02 report named explicitly. block_crime has no precinct
+    # dependency at all, so both must carry a real (possibly zero, never
+    # None) count and a real 0-100 percentile even though safety.crime
+    # itself stays None for these two cells.
+    for cell in ("892a100d08bffff", "892a100d01bffff"):
+        prof = cellprofile.profile_for(cell)
+        assert prof is not None
+        safety = prof["safety"]
+        assert safety["precinct"] is None
+        assert safety["crime"] is None
+        bc = safety["block_crime"]
+        assert bc["count"] is not None
+        assert bc["smoothed_count"] is not None
+        assert isinstance(bc["count"], int)
+        assert isinstance(bc["smoothed_count"], int)
+        assert 0.0 <= bc["percentile"] <= 100.0
+        assert bc["lookback_months"] == 24
+        assert len(bc["offense_scope"]) == 7
+        assert bc["source"]["url"].startswith("http")
+
+
+def test_block_crime_smoothed_count_is_at_least_the_raw_count():
+    # smoothed_count sums the cell's own raw count plus its 6 neighbours'
+    # raw counts (see _block_crime_by_cell()'s own docstring) -- every
+    # neighbour count is >= 0, so smoothed can never be smaller than raw.
+    # A real, structural invariant, checked across a real sample of cells
+    # rather than assumed.
+    cell_ids = cellprofile.all_cells()
+    for c in cell_ids[:200]:
+        bc = cellprofile.profile_for(c)["safety"]["block_crime"]
+        assert bc["smoothed_count"] >= bc["count"]
+
+
+# H3 892a100001bffff, centroid ~(40.861, -73.784) -- north Bronx, a real
+# low-activity residential cell picked BY SCANNING THE BAKE ITSELF rather
+# than assumed from an address's reputation. This project's own "quiet,
+# far, green" calibration address (3220 Netherland Ave, Riverdale) turned
+# out NOT to be a safe "genuinely low percentile" control once measured
+# live 2026-08-02: it lands at the 75th block-crime / 71st noise
+# percentile among the ~7,017 real citywide cells -- ABOVE the citywide
+# median on both axes, because NYC's per-cell distribution is heavily
+# weighted toward truly low-activity cells (median 26 noise complaints/
+# cell citywide; 14.2% of all cells read an exact 0) that a "quiet by NYC
+# standards" residential neighbourhood still sits well above. See
+# factcheck.py's own threshold-block comment for the full finding and why
+# it mattered for a different task (item 4's threshold reconciliation).
+_QUIET_CONTROL_CELL = "892a100001bffff"
+
+
+def test_block_crime_percentile_discriminates_real_cells():
+    # Grand Central's own cell (892a100d293ffff, this project's named
+    # transit-hub control cell) is a genuine major-larceny hotspot -- dense
+    # commuter/tourist foot traffic draws a real, live-confirmed
+    # concentration of grand-larceny complaints even though its PRECINCT
+    # (17, Murray Hill) reads as comparatively low-crime overall
+    # (crime_percentile ~9.6, confirmed live 2026-08-02) -- exactly the
+    # kind of within-precinct variation a precinct-level figure cannot see
+    # and block_crime is built to surface. `_QUIET_CONTROL_CELL` (see its
+    # own comment above) must land at the opposite end.
+    grand_central = cellprofile.profile_for("892a100d293ffff")
+    assert grand_central is not None
+    assert grand_central["safety"]["block_crime"]["percentile"] > 90
+
+    quiet = cellprofile.profile_for(_QUIET_CONTROL_CELL)
+    assert quiet is not None
+    assert quiet["safety"]["block_crime"]["percentile"] < 10
+
+
+def test_astoria_block_crime_no_longer_inherits_the_full_lic_pooled_number():
+    # H3 892a100f34fffff -- "31-01 Broadway, Astoria" (the 2026-08-02
+    # report's own sample address). Astoria shares Precinct 114 with Long
+    # Island City and Woodside, so the OLD precinct-only figure was really
+    # "the 114th Precinct's figure" (confirmed live: crime_percentile
+    # 81.4, matching the report's own finding almost exactly). block_crime
+    # is computed directly from this cell's own neighbourhood, with no
+    # precinct join, so it must land measurably lower -- the de-pooling
+    # this whole feature exists to deliver, quantified, not just asserted
+    # structurally different.
+    prof = cellprofile.profile_for("892a100f34fffff")
+    assert prof is not None
+    safety = prof["safety"]
+    assert safety["precinct"] == 114
+    precinct_percentile = safety["crime"]["crime_percentile"]
+    assert precinct_percentile > 75  # confirmed live ~81.4
+    block_percentile = safety["block_crime"]["percentile"]
+    assert block_percentile < precinct_percentile
+
+
+def test_noise_percentile_carries_a_real_0_to_100_value_and_caveat(esb_profile):
+    noise = esb_profile["noise"]
+    assert 0.0 <= noise["percentile"] <= 100.0
+    assert isinstance(noise["caveat"], str)
+    assert len(noise["caveat"]) > 30
+
+
+def test_noise_percentile_discriminates_real_cells(esb_profile):
+    # Herald Sq/Empire State (esb_profile) is one of the loudest cells in
+    # the whole citywide sample (see test_noise.py's own live-confirmed
+    # ~1297 complaints/12mo at a wider 400m radius) -- its cell-level
+    # percentile must land high. `_QUIET_CONTROL_CELL` (see its own
+    # comment above -- a real low-activity cell found by scanning the
+    # bake, not assumed from an address's reputation) must land low.
+    assert esb_profile["noise"]["percentile"] > 60
+
+    quiet = cellprofile.profile_for(_QUIET_CONTROL_CELL)
+    assert quiet is not None
+    assert quiet["noise"]["percentile"] < 10
 
 
 def test_at_least_some_cells_citywide_show_a_real_housing_hazard_count():

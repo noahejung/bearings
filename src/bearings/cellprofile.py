@@ -34,7 +34,9 @@ or work in this cell"), not an arbitrary shape.
 **Per-cell metrics, and where each number comes from:**
   - `noise`: real 311 noise-complaint counts in the trailing 12 months,
     bucketed into this cell specifically (not mapgeo.py's 700m/37-cell
-    disk around a searched address -- this is the cell's own count).
+    disk around a searched address -- this is the cell's own count), PLUS
+    (added 2026-08-02) a citywide percentile position -- see "Noise and
+    block-level crime are both relative-to-NYC now" below.
   - `amenities`: real Overture daily-life POI counts, read from the
     already-baked pois.parquet (same 8 categories api.py's report card and
     mapgeo.py's metric dropdown already use).
@@ -62,12 +64,83 @@ or work in this cell"), not an arbitrary shape.
     sources/precincts.py's `precincts_for_points()`) and that precinct's
     already-baked crime percentile (citywide.py) -- `None` if the cell's
     centroid resolves to no precinct (open water, a gap at a simplified
-    boundary edge).
+    boundary edge). PLUS (added 2026-08-02) `block_crime`, a
+    precinct-independent, cell-level crime figure -- see below.
   - `housing_hazards`: real, aggregated open Class C ("immediately
     hazardous") HPD violation counts for every PLUTO lot centred in this
     cell -- deliberately Class C only (hpd.py's own docstring: "the number
     that matters"), and deliberately NOT heat/rodent/bedbug data (see
     "Deliberately NOT precomputed" below).
+
+**Block-level crime, and why it exists alongside (not instead of)
+`safety.crime`'s existing precinct percentile (added 2026-08-02, per a
+live cross-check of bearings' rankings against real neighbourhood
+reputation -- 2026-08-02's "crime-noise-reality-check" report):** a
+precinct is a real NYPD administrative area, not a neighbourhood -- Astoria
+shares Precinct 114 with Long Island City and Woodside, so an Astoria
+resident's own crime figure was really "the 114th Precinct's figure,"
+pulled up by LIC's dense commercial territory (confirmed live: the
+Astoria cell at Precinct 114 read at the 81st crime percentile, sharply at
+odds with Astoria's own, separately-sourced "one of the safest areas of
+NYC" reputation). Two LIC cells also carried NO crime figure at all
+(`safety.crime is None`) purely because their centroid happened to fall
+outside every precinct polygon at a simplified boundary -- a real,
+reproducible defect, not a ranking dispute.
+
+Both problems share one root cause: crime was only ever available at
+precinct granularity. `block_crime` fixes this by going directly from raw
+NYPD Complaint Data incidents (sources/complaints.py; live-verified
+`qgea-i56i` "Historic" + `5uac-w243` "Current (Year To Date)", the same
+seven CompStat "major felony" offense categories `safety.crime`'s own
+`total_ytd` already sums) to a genuinely per-H3-cell count, with no
+precinct join anywhere in the path -- so both the Astoria pooling problem
+and the LIC null-precinct bug disappear by construction, not by a special
+case.
+
+A raw per-cell incident count alone would still be too noisy to rank
+directly: a live probe (2026-08-02) found NYPD snaps a real share of
+complaint coordinates to a small number of shared points rather than each
+incident's exact location (one precinct's 2025 robbery rows, grouped by
+(lat, lng), turned up points shared by 4-8 separate complaints each) --
+which single cell a nearby cluster of incidents happens to snap into is
+partly an artefact of that rounding, not purely where the crime occurred.
+The fix is the same one profile.py's own `_amenities()` already uses for
+POI density (`cells.neighbors(cell, k=1)`, a 1-ring disk): each cell's
+`smoothed_count` sums the raw count across itself plus its 6 immediate
+neighbours (`_CRIME_RING_K = 1`) -- 7 cells, ~0.74 km² total (7 x the
+~0.1053 km² average res-9 cell area h3-py itself reports), noticeably
+finer than a precinct's own ~10 km² average (780 km² citywide / 78
+precincts) but wide enough to average out a single cell's snap-boundary
+luck. `citywide.percentile_rank()` -- the SAME tested, median-neutral
+function `safety.crime`'s own precinct percentile already uses -- then
+ranks each real cell's `smoothed_count` against every other real cell's,
+giving a genuinely block-level, precinct-independent crime percentile.
+
+**Noise and block-level crime are both relative-to-NYC now, following the
+report's own recommendation "give noise the same percentile treatment
+crime already has, do not invent a new mechanism":** `noise.percentile`
+ranks a cell's raw `complaints_12mo` (no smoothing -- see the report's own
+finding that noise's existing raw count is already the shipped, honest
+number; only its missing relative framing was the gap) against every
+other real cell's count, via the identical `percentile_rank()` call.
+
+**A real finding worth flagging plainly, not glossed over: "citywide
+percentile" does not mean "matches folk reputation for quiet."** Live-
+measured 2026-08-02 across all ~7,017 real cells: median noise is 26
+complaints/cell citywide (14.2% of all cells read an exact 0); median
+smoothed block-crime is 115. This project's own "quiet, far, green"
+calibration address (3220 Netherland Ave, Riverdale) lands at the 71st
+noise / 75th block-crime percentile -- ABOVE the citywide median on both
+axes, not below it, because the ~7,017-cell population includes a large
+share of genuinely low-activity cells (parks, industrial waterfront,
+low-density outer-borough blocks) that a walkable, moderately-dense
+neighbourhood like Riverdale still sits well above, even though it reads
+as clearly "quiet by NYC standards" to a resident. This is real and
+correct, not a bug -- but it is why `factcheck.py` deliberately did NOT
+switch its own quiet/loud classification onto this percentile (see that
+module's own threshold-block comment for the full reasoning): doing so
+would have silently reclassified this project's own calibration anchor as
+"not quiet."
 
 **Deliberately NOT precomputed, and why (both real, stated gaps, not
 silent omissions):**
@@ -117,6 +190,7 @@ from bearings import citywide, config, profile, staleness
 from bearings.mapgeo import AMENITY_CATEGORIES, TRANSIT_ACCESS_RADIUS_M
 from bearings.sources import buildings, compstat, hpd, noise, overture, pluto, precincts, socrata
 from bearings.sources import benches as benches_source
+from bearings.sources import complaints as complaints_source
 from bearings.sources import trees as trees_source
 from bearings.transit import SOURCE as TRANSIT_SOURCE
 from bearings.transit import TRANSIT_CAVEAT, WALK_SPEED_MPS, _haversine_m
@@ -134,6 +208,12 @@ _CELLS_INDEX_PATH = config.DERIVED_DIR / "cells_index.json"
 
 _NOISE_WINDOW_DAYS = 365
 
+# 1-ring disk (cell + its 6 immediate neighbours, 7 cells total, ~0.74 km2)
+# -- see the module docstring's "Block-level crime" section for the full
+# ring-size justification against real h3-py cell-area numbers and a real,
+# live-confirmed coordinate-rounding artefact in the raw NYPD data.
+_CRIME_RING_K = 1
+
 HAZARD_NOTE = (
     "Counts only the most serious violation class (\"immediately "
     "hazardous,\" the city's top severity rating), summed across every "
@@ -142,6 +222,24 @@ HAZARD_NOTE = (
     "step up from a raw, unverified complaint. Reflects inspection and "
     "reporting frequency, not necessarily every real issue: a 0 means no "
     "verified hazard on record, not that none exists."
+)
+
+# One tight sentence each, per this project's own 2026-07-29 copy
+# convention (cut words, never a fact/caveat/negation) -- both name the
+# same real, documented bias the 2026-08-02 crime-noise-reality-check
+# report found in the academic/journalism literature: reported-complaint
+# volume tracks who calls 311/police as much as it tracks the underlying
+# condition, and rises fastest in gentrifying neighbourhoods specifically.
+BLOCK_CRIME_CAVEAT = (
+    "Smoothed across a roughly 7-cell block cluster to offset NYPD's "
+    "coordinate rounding, and like any police-reported count it reflects "
+    "reporting and enforcement patterns -- which vary by neighborhood -- "
+    "not only real crime."
+)
+NOISE_PERCENTILE_CAVEAT = (
+    "Ranks this block's 311 noise complaints against every block "
+    "citywide, though complaint volume reflects who calls 311 as much as "
+    "real noise and rises faster in gentrifying neighborhoods."
 )
 
 
@@ -206,6 +304,44 @@ def _noise_by_cell(cell_ids: list[str]) -> dict[str, int]:
         if cell in counts:
             counts[cell] += 1
     return counts
+
+
+def _raw_crime_counts_any_cell() -> dict[str, int]:
+    """Every real major-felony complaint, bucketed into WHATEVER real H3
+    res-9 cell it falls in -- including a cell with no baked building
+    footprint of its own (a park, open water frontage, etc), unlike
+    `_noise_by_cell()`/`_trees_by_cell()`'s `counts = {c: 0 for c in
+    cell_ids}` pattern, which only ever counts a hit against this build's
+    ~7,000 "real" (building-anchored) cells. That distinction matters here
+    specifically because `_block_crime_by_cell()`'s k-ring smoothing sums a
+    real cell's neighbours too -- a residential cell next to a park needs
+    the park cell's own real incident count to be smoothed in, not
+    silently dropped because the park itself isn't a "real" cell by this
+    build's own building-footprint definition."""
+    pts = complaints_source.citywide_points()
+    counts: dict[str, int] = {}
+    for lat, lng in zip(pts["lat"], pts["lng"], strict=True):
+        cell = _safe_cell_for(lat, lng)
+        if cell is None:
+            continue
+        counts[cell] = counts.get(cell, 0) + 1
+    return counts
+
+
+def _block_crime_by_cell(cell_ids: list[str]) -> dict[str, dict[str, int]]:
+    """Real per-cell major-felony count PLUS its k-ring-smoothed
+    neighbourhood count -- see the module docstring's "Block-level crime"
+    section for why raw-per-cell alone is too small and rounding-artefact-
+    prone a sample to rank directly."""
+    raw = _raw_crime_counts_any_cell()
+    out: dict[str, dict[str, int]] = {}
+    for c in cell_ids:
+        ring = cellslib.neighbors(c, k=_CRIME_RING_K)
+        out[c] = {
+            "count": raw.get(c, 0),
+            "smoothed": sum(raw.get(n, 0) for n in ring),
+        }
+    return out
 
 
 def _trees_by_cell(cell_ids: list[str]) -> dict[str, int]:
@@ -414,11 +550,23 @@ def _bake_all() -> dict:
     amenity_counts = _amenities_by_cell(cell_ids)
     age_median, hazard_counts, pluto_hit_rate = _building_age_and_hazards_by_cell(cell_ids)
     transit_by_cell = _transit_by_cell(cell_ids, centroids)
+    block_crime_by_cell = _block_crime_by_cell(cell_ids)
 
     precinct_by_cell = precincts.precincts_for_points(
         [(c, centroids[c][0], centroids[c][1]) for c in cell_ids]
     )
     precinct_crime = {p["precinct"]: p["crime"] for p in citywide.get()["precincts"]}
+
+    # The citywide distributions block-level crime and noise are ranked
+    # against -- every real cell's own smoothed-crime / raw-noise count,
+    # computed once here (not once per cell) and fed through the SAME
+    # median-neutral citywide.percentile_rank() safety.crime's own
+    # precinct percentile already uses (see module docstring's "Block-
+    # level crime" / "Noise and block-level crime are both relative-to-NYC
+    # now" sections for why this is the right, already-tested function to
+    # reuse rather than inventing a second one).
+    smoothed_crime_values = [v["smoothed"] for v in block_crime_by_cell.values()]
+    noise_values = [noise_counts.get(c, 0) for c in cell_ids]
 
     profiles: dict[str, dict] = {}
     for c in cell_ids:
@@ -431,6 +579,8 @@ def _bake_all() -> dict:
             "centroid": {"lat": lat, "lng": lng},
             "noise": {
                 "complaints_12mo": noise_counts.get(c, 0),
+                "percentile": citywide.percentile_rank(noise_values, noise_counts.get(c, 0)),
+                "caveat": NOISE_PERCENTILE_CAVEAT,
                 "source": dict(noise.SOURCE),
             },
             "amenities": {
@@ -461,6 +611,17 @@ def _bake_all() -> dict:
                 "crime": crime,
                 "crime_caveat": citywide.CRIME_RELATIVE_CAVEAT,
                 "source": dict(compstat.SOURCE),
+                "block_crime": {
+                    "count": block_crime_by_cell[c]["count"],
+                    "smoothed_count": block_crime_by_cell[c]["smoothed"],
+                    "percentile": citywide.percentile_rank(
+                        smoothed_crime_values, block_crime_by_cell[c]["smoothed"]
+                    ),
+                    "lookback_months": complaints_source.LOOKBACK_MONTHS,
+                    "offense_scope": list(complaints_source.MAJOR_FELONY_OFFENSES),
+                    "caveat": BLOCK_CRIME_CAVEAT,
+                    "source": dict(complaints_source.SOURCE),
+                },
             },
             "housing_hazards": {
                 "class_c_violations": hazard_counts.get(c, 0),
