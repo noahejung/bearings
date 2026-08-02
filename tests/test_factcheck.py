@@ -44,6 +44,36 @@ def test_quiet_claim_is_supported_at_a_genuinely_quiet_residential_address():
     assert noise_claims[0]["status"] == "supported"
 
 
+def test_quiet_claim_evidence_carries_the_new_block_percentile_context():
+    # 2026-08-02: the evidence sentence now cites this address's own H3
+    # block cell's citywide noise percentile as ADDITIVE context, without
+    # changing status/value -- see factcheck.py's own threshold-block
+    # comment for why a percentile-based classifier itself was rejected.
+    result = factcheck.check(EMPIRE_STATE, "A quiet retreat in the city.")
+    claim = [c for c in result["claims"] if c["predicate"] == "noise"][0]
+    assert "percentile citywide for reported noise" in claim["evidence"]
+    assert str(claim["value"]) in claim["evidence"]  # the 400m count is still there too
+
+
+def test_noise_threshold_reconciliation_matches_the_reality_check_reports_own_three_addresses():
+    # Regression guard for the 2026-08-02 reconciliation: the reality-check
+    # report found the live supported/contradicted crossover somewhere in
+    # (376, 832], not cleanly at the 250/1200 bounds themselves -- fully
+    # explained by `_status_for()`'s own existing midpoint rule
+    # ((250+1200)/2 = 725, which sits inside that exact band), not a bug.
+    # Pins the report's own three live data points so a future change to
+    # either the thresholds or the midpoint logic gets caught here.
+    cases = {
+        "5661 Riverdale Ave, Bronx": "supported",  # 376 complaints < 725
+        "2770 Atlantic Ave, Brooklyn": "contradicted",  # 831 complaints > 725
+        "1520 Sedgwick Ave, Bronx": "contradicted",  # 1,608 >= 1200 directly
+    }
+    for address, expected in cases.items():
+        result = factcheck.check(address, "A quiet retreat.")
+        claim = [c for c in result["claims"] if c["predicate"] == "noise"][0]
+        assert claim["status"] == expected, f"{address}: {claim['value']} -> {claim['status']}"
+
+
 def test_two_phrases_sharing_a_predicate_in_one_clause_each_get_their_own_claim():
     """Regression guard: "quiet" and "peaceful" both match the "noise"
     predicate and land in the same clause. The old dedup mechanism

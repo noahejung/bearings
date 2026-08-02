@@ -18,7 +18,7 @@ survives a defamation claim on contact.
 
 import re
 
-from bearings import profile, transit
+from bearings import cellprofile, profile, transit
 from bearings.sources import overture
 
 # ---------------------------------------------------------------------------
@@ -62,6 +62,51 @@ from bearings.sources import overture
 # subjective "quiet." See README's Known Simplifications.
 NOISE_QUIET_AT_OR_BELOW = 250
 NOISE_LOUD_AT_OR_ABOVE = 1200
+
+# --- 2026-08-02 reconciliation against the new noise percentile ---
+#
+# The 2026-08-02 "crime-noise-reality-check" report flagged this pair as
+# possibly stale: a live 3-address black-box sweep found the real
+# supported/contradicted crossover sitting somewhere in (376, 832], not
+# cleanly at either 250 or 1200, and the report's own author could not
+# resolve why without reading this file (explicitly out of scope for that
+# research-only dispatch).
+#
+# Re-verified here, WITH the source open: there is no discrepancy to fix.
+# `_status_for()`'s own documented rule resolves any value strictly between
+# the two bounds by comparing it to their midpoint -- (250+1200)/2 = 725,
+# which sits inside the exact (376, 832] band the report measured. Live
+# reconfirmed 2026-08-02 against the report's own three addresses: 5661
+# Riverdale Ave (376 complaints, 376 < 725) -> supported; 2770 Atlantic Ave
+# (831 complaints, 831 > 725) -> contradicted; 1520 Sedgwick Ave (1,608,
+# >= 1200 directly) -> contradicted. All three match this file's current,
+# unchanged behaviour exactly -- the "ambiguity" was the report's own
+# open question about a mechanism it hadn't read, not a bug in the
+# mechanism itself.
+#
+# A percentile-based swap (rank this claim's own noise count against every
+# other cell citywide, matching `cellprofile.py`'s new `noise.percentile`
+# field) was seriously considered, per the report's own recommendation --
+# and REJECTED after a live check falsified its premise: the app's own
+# "quiet, far, green" calibration anchor (3220 Netherland Ave, Riverdale --
+# the address `test_quiet_claim_is_supported_at_a_genuinely_quiet_
+# residential_address` exists specifically to keep classifying correctly)
+# lands at the 71st noise percentile and the 75th block-crime percentile
+# among the ~7,017 real citywide cells (live-measured 2026-08-02) -- ABOVE
+# the citywide median on both axes, not below it. NYC's per-cell
+# distribution is heavily weighted toward genuinely low-activity cells
+# (parks, industrial waterfront, low-density outer-borough blocks; the
+# citywide median is 26 noise complaints/cell and 14.2% of all cells read
+# an exact 0) -- so a neighbourhood that is quiet *by New York standards*,
+# and was hard-won calibrated to read that way here on 2026-07-18, is not
+# automatically in the bottom quartile of that specific, skewed
+# population. Wiring this file's classification to that raw percentile
+# would have silently reclassified Riverdale as "not quiet" -- reproducing
+# the exact miscalibration bug this file's own threshold history (see the
+# comment above) already paid to fix once, which is precisely the
+# "confidently wrong number" failure class this project's own
+# `AnchorSnapTooFar` precedent exists to prevent. The absolute thresholds
+# above stay in place, unchanged, for that reason.
 
 # "tree-lined" / "leafy" / "verdant" vs. living tree points (sources/
 # trees.py -- NYC Parks' ForMS 2.0 Forestry Tree Points as of 2026-08-02,
@@ -164,6 +209,21 @@ def _check_noise(prof: dict) -> _ClaimEval:
         count, NOISE_QUIET_AT_OR_BELOW, NOISE_LOUD_AT_OR_ABOVE, "supported", "contradicted"
     )
     evidence = f"{count} 311 noise complaints within a 5-minute walk in the last 12 months."
+
+    # Additive relative context (2026-08-02): this address's own H3 block
+    # cell's citywide noise percentile, from the same baked figure
+    # `GET /api/cell/{h3}` now shows (`cellprofile.py`'s `noise.
+    # percentile`). Deliberately does NOT drive `status` -- see the
+    # threshold block above for why a percentile-based classifier was
+    # rejected -- and is deliberately worded "this block" (the cell, a
+    # smaller ~0.105 km2 area) rather than repeating "5-minute walk" (the
+    # 400m/~0.5 km2 radius the count above actually measures): two real,
+    # differently-scoped numbers, never presented as if they were one.
+    cell_prof = cellprofile.profile_for(prof["cell"])
+    if cell_prof is not None:
+        percentile = cell_prof["noise"]["percentile"]
+        evidence += f" This block ranks in the {percentile:.0f}th percentile citywide for reported noise."
+
     return status, evidence, count, dict(prof["quiet"]["source"])
 
 
@@ -356,6 +416,13 @@ def check(address: str, listing_text: str) -> dict:
     Returns the /api/factcheck response shape exactly -- see the API
     contract in the fact-checker task prompt / PLAN.md.
     """
+    # Defensive warm, matching profile.py's own `_crime_percentile()`
+    # pattern for `citywide.warm_caches()`: api.py's startup lifespan
+    # already warms cellprofile before any request can arrive, but the CLI
+    # path (bearings.cli) never calls it, and `_check_noise()`'s block-
+    # level percentile context needs a real baked profile, not a crash.
+    # A no-op once already warm.
+    cellprofile.warm_caches()
     prof = profile.profile_for(address)
     return {
         "address": prof["address"],
