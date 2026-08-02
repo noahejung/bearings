@@ -397,6 +397,8 @@ simplifications).
 | [NYC HPD Housing Maintenance Code Violations](https://data.cityofnewyork.us/d/wvxf-dwi5) | Open violations by class (Class C = immediately hazardous) for a building's BBL | Free Socrata REST API | NYC Open Data Terms of Use |
 | [NYC PLUTO](https://data.cityofnewyork.us/d/64uk-42ks) | Year built, per tax lot | Free Socrata REST API | NYC Open Data Terms of Use |
 | [NYC Forestry Tree Points (ForMS 2.0)](https://data.cityofnewyork.us/d/hn5i-inap) | Living tree point counts near an address -- updates roughly every 2 weeks, replaces the frozen 2015 Street Tree Census as of 2026-08-02 | Free Socrata REST API | NYC Open Data Terms of Use |
+| [NYC DOT Seating Locations](https://data.cityofnewyork.us/d/esmy-s8q5) | Bench and leaning-bar counts near an address | Free Socrata REST API | NYC Open Data Terms of Use |
+| [NYC DOT Street Pavement Ratings](https://data.cityofnewyork.us/d/6yyb-pb25) | Street pavement condition (1-10 rating, Good/Fair/Poor bucket counts) on segments near an address, updated monthly | Free Socrata REST API | NYC Open Data Terms of Use |
 | [NYC Police Precinct boundaries](https://data.cityofnewyork.us/resource/y76i-bdw7.geojson) | Point-in-polygon precinct lookup + citywide choropleth polygons | Free Socrata GeoJSON export | NYC Open Data Terms of Use |
 | [NYPD CompStat](https://www.nyc.gov/site/nypd/stats/crime-statistics/citywide-crime-stats.page) | Per-precinct YTD robbery / felony assault / total major crime | Public PDF, requires a browser User-Agent (bot-UA block, not auth) | Public NYPD statistical release |
 | [NYC Neighborhood Tabulation Areas (2020)](https://data.cityofnewyork.us/d/9nt8-h7nd) | Neighbourhood name + centroid, for the map's label layer | Free Socrata GeoJSON export | NYC Open Data Terms of Use |
@@ -437,6 +439,12 @@ a stated simplification and distrust a hidden one.
   three-state shape. `heat` and `flood` don't have this gap -- `heat`
   falls back to a point-radius join when there's no BBL (`joined_on` says
   which happened) and `flood` never needs a BBL at all.
+- **Street pavement ratings carry a real 0-means-"not rated" sentinel, and
+  this codebase filters it out rather than averaging it in.** DOT's
+  `systemrating=0.0` does not mean "rated zero" -- 72,766 of the 72,768
+  rows with that value also carry a real `nonratingreason` (Construction,
+  Duplicate, Weather, etc.), confirmed live. `sources/pavement.py` only
+  ever counts a row with `nonratingreason IS NULL` as a real rating.
 - **The tree dataset's scope broadened on 2026-08-02, not narrowed.**
   Swapping the frozen 2015 Street Tree Census for NYC Parks' live ForMS
   2.0 Forestry Tree Points also changed what counts as "a tree": the new

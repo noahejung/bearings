@@ -62,6 +62,19 @@ SOCRATA_DATASETS = {
     "rodents":          "p937-wjvj",  # DOHMH Rodent Inspections (confirmed live 2026-07-13)
     "buildings":        "5zhs-2jue",  # BUILDING -- NYC building footprints (confirmed live 2026-07-14)
     "centerlines":      "inkn-q76z",  # NYC Street Centerline (CSCL) (confirmed live 2026-07-14)
+    # DOT Seating Locations (benches + leaning bars) -- confirmed live
+    # 2026-08-02: 3,562 rows citywide, real Point `the_geom`, last touched
+    # 2026-07-10. Supersedes the older, frozen "City Bench Locations"
+    # (whjh-s3x7, last touched 2020-12-22) -- never wired into this
+    # codebase before, so this is net-new, not a swap.
+    "benches":          "esmy-s8q5",
+    # DOT Street Pavement Ratings -- confirmed live 2026-08-02: 514,521 rows
+    # (one row per segment per inspection pass, most recent 2026-08-01),
+    # updated monthly. Net-new -- never wired into this codebase before.
+    # Geometry is a MultiLineString (`the_geom`), not a Point -- see
+    # sources/pavement.py for why that keeps this out of the citywide
+    # per-cell bake for now.
+    "pavement":         "6yyb-pb25",
 }
 
 # Overture release string. NOT used directly by fetch_pois() anymore --

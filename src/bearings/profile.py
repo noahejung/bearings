@@ -20,6 +20,7 @@ import pandas as pd
 from bearings import cells, citywide, config, geocode, staleness, transit
 from bearings.sources import (
     bedbugs,
+    benches,
     compstat,
     flood,
     gtfs,
@@ -27,6 +28,7 @@ from bearings.sources import (
     hpd,
     noise,
     overture,
+    pavement,
     pluto,
     precincts,
     rodents,
@@ -532,6 +534,24 @@ def _flood(lat: float, lng: float) -> dict:
     }
 
 
+@lru_cache(maxsize=256)
+def _benches_near(lat: float, lng: float) -> dict:
+    """benches.near() already returns a complete, self-describing dict
+    (its own `source` included, benches/leaning_bars split apart) --
+    always computed, point-based, matching flood's own "every profile has
+    a real (lat, lng)" reasoning."""
+    return benches.near(lat, lng)
+
+
+@lru_cache(maxsize=256)
+def _pavement_near(lat: float, lng: float) -> dict | None:
+    """pavement.near() already returns a complete, self-describing dict, or
+    `None` when no segment near this point has ever carried a real rating
+    (see pavement.py's own docstring on the systemrating=0 sentinel this
+    module already filters out) -- never a fabricated zero."""
+    return pavement.near(lat, lng)
+
+
 def profile_for(address: str) -> dict:
     loc = geocode.geocode(address)
     cell = cells.cell_for(loc.lat, loc.lng)
@@ -557,4 +577,6 @@ def profile_for(address: str) -> dict:
         "rodents": _rodents(loc.bbl),
         "heat": _heat(loc.bbl, loc.lat, loc.lng),
         "flood": _flood(loc.lat, loc.lng),
+        "benches": _benches_near(loc.lat, loc.lng),
+        "pavement": _pavement_near(loc.lat, loc.lng),
     }

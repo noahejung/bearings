@@ -290,3 +290,36 @@ def test_flood_minimal_hazard_is_not_sfha(empire_state):
     f = empire_state["flood"]
     assert f["zone"]["zone"] == "X"
     assert f["zone"]["in_special_flood_hazard_area"] is False
+
+
+# --- Phase 1 data-freshness: benches, pavement -- wired into profile_for() ---
+
+
+def test_has_the_fresh_data_blocks(empire_state):
+    assert {"benches", "pavement"} <= set(empire_state)
+
+
+def test_benches_real_nonzero_split(empire_state):
+    # Confirmed live 2026-08-02: 11 benches + 3 leaning bars within 400m of
+    # Empire State -- both non-zero, matching benches.py's own fixture.
+    b = empire_state["benches"]
+    assert b["benches"] > 5
+    assert b["leaning_bars"] > 0
+    assert b["source"] == {
+        "name": "NYC DOT Seating Locations",
+        "url": "https://data.cityofnewyork.us/d/esmy-s8q5",
+    }
+
+
+def test_pavement_real_rated_segments(empire_state):
+    # Confirmed live 2026-08-02: 8 rated segments within 250m of Empire
+    # State, average 7.73, 0 Poor -- a real, non-fabricated result, not the
+    # None case (see test_pavement.py's own OPEN_WATER fixture for that).
+    p = empire_state["pavement"]
+    assert p is not None
+    assert p["segments_rated"] > 0
+    assert p["good"] + p["fair"] + p["poor"] == p["segments_rated"]
+    assert p["source"] == {
+        "name": "NYC DOT Street Pavement Ratings",
+        "url": "https://data.cityofnewyork.us/d/6yyb-pb25",
+    }
