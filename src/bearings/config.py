@@ -75,6 +75,18 @@ SOCRATA_DATASETS = {
     # sources/pavement.py for why that keeps this out of the citywide
     # per-cell bake for now.
     "pavement":         "6yyb-pb25",
+    # NYPD Complaint Data -- block-level crime incidents, for a per-H3-cell
+    # crime signal (bearings.sources.complaints) finer-grained than
+    # compstat.py's per-precinct PDF summary. Two datasets because NYPD
+    # splits complaint records this way: confirmed live 2026-08-02 via
+    # api.us.socrata.com/api/catalog/v1?ids=... -- "historic" is frozen
+    # (real content 2006 through 2025-12-31, confirmed via a live
+    # min/max(cmplnt_fr_dt) probe; the catalog's own description text is
+    # stale boilerplate and was NOT trusted), "current" is this calendar
+    # year's rows only, replaced wholesale by NYPD each quarter. See
+    # sources/complaints.py's module docstring for the full verification.
+    "crime_historic":   "qgea-i56i",  # NYPD Complaint Data Historic
+    "crime_current":    "5uac-w243",  # NYPD Complaint Data Current (YTD)
 }
 
 # Overture release string. NOT used directly by fetch_pois() anymore --
