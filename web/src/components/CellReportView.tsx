@@ -189,151 +189,187 @@ export function GettingAroundField({ cell }: { cell: CellProfile }) {
 // The five non-transit fields -- grocery/amenities, crime, noise, trees,
 // building age + hazards -- rendered beside the map in the side panel
 // (SPEC-layout-v3.md §3/§4).
+//
+// LAYOUT-V3 WAVE 1b (2026-08-02, SPEC-layout-v3.md §8 Wave 1b -- corrective
+// after Noah rejected Wave 1's shipped result: "the width spread i
+// requested didn't happen we just shifted the big cards in a long vertical
+// column next to the map"). Wave 1's five `.field` cards (full provenance
+// paragraphs inline, always visible) are exactly the "long vertical column"
+// failure mode the amended spec now names and bans. This function now
+// renders five DENSE `.tile`s instead: a plain-language label, one
+// headline value/verdict, the existing stamp, and a tap-to-toggle
+// `<details>` disclosure -- everything that isn't the headline value
+// (every consequence sentence, caveat, provenance paragraph, and source
+// citation this file rendered before) moves verbatim inside that
+// `<details>`, per the spec's explicit "zero strings deleted" rule. This is
+// an INTERIM home for that text (Wave 2 still owns building the real
+// tooltip/disclosure-page split per §4.2) -- `<details>/<summary>` was
+// chosen here specifically because it's tap-to-toggle by construction (no
+// hover-only affordance, keyboard-operable, works at 375px) without
+// needing new JS state.
 export function CellReportView({ cell }: { cell: CellProfile }) {
   const crime = cell.safety.crime;
   const hasBuildingAge = cell.building_age.median_year_built !== null;
+  const totalAmenities = CATEGORY_LABELS.reduce((sum, [key]) => sum + cell.amenities.counts[key], 0);
+  const violations = cell.housing_hazards.class_c_violations;
 
   return (
-    <div className="fields">
-      <article className="field" aria-labelledby="cell-amenities-heading">
-        <header className="field__head">
-          <div>
-            <h2 className="field__title" id="cell-amenities-heading">
-              Grocery &amp; everyday places
-            </h2>
-          </div>
+    <div className="tilegrid">
+      <article className="tile" aria-labelledby="cell-amenities-heading">
+        <header className="tile__head">
+          <h2 className="tile__title" id="cell-amenities-heading">
+            Grocery &amp; everyday places
+          </h2>
           <Stamp variant="confirmed" compact />
         </header>
-        <ul className="amenities">
-          {CATEGORY_LABELS.map(([key, label]) => (
-            <li className="amenity" key={key}>
-              <span className="amenity__count">
-                <Stat value={cell.amenities.counts[key]} />
-              </span>
-              <span className="amenity__label">{label}</span>
-            </li>
-          ))}
-        </ul>
-        <p className="field__provenance">
-          Real, named places in this block only — measured as a straight line, not an
-          actual route, so it can over- or under-count near rivers, parks, or highways.
-          <br />
-          <SourceTag source={cell.amenities.source} />
+        <p className="tile__value">
+          <Stat value={totalAmenities} />
         </p>
+        <p className="tile__sub">place{totalAmenities === 1 ? "" : "s"} counted nearby</p>
+        <details className="tile__disclosure">
+          <summary>details</summary>
+          <ul className="amenities">
+            {CATEGORY_LABELS.map(([key, label]) => (
+              <li className="amenity" key={key}>
+                <span className="amenity__count">
+                  <Stat value={cell.amenities.counts[key]} />
+                </span>
+                <span className="amenity__label">{label}</span>
+              </li>
+            ))}
+          </ul>
+          <p className="field__provenance">
+            Real, named places in this block only — measured as a straight line, not an
+            actual route, so it can over- or under-count near rivers, parks, or highways.
+            <br />
+            <SourceTag source={cell.amenities.source} />
+          </p>
+        </details>
       </article>
 
-      <article className="field" aria-labelledby="cell-safety-heading">
-        <header className="field__head">
-          <div>
-            <h2 className="field__title" id="cell-safety-heading">
-              Crime near here
-            </h2>
-          </div>
+      <article className="tile" aria-labelledby="cell-safety-heading">
+        <header className="tile__head">
+          <h2 className="tile__title" id="cell-safety-heading">
+            Crime near here
+          </h2>
           <Stamp variant={crime ? "confirmed" : "no_data"} compact />
         </header>
         {!crime ? (
-          <p className="field__empty">We don&rsquo;t have crime data for this block yet.</p>
+          <p className="tile__value tile__value--empty">We don&rsquo;t have crime data for this block yet.</p>
         ) : (
           <>
-            <p className="safety-relative">
-              <span className="safety-relative__label">{crimeRelativeLabel(crime.crime_percentile)}</span>
-              <span className="safety-relative__detail">
+            <p className="tile__value tile__value--text">{crimeRelativeLabel(crime.crime_percentile)}</p>
+            <details className="tile__disclosure">
+              <summary>details</summary>
+              <p className="field__empty">
                 Ranks {formatPercentile(crime.crime_percentile)} for reported major crime, compared
                 with the rest of New York City.
-              </span>
-            </p>
-            <p className="field__provenance">
-              NYPD crime data, week ending {crime.week_ending} · {crime.total_ytd.toLocaleString()}{" "}
-              major crimes so far this year in this area.
-              <br />
-              {cell.safety.crime_caveat}
-              <br />
-              <SourceTag source={cell.safety.source} />
-            </p>
+              </p>
+              <p className="field__provenance">
+                NYPD crime data, week ending {crime.week_ending} · {crime.total_ytd.toLocaleString()}{" "}
+                major crimes so far this year in this area.
+                <br />
+                {cell.safety.crime_caveat}
+                <br />
+                <SourceTag source={cell.safety.source} />
+              </p>
+            </details>
           </>
         )}
       </article>
 
-      <article className="field" aria-labelledby="cell-quiet-heading">
-        <header className="field__head">
-          <div>
-            <h2 className="field__title" id="cell-quiet-heading">
-              Noise complaints
-            </h2>
-          </div>
+      <article className="tile" aria-labelledby="cell-quiet-heading">
+        <header className="tile__head">
+          <h2 className="tile__title" id="cell-quiet-heading">
+            Noise complaints
+          </h2>
           <Stamp variant="confirmed" compact />
         </header>
-        <p className="headline">
+        <p className="tile__value">
           <Stat value={cell.noise.complaints_12mo} />
         </p>
-        <p className="field__provenance">
-          Noise complaints neighbors reported to the city, trailing 12 months · in this block.
-          <br />
-          <SourceTag source={cell.noise.source} />
-        </p>
+        <p className="tile__sub">reports, trailing 12mo</p>
+        <details className="tile__disclosure">
+          <summary>details</summary>
+          <p className="field__provenance">
+            Noise complaints neighbors reported to the city, trailing 12 months · in this block.
+            <br />
+            <SourceTag source={cell.noise.source} />
+          </p>
+        </details>
       </article>
 
-      <article className="field" aria-labelledby="cell-green-heading">
-        <header className="field__head">
-          <div>
-            <h2 className="field__title" id="cell-green-heading">
-              Living street trees
-            </h2>
-          </div>
+      <article className="tile" aria-labelledby="cell-green-heading">
+        <header className="tile__head">
+          <h2 className="tile__title" id="cell-green-heading">
+            Living street trees
+          </h2>
           <Stamp variant="confirmed" compact />
         </header>
-        <p className="headline">
+        <p className="tile__value">
           <Stat value={cell.trees.street_trees} />
         </p>
-        <p className="field__provenance">
-          From the city's last street-tree count, 2015 · in this block. Trees planted
-          since won't show here.
-          <br />
-          <SourceTag source={cell.trees.source} />
-        </p>
+        <p className="tile__sub">counted in 2015</p>
+        <details className="tile__disclosure">
+          <summary>details</summary>
+          <p className="field__provenance">
+            From the city's last street-tree count, 2015 · in this block. Trees planted
+            since won't show here.
+            <br />
+            <SourceTag source={cell.trees.source} />
+          </p>
+        </details>
       </article>
 
-      <article className="field" aria-labelledby="cell-building-heading">
-        <header className="field__head">
-          <div>
-            <h2 className="field__title" id="cell-building-heading">
-              Building age &amp; serious hazards
-            </h2>
-          </div>
+      <article className="tile tile--wide" aria-labelledby="cell-building-heading">
+        <header className="tile__head">
+          <h2 className="tile__title" id="cell-building-heading">
+            Building age &amp; serious hazards
+          </h2>
           <Stamp variant={hasBuildingAge ? "confirmed" : "no_data"} compact />
         </header>
 
         {!hasBuildingAge ? (
-          <p className="field__empty">We don&rsquo;t have property records for this block yet.</p>
+          <p className="tile__value tile__value--empty">We don&rsquo;t have property records for this block yet.</p>
         ) : (
-          <p className="building__facts">
-            Most buildings here went up around{" "}
-            <strong>{Math.round(cell.building_age.median_year_built as number)}</strong>
-            {cell.building_age.era && <span className="era">{ERA_LABELS[cell.building_age.era]}</span>}
-          </p>
-        )}
-
-        <div className="violations">
-          <div
-            className={`violation${cell.housing_hazards.class_c_violations > 0 ? " violation--flag" : ""}`}
-          >
-            <span className="violation__count">
-              <Stat value={cell.housing_hazards.class_c_violations} />
+          <div className="tile__valuerow">
+            <span className="tile__value">
+              <strong>{Math.round(cell.building_age.median_year_built as number)}</strong>
+              {cell.building_age.era && <span className="era">{ERA_LABELS[cell.building_age.era]}</span>}
             </span>
-            <span className="violation__label">
-              Serious safety problems flagged by the city, not fixed yet
-              {cell.housing_hazards.class_c_violations > 0 && <em> — across every building on this block</em>}
+            <span className={`tile__value${violations > 0 ? " tile__value--flag" : ""}`}>
+              <Stat value={violations} suffix={violations === 1 ? "hazard flagged" : "hazards flagged"} />
             </span>
           </div>
-        </div>
+        )}
 
-        <p className="field__provenance">
-          {cell.housing_hazards.note}
-          <br />
-          <SourceTag source={cell.building_age.source} />
-          <br />
-          <SourceTag source={cell.housing_hazards.source} />
-        </p>
+        <details className="tile__disclosure">
+          <summary>details</summary>
+          {/* The year itself is not re-wrapped in its own <strong> here (unlike
+              the always-visible headline above) -- purely so this sentence's
+              own text node doesn't exactly duplicate the headline's isolated
+              "1920"-style text node, which App.test.tsx's getByText("1920")
+              (a single-match query) depends on staying unique in the DOM. The
+              real fact (year + era) is identical either way; only which
+              element wraps the number differs. */}
+          {hasBuildingAge && (
+            <p className="field__empty">
+              Most buildings here went up around {Math.round(cell.building_age.median_year_built as number)}
+              {cell.building_age.era && ` (${ERA_LABELS[cell.building_age.era]})`}.
+            </p>
+          )}
+          <p className="field__empty">
+            Serious safety problems flagged by the city, not fixed yet
+            {violations > 0 && <em> — across every building on this block</em>}
+          </p>
+          <p className="field__provenance">
+            {cell.housing_hazards.note}
+            <br />
+            <SourceTag source={cell.building_age.source} />
+            <br />
+            <SourceTag source={cell.housing_hazards.source} />
+          </p>
+        </details>
       </article>
     </div>
   );

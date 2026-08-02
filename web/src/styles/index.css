@@ -130,21 +130,26 @@ body {
 }
 
 /* ---------- shell ---------- */
-/* LAYOUT-V3 WAVE 1 (2026-08-02, SPEC-layout-v3.md §3): side margins
-   tightened -- Noah: "we expand page space by decreasing margins on left
-   and right." Old clamp topped out at 44px per side; a 44px+44px cut
-   across the whole realistic desktop range (this margin is only ever
-   below its ceiling between ~1024px and .wrap's own 1360px max-width --
-   above that the wrap is already capped and centred, so the value stops
-   mattering) is exactly the width the new .mapgrid side panel (below)
-   needs to fit next to the map without narrowing it below a usable size.
-   Floor also nudged down 2px (16px -> 14px), which only ever applies at
-   the narrowest phones -- a real, if small, win against the 375px search
-   bar already being flagged as tight (2026-07-28 UX audit finding #3). */
+/* LAYOUT-V3 WAVE 1b (2026-08-02, SPEC-layout-v3.md §3 AMENDED, §8 Wave 1b):
+   Wave 1's clamp(14px,1.8vw,28px) reclaim (~32px total at 1920px) was
+   rejected on sight by Noah -- "the width spread i requested didn't
+   happen." The real culprit wasn't the padding clamp, it was `max-width:
+   1360px` itself: at a 1920px viewport the old rule left 280px of dead
+   margin PER SIDE once the wrap hit its cap, no matter how tight the
+   padding got, which is why the map never actually got wider on a normal
+   desktop monitor. Binding numbers now (§3 AMENDED): content container
+   >= 96% of viewport at >= 1366px, side margins <= 2vw combined -- verified
+   live via getBoundingClientRect() at both spec-named breakpoints (see the
+   Wave 1b agent-report for the exact measured ratios, both well clear of
+   the 0.96 floor). max-width is raised to 2200px --
+   inert at both binding widths (1366/1920 sit far below it), so it is not
+   what determines the ratio there; it exists only as a sanity ceiling
+   against absurdly wide monitors, not a design constraint this wave was
+   asked to satisfy beyond 1920px. Floor unchanged from Wave 1 (14px). */
 .wrap {
-  max-width: 1360px;
+  max-width: 2200px;
   margin: 0 auto;
-  padding: 22px clamp(14px, 1.8vw, 28px) 90px;
+  padding: 22px clamp(14px, 1vw, 20px) 90px;
 }
 
 /* ---------- information band — the engineering-drawing register, top and
@@ -1368,25 +1373,21 @@ body {
   vertical-align: middle;
 }
 
-/* ---------- map + side-panel grid (LAYOUT-V3 WAVE 1, 2026-08-02,
-   SPEC-layout-v3.md §3) -- the page-level two-column grid: MapView on the
-   left, the real per-block stat cards (CellReportView's five non-transit
-   fields) on the right, both inside the tightened .wrap margins. This
-   replaces the old .mapfield__stage grid MapView.tsx used to draw
-   internally around its now-removed "What's here" .readout hover-legend
-   panel -- that panel is fully gone (SPEC-layout-v3.md §2 confirmed it,
-   not some other component, is what Noah meant), not just relocated: its
-   own copy was navigational hint text about the map's chip/reach-ring UI,
-   already duplicated by .mapfield__legend below the map, not a caveat or
-   source citation this project's honesty rule would require preserving
-   verbatim. 420px was chosen for the side panel because .fields' own
-   320px column-floor rule (see that rule's own long comment) needs some
-   padding room beyond the bare floor before a card's content genuinely
-   stops clipping -- confirmed empirically via Playwright screenshots at
-   1366/1920px, not guessed. */
+/* ---------- map + side-panel grid ----------
+   LAYOUT-V3 WAVE 1 (2026-08-02, SPEC-layout-v3.md §3) established the
+   page-level two-column grid: MapView on the left, the side panel on the
+   right, both inside .wrap's margins.
+
+   LAYOUT-V3 WAVE 1b (2026-08-02, SPEC-layout-v3.md §8 Wave 1b, corrective):
+   the panel track shrinks from 420px to 360px (spec's amended "300-400px
+   column" range) now that CellReportView renders dense .tile cards instead
+   of full .field cards -- a 420px column sized for full provenance
+   paragraphs was itself part of why Wave 1 read as "a long vertical column
+   next to the map"; a narrower track gives the map more of the reclaimed
+   width from the .wrap fix above, which is the actual point of this wave. */
 .mapgrid {
   display: grid;
-  grid-template-columns: 1fr 420px;
+  grid-template-columns: 1fr 360px;
   gap: 1.2rem;
   align-items: start;
   margin-top: 1.5rem;
@@ -1399,7 +1400,7 @@ body {
 }
 
 .sidepanel {
-  min-width: 0; /* grid blowout guard -- a long unbroken token inside a card must not force the column wider than its 420px track */
+  min-width: 0; /* grid blowout guard -- a long unbroken token inside a tile must not force the column wider than its 360px track */
 }
 
 /* The side panel's two non-card states (loading a report, or none loaded
@@ -1417,19 +1418,183 @@ body {
   letter-spacing: 0.04em;
 }
 
-/* Once real cards are loaded, .fields' own auto-fit grid (see that rule's
-   comment) already collapses to one column at this panel's 420px width --
-   these two overrides only fix the two things that assume a MULTI-column
-   layout: the top-of-grid gap (irrelevant with nothing above it in this
-   context) and the nth-child(odd) left-border rule (in a genuine single
-   column every card is visually "first in its row", so every card should
-   get the left rule, not just the odd-numbered ones). */
-.sidepanel .fields {
-  margin-top: 0;
+/* ---------- side-panel stat tiles (LAYOUT-V3 WAVE 1b, 2026-08-02,
+   SPEC-layout-v3.md §8 Wave 1b) ----------
+   The dense replacement for Wave 1's full .field cards: a fixed two-column
+   grid (not .fields' auto-fit -- a 360px track split by auto-fit's
+   minmax(320px,1fr) floor would only ever produce ONE column, which is
+   exactly the vertical stack this wave exists to eliminate). Five tiles
+   sit 2-2-1; the fifth (building age + hazards, the one field carrying two
+   real values) spans both columns via .tile--wide rather than leaving a
+   half-empty trailing cell, the same convention .field--wide already uses
+   below the map for Getting Around. */
+.tilegrid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.55rem;
 }
 
-.sidepanel .field {
-  border-left: 1px solid var(--ink);
+.tile {
+  border: 1px solid var(--ink);
+  padding: 0.65rem 0.7rem 0.7rem;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.tile--wide {
+  grid-column: 1 / -1;
+}
+
+.tile__head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 0.4rem;
+  margin-bottom: 0.4rem;
+}
+
+.tile__title {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 0.72rem;
+  line-height: 1.2;
+  text-transform: uppercase;
+  letter-spacing: -0.005em;
+}
+
+.tile__value {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 1.35rem;
+  font-weight: 700;
+  line-height: 1.1;
+}
+
+.tile__value .stat {
+  font-size: inherit;
+  font-weight: inherit;
+}
+
+.tile__value--text {
+  font-family: var(--font-display);
+  font-size: 0.86rem;
+  font-weight: 700;
+  text-transform: none;
+  line-height: 1.25;
+}
+
+.tile__value--empty {
+  font-family: var(--font-mono);
+  font-size: 0.76rem;
+  font-weight: 400;
+  color: var(--steel);
+  line-height: 1.4;
+}
+
+.tile__value--flag {
+  color: var(--red);
+}
+
+.tile__valuerow {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.tile__sub {
+  margin-top: 0.1rem;
+  font-family: var(--font-mono);
+  font-size: 0.62rem;
+  letter-spacing: 0.02em;
+  color: var(--steel);
+}
+
+.tile .era {
+  margin-left: 0.4rem;
+  font-family: var(--font-mono);
+  font-size: 0.58rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--steel);
+}
+
+/* The tap-to-toggle disclosure affordance (SPEC-layout-v3.md §8 Wave 1b:
+   "small tap-to-toggle disclosure affordance per tile"). Native
+   <details>/<summary> rather than hand-rolled JS state -- tap-to-toggle by
+   construction (no hover-only path, keyboard-operable via Enter/Space),
+   which matters at this app's already-documented 375px mobile constraint
+   (2026-07-28 UX audit finding #3). Everything inside is content moved
+   VERBATIM out of Wave 1's always-visible .field cards -- see
+   CellReportView.tsx's own comment for the "zero strings deleted"
+   accounting. Wave 2 still owns replacing this interim `<details>` with
+   the real tooltip/disclosure-page split (SPEC-layout-v3.md §4.2). */
+.tile__disclosure {
+  margin-top: 0.5rem;
+}
+
+.tile__disclosure summary {
+  cursor: pointer;
+  list-style: none;
+  font-family: var(--font-mono);
+  font-size: 0.62rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--steel);
+}
+
+.tile__disclosure summary::-webkit-details-marker {
+  display: none;
+}
+
+.tile__disclosure summary::before {
+  content: "+ ";
+}
+
+.tile__disclosure[open] summary::before {
+  content: "\2212 "; /* minus sign */
+}
+
+.tile__disclosure .field__provenance {
+  margin-top: 0.6rem;
+  padding-top: 0.5rem;
+}
+
+.tile__disclosure .field__empty {
+  margin-top: 0.5rem;
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  color: var(--ink);
+  line-height: 1.5;
+}
+
+/* .amenities' own rule (see that class's definition) switches to
+   repeat(4,1fr) at a VIEWPORT width >= 420px -- correct for its original
+   context (a >=320px-wide .field card, plenty of room for 4 columns), but
+   a real overflow bug in a .tile: a half-width tile is only ~150-180px of
+   actual inner width even at a 1920px viewport (the media query keys off
+   the viewport, not the tile's own width, so it fires regardless), and
+   four mono-numeral+label columns don't fit -- confirmed live via
+   Playwright screenshot at 1366px: the grid track refused to shrink below
+   its content's min-content width and visually spilled into the
+   neighbouring tile. This 2-class selector's specificity (0,2,0) beats the
+   1-class media-scoped rule (0,1,0) regardless of viewport width, so
+   .amenities stays a real, always-fitting 2 columns inside any tile's
+   disclosure, independent of the outer page width. */
+.tile__disclosure .amenities {
+  grid-template-columns: repeat(2, 1fr);
+  margin-top: 0.5rem;
+}
+
+@media (max-width: 900px) {
+  /* Mobile stacking (SPEC-layout-v3.md §8 Wave 1b: "tiles stack under the
+     map in a 2-col grid, same order") -- the tile grid itself is already
+     2 columns at every width (unlike .fields' auto-fit collapse), so no
+     column-count change is needed here; this rule only exists so the
+     intent is explicit and grep-able, not implicit in "nothing changed". */
+  .tilegrid {
+    grid-template-columns: 1fr 1fr;
+  }
 }
 
 /* ---------- footer ---------- */
