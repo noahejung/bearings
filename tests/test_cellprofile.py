@@ -84,6 +84,7 @@ def test_empire_state_cell_carries_the_full_contract_shape(esb_cell, esb_profile
         "noise",
         "amenities",
         "trees",
+        "benches",
         "building_age",
         "transit",
         "safety",
@@ -95,6 +96,7 @@ def test_empire_state_cell_carries_the_full_contract_shape(esb_cell, esb_profile
     assert set(esb_profile["noise"]) == {"complaints_12mo", "source"}
     assert set(esb_profile["amenities"]) == {"counts", "source"}
     assert set(esb_profile["trees"]) == {"street_trees", "source"}
+    assert set(esb_profile["benches"]) == {"benches", "leaning_bars", "source"}
     assert set(esb_profile["building_age"]) == {"median_year_built", "era", "source"}
     assert set(esb_profile["transit"]) == {
         "stations_within_500m",
@@ -124,6 +126,7 @@ def test_every_source_cites_a_real_working_url(esb_profile):
         "noise",
         "amenities",
         "trees",
+        "benches",
         "building_age",
         "transit",
         "safety",
@@ -140,6 +143,7 @@ def test_empire_state_cell_has_real_nontrivial_signal_not_just_zeros(esb_profile
     # loudest, densest, most transit-served blocks in the city.
     assert esb_profile["noise"]["complaints_12mo"] > 0
     assert sum(esb_profile["amenities"]["counts"].values()) > 0
+    assert esb_profile["benches"]["benches"] > 0
     assert esb_profile["transit"]["stations_within_500m"] > 0
     assert esb_profile["building_age"]["median_year_built"] is not None
     assert 1600 < esb_profile["building_age"]["median_year_built"] <= 2026

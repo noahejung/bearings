@@ -445,6 +445,14 @@ a stated simplification and distrust a hidden one.
   rows with that value also carry a real `nonratingreason` (Construction,
   Duplicate, Weather, etc.), confirmed live. `sources/pavement.py` only
   ever counts a row with `nonratingreason IS NULL` as a real rating.
+- **Pavement ratings are computed live per address, not baked into the
+  citywide per-cell grid.** The dataset's geometry is a street-segment
+  line, not a point, and this codebase has no spatial library to compute
+  a correct point-to-segment nearest-street join for ~7,000 cells -- see
+  `cellprofile.py`'s own module docstring for the full reasoning (same
+  "don't ship a plausible-but-silently-wrong number" discipline as the
+  `AnchorSnapTooFar` guard). Benches, by contrast, are a real point
+  dataset and are baked citywide the same way trees are.
 - **The tree dataset's scope broadened on 2026-08-02, not narrowed.**
   Swapping the frozen 2015 Street Tree Census for NYC Parks' live ForMS
   2.0 Forestry Tree Points also changed what counts as "a tree": the new

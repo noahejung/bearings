@@ -39,6 +39,11 @@ or work in this cell"), not an arbitrary shape.
     already-baked pois.parquet (same 8 categories api.py's report card and
     mapgeo.py's metric dropdown already use).
   - `trees`: real living-street-tree counts in this cell.
+  - `benches`: real DOT-inventoried bench and leaning-bar counts in this
+    cell (sources/benches.py) -- added 2026-08-02, same "complete physical
+    inventory, quiet=real zero" reasoning as trees (see "Deliberately NOT
+    precomputed" below for why this is materially different from the
+    excluded voluntary-complaint sources).
   - `building_age`: the real median PLUTO `yearbuilt` of every lot centred
     in this cell, or `None` if none has a recorded year -- never a
     fabricated single-lot answer standing in for the whole cell.
@@ -84,6 +89,19 @@ silent omissions):**
     entered after an HPD inspection finds a real code violation, not
     merely that someone called -- a real (if still imperfect: inspection
     intensity varies too) step up from a raw complaint count.
+  - `pavement` (DOT Street Pavement Ratings, added 2026-08-02): unlike
+    trees/benches, this dataset's geometry is a street-segment
+    MultiLineString, not a point -- baking a per-cell answer needs a true
+    point-to-segment nearest-line calculation for ~7,000 cells (a cell's
+    centroid isn't necessarily near any segment's *endpoint*, so a naive
+    centroid-to-vertex distance would silently pick the wrong nearest
+    street for a cell that sits mid-segment). This codebase has no spatial
+    library (shapely/geopandas) to do that correctly, and this is exactly
+    the "plausible but silently wrong" number shape the project's own
+    `AnchorSnapTooFar` guard exists to prevent -- not attempted this pass.
+    sources/pavement.py's own `near()` still answers this live, per
+    address, for profile.py's per-request report; only the citywide bake
+    is skipped. See sources/pavement.py's docstring for the full reasoning.
 """
 
 import json
@@ -98,6 +116,7 @@ from bearings import cells as cellslib
 from bearings import citywide, config, profile, staleness
 from bearings.mapgeo import AMENITY_CATEGORIES, TRANSIT_ACCESS_RADIUS_M
 from bearings.sources import buildings, compstat, hpd, noise, overture, pluto, precincts, socrata
+from bearings.sources import benches as benches_source
 from bearings.sources import trees as trees_source
 from bearings.transit import SOURCE as TRANSIT_SOURCE
 from bearings.transit import TRANSIT_CAVEAT, WALK_SPEED_MPS, _haversine_m
@@ -196,6 +215,23 @@ def _trees_by_cell(cell_ids: list[str]) -> dict[str, int]:
         cell = _safe_cell_for(lat, lng)
         if cell in counts:
             counts[cell] += 1
+    return counts
+
+
+def _benches_by_cell(cell_ids: list[str]) -> dict[str, dict[str, int]]:
+    """Real bench/leaning-bar counts per cell -- same shape as
+    `_trees_by_cell()` above (a citywide points fetch, bucketed by cell),
+    but keeps benches/leaning_bars distinct per cell too (see
+    sources/benches.py's own docstring on why they're never folded into
+    one number)."""
+    pts = benches_source.citywide_points()
+    counts = {c: {"benches": 0, "leaning_bars": 0} for c in cell_ids}
+    for lat, lng, subtype in zip(pts["lat"], pts["lng"], pts["asset_subtype"], strict=True):
+        cell = _safe_cell_for(lat, lng)
+        if cell not in counts:
+            continue
+        key = "leaning_bars" if subtype == "LEANING BAR" else "benches"
+        counts[cell][key] += 1
     return counts
 
 
@@ -374,6 +410,7 @@ def _bake_all() -> dict:
 
     noise_counts = _noise_by_cell(cell_ids)
     tree_counts = _trees_by_cell(cell_ids)
+    bench_counts = _benches_by_cell(cell_ids)
     amenity_counts = _amenities_by_cell(cell_ids)
     age_median, hazard_counts, pluto_hit_rate = _building_age_and_hazards_by_cell(cell_ids)
     transit_by_cell = _transit_by_cell(cell_ids, centroids)
@@ -403,6 +440,13 @@ def _bake_all() -> dict:
             "trees": {
                 "street_trees": tree_counts.get(c, 0),
                 "source": dict(trees_source.SOURCE),
+            },
+            "benches": {
+                "benches": bench_counts.get(c, {"benches": 0, "leaning_bars": 0})["benches"],
+                "leaning_bars": bench_counts.get(
+                    c, {"benches": 0, "leaning_bars": 0}
+                )["leaning_bars"],
+                "source": dict(benches_source.SOURCE),
             },
             "building_age": _building_age_block(age_median.get(c)),
             "transit": {

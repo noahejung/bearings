@@ -354,6 +354,7 @@ def test_cell_returns_the_precomputed_block_level_profile(client):
         "noise",
         "amenities",
         "trees",
+        "benches",
         "building_age",
         "transit",
         "safety",
