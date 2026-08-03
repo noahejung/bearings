@@ -170,17 +170,22 @@ describe("GettingAroundField -- transit unreachable-reason copy", () => {
 });
 
 // LAYOUT-V3 WAVE 1 (2026-08-02): confirms CellReportView still renders its
-// five non-transit fields (now rendered beside the map, not below it) after
-// the split above -- a regression guard for the "content-identical" wave-1
+// non-transit fields (now rendered beside the map, not below it) after the
+// split above -- a regression guard for the "content-identical" wave-1
 // constraint (SPEC-layout-v3.md §8 Wave 1 acceptance).
-describe("CellReportView -- five non-transit fields", () => {
-  it("renders grocery, crime, noise, trees, and building/hazards for the control cell", () => {
+//
+// LAYOUT-V3 WAVE 1e (2026-08-03): four fields, not five -- "building age &
+// serious hazards" is REMOVED from this grid (see CellReportView.tsx's own
+// item-1e comment: it becomes a real per-building map interaction instead
+// of a cell-wide average tile). Renamed from "five" to "four" accordingly.
+describe("CellReportView -- four non-transit fields", () => {
+  it("renders grocery, crime, noise, and trees for the control cell -- no building/hazards tile", () => {
     render(<CellReportView cell={CONTROL_CELL} />);
     expect(screen.getByRole("heading", { name: /grocery & everyday places/i })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: /crime near here/i })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: /noise complaints/i })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: /living street trees/i })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: /building age & serious hazards/i })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: /building age & serious hazards/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: /getting around/i })).not.toBeInTheDocument();
   });
 });
@@ -197,7 +202,7 @@ describe("CellReportView -- shared detail region (item 5, no per-tile distortion
 
   it("expanding one tile's toggle reveals ONLY that tile's content in the one shared region", () => {
     render(<CellReportView cell={CONTROL_CELL} />);
-    // Document order: amenities, crime, noise, trees, building.
+    // Document order: amenities, crime, noise, trees.
     fireEvent.click(screen.getAllByRole("button", { name: /\+ details/i })[0]);
     const region = screen.getByRole("region");
     // Real amenity category counts moved verbatim into the shared region.

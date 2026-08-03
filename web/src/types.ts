@@ -189,9 +189,22 @@ export interface MapCell {
   transit_access: number;
 }
 
+// LAYOUT-V3 WAVE 1e (SPEC-layout-v3.md §8, Noah: "what's stopping us from
+// searching up every livable building and mapping that out"). Every real
+// footprint now carries its own real PLUTO/HPD attributes -- see
+// bearings/sources/buildings.py's footprints_in_bbox() docstring for the
+// exact None-vs-0 rules: `year_built`/`era`/`residential`/`hazard_class_c`
+// are all `null` for a footprint with no bbl or no matching PLUTO/HPD lot
+// (a real "no record"), EXCEPT `hazard_class_c`, which is a real `0` (not
+// `null`) whenever the lot itself has a match but no open Class C
+// violation ("we looked and found zero").
 export interface MapBuilding {
   bbl: string | null;
   coords: [number, number][]; // [lat, lng], exterior ring
+  year_built: number | null;
+  era: Era;
+  residential: boolean | null;
+  hazard_class_c: number | null;
 }
 
 export interface MapStreet {

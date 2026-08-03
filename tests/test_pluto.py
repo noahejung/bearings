@@ -94,3 +94,56 @@ def test_points_in_bbox_over_water_is_empty():
     df = pluto.points_in_bbox(WATER_BBOX)
     assert len(df) == 0
     assert set(df.columns) == {"lat", "lng", "year_built"}
+
+
+# --- _is_residential() / citywide_land_use() -- LAYOUT-V3 WAVE 1e's
+# per-building attribute join (sources/buildings.py) ---
+
+
+def test_is_residential_true_for_the_four_documented_residential_codes():
+    for code in ("1", "2", "3", "4"):
+        assert pluto._is_residential(code) is True
+
+
+def test_is_residential_false_for_a_known_commercial_code():
+    # "5" = Commercial & Office Buildings -- the Empire State Building's
+    # own real landuse code (confirmed live 2026-08-03: landuse="5",
+    # unitsres="0").
+    assert pluto._is_residential("5") is False
+
+
+@pytest.mark.parametrize("code", ["6", "7", "8", "9", "10", "11"])
+def test_is_residential_false_for_every_other_documented_code(code):
+    assert pluto._is_residential(code) is False
+
+
+def test_is_residential_none_for_missing_landuse():
+    # A missing landuse is not evidence either way -- never a guessed bool.
+    assert pluto._is_residential(None) is None
+    assert pluto._is_residential("") is None
+
+
+@pytest.fixture(scope="module")
+def land_use():
+    # A real, live, full-citywide fetch (~857k PLUTO lots) -- same order of
+    # magnitude/cost as citywide_points(), module-scoped so this test file
+    # pays it exactly once regardless of how many tests read from it.
+    return pluto.citywide_land_use()
+
+
+def test_citywide_land_use_returns_a_real_nontrivial_citywide_set(land_use):
+    assert set(land_use.columns) == {"bbl", "year_built", "landuse"}
+    assert len(land_use) > 500_000
+
+
+def test_citywide_land_use_resolves_a_known_residential_fixture(land_use):
+    # The known multi-family walk-up fixture (KNOWN_BBL, same building
+    # test_hpd.py fixtures) must resolve to its real, confirmed-live values.
+    row = land_use[land_use["bbl"] == KNOWN_BBL].iloc[0]
+    assert int(row["year_built"]) == 1930
+    assert row["landuse"] == "2"
+    assert pluto._is_residential(row["landuse"]) is True
+
+
+def test_citywide_land_use_never_returns_a_row_with_no_bbl(land_use):
+    assert land_use["bbl"].notna().all()

@@ -87,7 +87,7 @@ import h3
 import pandas as pd
 
 from bearings import cells, config, transit
-from bearings.sources import basemap, buildings, gtfs, overture, pluto, socrata, streets
+from bearings.sources import basemap, buildings, gtfs, hpd, overture, pluto, socrata, streets
 from bearings.sources import trees as trees_source
 from bearings.transit import _haversine_m
 
@@ -119,7 +119,8 @@ BASEMAP_NOTE = (
     "subway/PATH lines from the transit agencies' own schedules, plus five per-block "
     "numbers (noise complaints, nearby places, street trees, building age, transit "
     "stations) -- each cited to its real source elsewhere in this report, nothing "
-    "estimated."
+    "estimated. Click any home or apartment building for its own real year built and "
+    "safety-violation record, not just the block's average."
 )
 
 SOURCES = {
@@ -131,6 +132,11 @@ SOURCES = {
     "amenities": dict(overture.SOURCE),
     "trees": dict(trees_source.SOURCE),
     "building_age": dict(pluto.SOURCE),
+    # LAYOUT-V3 WAVE 1e -- each building footprint now carries its own real
+    # HPD open-Class-C hazard count (buildings.footprints_in_bbox()); cited
+    # here so the frontend's per-building popup can source it the same way
+    # `building_age` already sources PLUTO, rather than hardcoding a mirror.
+    "hazards": dict(hpd.SOURCE),
     "transit_access": dict(transit.SOURCE),
 }
 

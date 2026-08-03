@@ -63,6 +63,25 @@ def test_finds_real_building_mass_near_a_dense_block(geo):
         assert -74.4 < lng < -73.6
 
 
+def test_buildings_carry_real_per_building_attributes(geo):
+    # LAYOUT-V3 WAVE 1e: every building footprint the map serves now carries
+    # its own real PLUTO/HPD attributes, end to end through map_geometry()
+    # -- not just at the buildings.py source-module level (test_buildings.py
+    # covers that directly against a known fixture).
+    for b in geo["buildings"]:
+        assert set(b) == {"bbl", "coords", "year_built", "era", "residential", "hazard_class_c"}
+    with_year = [b for b in geo["buildings"] if b["year_built"] is not None]
+    assert len(with_year) > 10  # a real, non-trivial signal, not just structurally-present Nones
+    for b in with_year:
+        assert 1600 < b["year_built"] <= 2026
+        assert b["era"] in ("prewar", "postwar", "modern")
+        assert isinstance(b["hazard_class_c"], int)
+    # Dense Midtown commercial blocks must show at least one real
+    # non-residential building -- guards the same "always None/True" trap
+    # test_buildings.py's own equivalent test guards.
+    assert False in {b["residential"] for b in geo["buildings"]}
+
+
 def test_finds_real_street_hairlines_near_a_dense_block(geo):
     assert len(geo["streets"]) > 20
     for s in geo["streets"]:

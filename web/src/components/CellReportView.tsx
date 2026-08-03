@@ -68,12 +68,6 @@ const ANCHOR_LABELS: Record<keyof CellProfile["transit"]["to_anchors"], string> 
   newport_path: "Newport, NJ (PATH)",
 };
 
-const ERA_LABELS: Record<"prewar" | "postwar" | "modern", string> = {
-  prewar: "Pre-war",
-  postwar: "Post-war",
-  modern: "Modern",
-};
-
 // Same generous bar-scale ceiling TransitCard uses, for the same reason
 // (see that component's own comment) -- kept as a separate constant rather
 // than importing TransitCard's private one so the two components stay
@@ -167,12 +161,20 @@ export function GettingAroundField({ cell }: { cell: CellProfile }) {
 
 // LAYOUT-V3 WAVE 1c (2026-08-03, SPEC-layout-v3.md §8 Wave 1c item 4): which
 // map subject each tile's disclosure "talks about" -- MapView.tsx reads this
-// same key to decide what to emphasize. Deliberately just the five tile
+// same key to decide what to emphasize. Deliberately just the tile
 // identities, not a richer shape: the map-side effect that consumes this
 // still has to independently decide WHETHER real client-side geometry exists
 // for a given key (see MapView.tsx's own "tile highlight" effect comment for
 // the amenities-tile gap this can't paper over from here).
-export type TileHighlightKey = "amenities" | "crime" | "noise" | "trees" | "building";
+//
+// LAYOUT-V3 WAVE 1e (2026-08-03, SPEC-layout-v3.md §8, Noah: "what's
+// stopping us from searching up every livable building and mapping that
+// out"): "building" is REMOVED from this union -- building age and open
+// housing hazards leave the tile grid entirely and become their own map
+// interaction (a real per-building record on hover/click, not a block-wide
+// average tile) -- see MapView.tsx's own buildBuildingInfoElement() for
+// where that content now lives.
+export type TileHighlightKey = "amenities" | "crime" | "noise" | "trees";
 
 // LAYOUT-V3 WAVE 1c (2026-08-03, SPEC-layout-v3.md §8 Wave 1c item 5): the
 // human-readable title for whichever tile's disclosure is currently showing
@@ -183,12 +185,12 @@ const TILE_TITLES: Record<TileHighlightKey, string> = {
   crime: "Crime near here",
   noise: "Noise complaints",
   trees: "Living street trees",
-  building: "Building age & serious hazards",
 };
 
-// The five non-transit fields -- grocery/amenities, crime, noise, trees,
-// building age + hazards -- rendered beside the map in the side panel
-// (SPEC-layout-v3.md §3/§4).
+// The four non-transit fields -- grocery/amenities, crime, noise, trees --
+// rendered beside the map in the side panel (SPEC-layout-v3.md §3/§4).
+// Building age and open housing hazards used to be a fifth tile here
+// (LAYOUT-V3 WAVE 1e removed it -- see TileHighlightKey's own comment).
 //
 // LAYOUT-V3 WAVE 1b (2026-08-02, SPEC-layout-v3.md §8 Wave 1b -- corrective
 // after Noah rejected Wave 1's shipped result: "the width spread i
@@ -245,9 +247,7 @@ export function CellReportView({
   onTileHighlight?: (tile: TileHighlightKey | null) => void;
 }) {
   const crime = cell.safety.crime;
-  const hasBuildingAge = cell.building_age.median_year_built !== null;
   const totalAmenities = CATEGORY_LABELS.reduce((sum, [key]) => sum + cell.amenities.counts[key], 0);
-  const violations = cell.housing_hazards.class_c_violations;
 
   const [hoveredKey, setHoveredKey] = useState<TileHighlightKey | null>(null);
   const [expandedKey, setExpandedKey] = useState<TileHighlightKey | null>(null);
@@ -398,29 +398,19 @@ export function CellReportView({
           {disclosureToggle("trees")}
         </article>
 
-        <article className="tile tile--wide" aria-labelledby="cell-building-heading" {...hoverHandlers("building")}>
-          <header className="tile__head">
-            <h2 className="tile__title" id="cell-building-heading">
-              Building age &amp; serious hazards
-            </h2>
-            {!hasBuildingAge && <Stamp variant="no_data" compact />}
-          </header>
-
-          {!hasBuildingAge ? (
-            <p className="tile__value tile__value--empty">We don&rsquo;t have property records for this block yet.</p>
-          ) : (
-            <div className="tile__valuerow">
-              <span className="tile__value">
-                <strong>{Math.round(cell.building_age.median_year_built as number)}</strong>
-                {cell.building_age.era && <span className="era">{ERA_LABELS[cell.building_age.era]}</span>}
-              </span>
-              <span className={`tile__value${violations > 0 ? " tile__value--flag" : ""}`}>
-                <Stat value={violations} suffix={violations === 1 ? "hazard flagged" : "hazards flagged"} />
-              </span>
-            </div>
-          )}
-          {disclosureToggle("building")}
-        </article>
+        {/* LAYOUT-V3 WAVE 1e (2026-08-03, SPEC-layout-v3.md §8, Noah:
+            "what's stopping us from searching up every livable building and
+            mapping that out"): the "Building age & serious hazards" tile
+            (formerly here, `tile--wide`, a cell-wide median year + summed
+            Class C count) is REMOVED, not hidden -- that cell-level average
+            is exactly what Noah's question objected to ("we're not directly
+            searching up exact buildings"). The real per-building numbers
+            now live on the map itself: every residential building's own
+            footprint is its own real year/hazard record, on hover/click
+            (MapView.tsx's buildBuildingInfoElement()). Nothing here was
+            deleted without a new home -- see this app's "How this data
+            works" disclosure page, whose "Building age & serious hazards"
+            section now describes the map interaction directly. */}
       </div>
 
       {/* The one shared detail region every tile's toggle button controls
@@ -489,33 +479,6 @@ export function CellReportView({
             </p>
           )}
 
-          {expandedKey === "building" && (
-            <>
-              {/* The year itself is not re-wrapped in its own <strong> here
-                  (unlike the always-visible headline) -- purely so this
-                  sentence's own text node doesn't exactly duplicate the
-                  headline's isolated "1920"-style text node, which
-                  App.test.tsx's getByText("1920") (a single-match query)
-                  depends on staying unique in the DOM. The real fact (year
-                  + era) is identical either way; only which element wraps
-                  the number differs. */}
-              {hasBuildingAge && (
-                <p className="field__empty">
-                  Most buildings here went up around {Math.round(cell.building_age.median_year_built as number)}
-                  {cell.building_age.era && ` (${ERA_LABELS[cell.building_age.era]})`}.
-                </p>
-              )}
-              <p className="field__empty">
-                Serious safety problems flagged by the city, not fixed yet
-                {violations > 0 && <em> — across every building on this block</em>}
-              </p>
-              <p className="field__provenance">
-                <SourceTag source={cell.building_age.source} />
-                <br />
-                <SourceTag source={cell.housing_hazards.source} />
-              </p>
-            </>
-          )}
         </div>
       )}
     </div>

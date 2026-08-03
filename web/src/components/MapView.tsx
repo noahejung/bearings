@@ -7,7 +7,7 @@ import { useEffect, useRef, useState } from "react";
 import { ApiError, getCellsIndex, getCitywide, getMapGeometry, getReach } from "../api";
 import { buildMapStyle, buildOverlayLayers } from "../lib/mapStyle";
 import type { PinnedPlace } from "../lib/preferences";
-import type { CellsIndexEntry, Citywide, MapGeometry, Reach } from "../types";
+import type { CellsIndexEntry, Citywide, Era, MapGeometry, Reach, Source } from "../types";
 import type { TileHighlightKey } from "./CellReportView";
 import { colorFor } from "./RouteBullet";
 
@@ -111,12 +111,30 @@ function citywideCellsGeoJSON(entries: CellsIndexEntry[]): FeatureCollection {
   return { type: "FeatureCollection", features };
 }
 
+// LAYOUT-V3 WAVE 1e: every footprint now carries its own real bbl/year/era/
+// residential/hazard properties (MapGeometry's MapBuilding, see types.ts's
+// own comment for the None-vs-0 rules) -- mapStyle.ts's per-building layers
+// read `residential`/`hazard_class_c` straight off these properties (via
+// `["get", ...]`), and the click/hover handlers below read all five off
+// whichever feature `queryRenderedFeatures`/the mousemove hit returns. A
+// real numeric top-level `id` (index into this one fetch's own array,
+// stable only within it -- same convention citywideCellsGeoJSON() already
+// uses, same reason: MapLibre's `setFeatureState` only works against a
+// real numeric GeoJSON feature id) drives the hover fill in
+// mapStyle.ts's buildOverlayLayers().
 function buildingsGeoJSON(geo: MapGeometry): FeatureCollection {
   return {
     type: "FeatureCollection",
-    features: geo.buildings.map((b) => ({
+    features: geo.buildings.map((b, i) => ({
       type: "Feature",
-      properties: {},
+      id: i,
+      properties: {
+        bbl: b.bbl,
+        year_built: b.year_built,
+        era: b.era,
+        residential: b.residential,
+        hazard_class_c: b.hazard_class_c,
+      },
       geometry: {
         type: "Polygon",
         coordinates: [b.coords.map(([lat, lng]): [number, number] => [lng, lat])],
@@ -222,18 +240,22 @@ const EMPTY_FC: FeatureCollection = { type: "FeatureCollection", features: [] };
 //     own top comment on why these two counts can legitimately disagree),
 //     so these pins read as "real nearby places in the categories this
 //     tile counts," not as "exactly the N places in the headline number."
-//   - "crime"/"noise"/"trees"/"building" -> a real AREA. Crime is a
-//     precinct-level percentile (bearings/citywide.py) attributed to this
-//     block, so its honest region is the precinct's own real polygon
-//     (already fetched once, address-independent, via GET /api/citywide,
-//     for the precinct-label layer) -- looked up by the exact precinct
-//     number this cell's own report carries. Noise/trees/building are each
-//     counted over exactly ONE h3 cell (cellprofile.py: no ring, no
-//     radius -- see CellReportView.tsx's own top comment), so their honest
-//     region is that literal cell boundary, computed client-side from its
-//     h3 id (the same h3-js call citywideCellsGeoJSON() already makes per
-//     cell above) -- no extra fetch, no approximation beyond what the
-//     number itself already represents.
+//   - "crime"/"noise"/"trees" -> a real AREA. Crime is a precinct-level
+//     percentile (bearings/citywide.py) attributed to this block, so its
+//     honest region is the precinct's own real polygon (already fetched
+//     once, address-independent, via GET /api/citywide, for the
+//     precinct-label layer) -- looked up by the exact precinct number this
+//     cell's own report carries. Noise/trees are each counted over exactly
+//     ONE h3 cell (cellprofile.py: no ring, no radius -- see
+//     CellReportView.tsx's own top comment), so their honest region is that
+//     literal cell boundary, computed client-side from its h3 id (the same
+//     h3-js call citywideCellsGeoJSON() already makes per cell above) -- no
+//     extra fetch, no approximation beyond what the number itself already
+//     represents.
+//   - "building" no longer exists as a tile key at all (LAYOUT-V3 WAVE 1e):
+//     building age/hazards left the tile grid entirely and are now a real
+//     per-building map interaction of their own (buildBuildingInfoElement()
+//     below), not something a side-panel tile hover highlights.
 function tileHighlightGeometry(
   tile: TileHighlightKey | null,
   ctx: {
@@ -266,7 +288,7 @@ function tileHighlightGeometry(
     return { region: { type: "FeatureCollection", features: [feature] }, points: EMPTY_FC };
   }
 
-  if (tile === "noise" || tile === "trees" || tile === "building") {
+  if (tile === "noise" || tile === "trees") {
     if (!ctx.selectedCell) return { region: EMPTY_FC, points: EMPTY_FC };
     const boundary = h3.cellToBoundary(ctx.selectedCell) as [number, number][];
     const ring: [number, number][] = boundary.map(([lat, lng]) => [lng, lat]);
@@ -402,6 +424,92 @@ function collidesWithAny(box: ScreenBox, placed: ScreenBox[]): boolean {
 }
 
 // ---------------------------------------------------------------------------
+// Per-building info panel (LAYOUT-V3 WAVE 1e, SPEC-layout-v3.md §8, Noah:
+// "what's stopping us from searching up every livable building and mapping
+// that out"). Building age and hazards leave the side-panel tile grid
+// (CellReportView.tsx no longer renders that tile) and become a real map
+// interaction: hovering/clicking a residential building's own footprint
+// shows THAT building's own real year/hazard record, not the block's
+// average. A hand-built DOM element behind a real `maplibregl.Marker`,
+// matching this file's own established idiom for map-anchored info
+// (`.mapstation`, `.pinmarker`) rather than MapLibre's own `Popup` (which
+// this app has never used, and whose default chrome -- rounded corners,
+// box-shadow -- would need overriding to match VISUAL.md's "no drop
+// shadows, no gradients" rule anyway).
+const BUILDING_ERA_LABELS: Record<string, string> = {
+  prewar: "Pre-war",
+  postwar: "Post-war",
+  modern: "Modern",
+};
+
+interface BuildingFeatureProps {
+  bbl: string | null;
+  year_built: number | null;
+  era: Era;
+  hazard_class_c: number | null;
+}
+
+function buildBuildingInfoElement(
+  props: BuildingFeatureProps,
+  sources: { building_age?: Source; hazards?: Source },
+  onClose: () => void,
+): HTMLDivElement {
+  const el = document.createElement("div");
+  el.className = "buildinginfo";
+
+  const close = document.createElement("button");
+  close.type = "button";
+  close.className = "buildinginfo__close";
+  close.setAttribute("aria-label", "Close this building's record");
+  close.textContent = "×";
+  close.addEventListener("click", onClose);
+  el.appendChild(close);
+
+  const yearP = document.createElement("p");
+  yearP.className = "buildinginfo__value";
+  if (props.year_built !== null) {
+    const yearSpan = document.createElement("span");
+    yearSpan.textContent = String(props.year_built);
+    yearP.appendChild(yearSpan);
+    if (props.era) {
+      const era = document.createElement("span");
+      era.className = "era";
+      era.textContent = BUILDING_ERA_LABELS[props.era] ?? props.era;
+      yearP.appendChild(era);
+    }
+  } else {
+    yearP.classList.add("buildinginfo__value--empty");
+    yearP.textContent = "No property record on file";
+  }
+  el.appendChild(yearP);
+
+  const hazardP = document.createElement("p");
+  hazardP.className = "buildinginfo__value";
+  if (props.hazard_class_c === null) {
+    hazardP.classList.add("buildinginfo__value--empty");
+    hazardP.textContent = "No hazard record on file";
+  } else if (props.hazard_class_c > 0) {
+    hazardP.classList.add("buildinginfo__value--flag");
+    hazardP.textContent = `${props.hazard_class_c} serious hazard${props.hazard_class_c === 1 ? "" : "s"} flagged`;
+  } else {
+    hazardP.textContent = "No hazards flagged";
+  }
+  el.appendChild(hazardP);
+
+  const sourceNames = [sources.building_age?.name, sources.hazards?.name].filter(
+    (n): n is string => Boolean(n),
+  );
+  if (sourceNames.length > 0) {
+    const sourceP = document.createElement("p");
+    sourceP.className = "buildinginfo__source mono";
+    sourceP.textContent = sourceNames.join(" · ");
+    el.appendChild(sourceP);
+  }
+
+  return el;
+}
+
+// ---------------------------------------------------------------------------
 
 export function MapView({
   address,
@@ -450,6 +558,14 @@ export function MapView({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // LAYOUT-V3 WAVE 1e: always-current ref mirroring `geo` -- effect 2's
+  // building click handler (registered once per `mapReady`, same
+  // stale-closure reasoning as `onCellClickRef` below) needs whichever
+  // `geo.sources` is current at click time (for the info panel's own
+  // citation line), not whatever it was when the listener was first added.
+  const geoRef = useRef<MapGeometry | null>(null);
+  geoRef.current = geo;
+
   const [reach, setReach] = useState<Reach | null>(null);
 
   const [citywide, setCitywide] = useState<Citywide | null>(null);
@@ -466,6 +582,12 @@ export function MapView({
   const stationMarkersRef = useRef<Marker[]>([]);
   const pinMarkersRef = useRef<Marker[]>([]);
   const subjectMarkerRef = useRef<Marker | null>(null);
+  // LAYOUT-V3 WAVE 1e: the one, currently-open per-building info marker (or
+  // `null` when none is open) -- unlike the arrays above, at most one of
+  // these is ever on screen at a time (clicking a different building, or
+  // anywhere that isn't a residential building's own footprint, replaces
+  // or clears it -- see effect 2's own onCitywideCellClick comment).
+  const buildingInfoMarkerRef = useRef<Marker | null>(null);
 
   // Always-current ref for the click callback -- effect 2 (below) registers
   // its MapLibre click listener exactly once per `mapReady` transition, not
@@ -536,6 +658,8 @@ export function MapView({
       pinMarkersRef.current = [];
       subjectMarkerRef.current?.remove();
       subjectMarkerRef.current = null;
+      buildingInfoMarkerRef.current?.remove();
+      buildingInfoMarkerRef.current = null;
       map.remove();
       maplibregl.removeProtocol("pmtiles");
       mapRef.current = null;
@@ -581,16 +705,94 @@ export function MapView({
 
     const onMoveEnd = () => updateLabelMarkers();
 
+    // LAYOUT-V3 WAVE 1e: shows/replaces/clears the one per-building info
+    // marker (buildBuildingInfoElement()'s own comment). Called from
+    // onCitywideCellClick below, deliberately NOT its own independent
+    // `map.on("click", "buildings-residential-hover", ...)` registration --
+    // a residential building's footprint always sits inside some real cell,
+    // so a second, separately-registered click listener on that layer would
+    // ALSO fire for the exact same click, with no defined ordering between
+    // it and this one (MapLibre fires every layer-scoped listener whose
+    // geometry the click point intersects, in registration order, which
+    // this codebase has no reason to depend on). More load-bearing than the
+    // ordering risk alone: onCitywideCellClick's own comment below explains
+    // a REAL bug this single-handler shape exists to prevent -- a building
+    // click must short-circuit BEFORE the cell-swap path ever runs, not
+    // just resolve independently of it.
+    const showBuildingInfo = (feature: maplibregl.MapGeoJSONFeature | undefined, lngLat: LngLat) => {
+      buildingInfoMarkerRef.current?.remove();
+      buildingInfoMarkerRef.current = null;
+      if (!feature) return;
+      const props = feature.properties as {
+        bbl: string | null;
+        year_built: number | null;
+        era: string | null;
+        hazard_class_c: number | null;
+      };
+      const sources = geoRef.current?.sources ?? {};
+      const el = buildBuildingInfoElement(
+        {
+          bbl: props.bbl,
+          year_built: props.year_built,
+          era: props.era as BuildingFeatureProps["era"],
+          hazard_class_c: props.hazard_class_c,
+        },
+        { building_age: sources.building_age, hazards: sources.hazards },
+        () => {
+          buildingInfoMarkerRef.current?.remove();
+          buildingInfoMarkerRef.current = null;
+        },
+      );
+      buildingInfoMarkerRef.current = new maplibregl.Marker({ element: el, anchor: "bottom" })
+        .setLngLat(lngLat)
+        .addTo(map);
+    };
+
     // The click-to-load feature (SPEC-precompute-v2.md Phase 2): clicking
     // any real cell on the citywide grid swaps the report panel to that
     // cell. Registered on "citywide-cells-fill" -- a genuinely-transparent
     // fill layer (see mapStyle.ts's own comment) whose only job is
     // registering a hit anywhere inside a real block, not just within a
     // few pixels of an outline the way a line layer would.
+    //
+    // LAYOUT-V3 WAVE 1e: also checks whether the same click landed on a
+    // residential building's own footprint (queried directly against
+    // "buildings-residential-hover" -- see showBuildingInfo()'s own comment
+    // for why this is a query here rather than a second registered
+    // listener). A REAL bug found live via Playwright (not guessed, not a
+    // test artifact -- browser console + a temporary debug log confirmed
+    // the building hit WAS found and showBuildingInfo() WAS called, yet the
+    // marker never stayed on screen): a building click must NOT also run
+    // the "swap to a bare cell" path below, because App.tsx's
+    // handleCellClick() unconditionally calls setSearchedAddress(null) --
+    // which clears `address`, which clears `geo` (effect 4), which is
+    // exactly the state effect 6's own cleanup watches to remove this very
+    // marker. Every building sits inside some real cell, so without this
+    // early return, EVERY building click would silently self-destruct its
+    // own just-opened marker (and wipe the entire local building/street/
+    // subway overlay along with it) one React render later. The fix: a
+    // building click shows the building's record and returns, never
+    // touching the cell-swap path or the currently searched address's own
+    // overlay at all -- the user stays on the address they searched,
+    // looking at one of its real buildings, exactly SPEC-layout-v3.md §8
+    // Wave 1e's own intent.
     const onCitywideCellClick = (e: maplibregl.MapLayerMouseEvent) => {
+      const buildingHit = map.queryRenderedFeatures(e.point, {
+        layers: ["buildings-residential-hover"],
+      })[0];
+      if (buildingHit) {
+        showBuildingInfo(buildingHit, e.lngLat);
+        return;
+      }
+
       const f = e.features?.[0];
       const h3id = f?.properties?.h3 as string | undefined;
       if (h3id) onCellClickRef.current(h3id);
+      // Clicking anywhere that ISN'T a residential building (a different
+      // block, empty street, water, etc.) closes whatever building record
+      // was previously showing -- the same "clicking away closes it"
+      // affordance a normal popup would have.
+      showBuildingInfo(undefined, e.lngLat);
     };
     const onCitywideCellEnter = () => {
       map.getCanvas().style.cursor = "pointer";
@@ -626,10 +828,38 @@ export function MapView({
       }
     };
 
+    // LAYOUT-V3 WAVE 1e: the same per-feature hover-state pattern as
+    // onCitywideCellMove/onCitywideCellLeave above, scoped to
+    // "buildings-residential-hover" instead -- a residential building gets
+    // its own, stronger hover fill (mapStyle.ts's own comment) on top of
+    // whatever the containing block's hover fill is already doing. No
+    // separate cursor handling needed: "citywide-cells-fill" already covers
+    // the whole city, so the cursor is already "pointer" everywhere this
+    // building layer could ever be hovered.
+    let hoveredBuildingFeatureId: number | null = null;
+    const onBuildingMove = (e: maplibregl.MapLayerMouseEvent) => {
+      const f = e.features?.[0];
+      const id = f?.id as number | undefined;
+      if (id === undefined || id === hoveredBuildingFeatureId) return;
+      if (hoveredBuildingFeatureId !== null) {
+        map.setFeatureState({ source: "buildings", id: hoveredBuildingFeatureId }, { hover: false });
+      }
+      hoveredBuildingFeatureId = id;
+      map.setFeatureState({ source: "buildings", id }, { hover: true });
+    };
+    const onBuildingLeave = () => {
+      if (hoveredBuildingFeatureId !== null) {
+        map.setFeatureState({ source: "buildings", id: hoveredBuildingFeatureId }, { hover: false });
+        hoveredBuildingFeatureId = null;
+      }
+    };
+
     map.on("click", "citywide-cells-fill", onCitywideCellClick);
     map.on("mouseenter", "citywide-cells-fill", onCitywideCellEnter);
     map.on("mousemove", "citywide-cells-fill", onCitywideCellMove);
     map.on("mouseleave", "citywide-cells-fill", onCitywideCellLeave);
+    map.on("mousemove", "buildings-residential-hover", onBuildingMove);
+    map.on("mouseleave", "buildings-residential-hover", onBuildingLeave);
     map.on("moveend", onMoveEnd);
 
     return () => {
@@ -637,6 +867,8 @@ export function MapView({
       map.off("mouseenter", "citywide-cells-fill", onCitywideCellEnter);
       map.off("mousemove", "citywide-cells-fill", onCitywideCellMove);
       map.off("mouseleave", "citywide-cells-fill", onCitywideCellLeave);
+      map.off("mousemove", "buildings-residential-hover", onBuildingMove);
+      map.off("mouseleave", "buildings-residential-hover", onBuildingLeave);
       map.off("moveend", onMoveEnd);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -732,7 +964,22 @@ export function MapView({
   // ---- 6. push the address-scoped geometry into the map + fly to it. ----
   useEffect(() => {
     const map = mapRef.current;
-    if (!map || !mapReady || !geo) return;
+    if (!map || !mapReady) return;
+
+    // LAYOUT-V3 WAVE 1e: whichever building info marker was open belonged
+    // to the PREVIOUS `geo` fetch's own buildings source data -- a new
+    // address search (or a failed/cleared one, `geo === null`) replaces
+    // that data wholesale (new footprints, new feature ids, or none at
+    // all), so any open marker is now pointing at a building that may no
+    // longer exist at that id, or may exist but mean something different.
+    // Closing it here (BEFORE the early-return below, so this also fires
+    // when `geo` goes back to `null`) matches CellReportView's own "a new
+    // block's report swaps in -- clear whatever hover/expand state the
+    // PREVIOUS cell's tiles were in" rule, applied to this marker instead.
+    buildingInfoMarkerRef.current?.remove();
+    buildingInfoMarkerRef.current = null;
+
+    if (!geo) return;
 
     (map.getSource("buildings") as maplibregl.GeoJSONSource | undefined)?.setData(buildingsGeoJSON(geo));
     (map.getSource("streets") as maplibregl.GeoJSONSource | undefined)?.setData(streetsGeoJSON(geo));
@@ -1006,7 +1253,7 @@ export function MapView({
           ref={containerRef}
           className="mapfield__map"
           role="img"
-          aria-label="Navigable map of New York City. Every real city block is clickable to load its record; shows building outlines, streets, subway lines, and walk-time rings for the selected address."
+          aria-label="Navigable map of New York City. Every real city block is clickable to load its record; homes and apartment buildings are clickable for their own year built and hazard record; shows building outlines, streets, subway lines, and walk-time rings for the selected address."
         />
       </div>
 

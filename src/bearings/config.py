@@ -171,6 +171,13 @@ CELL_PROFILE_CACHE_MAX_AGE_S = 10 * 86400
 # table, which is baked from a similarly-official, similarly-infrequent source.
 BUILDINGS_CACHE_MAX_AGE_S = 30 * 86400
 CENTERLINES_CACHE_MAX_AGE_S = 30 * 86400
+# Per-building attribute join (PLUTO year built/landuse + HPD open Class C
+# count, sources/buildings.py's fetch_attributes()) -- the HPD half of this
+# changes on the same cadence as cellprofile.py's own per-cell hazard
+# aggregate, so it gets the same freshness window (CELL_PROFILE_CACHE_MAX_AGE_S)
+# rather than the slower 30-day one above, which was picked for geometry that
+# genuinely doesn't change week to week.
+BUILDING_ATTRIBUTES_CACHE_MAX_AGE_S = CELL_PROFILE_CACHE_MAX_AGE_S
 
 NYPD_PCT_PDF = (
     "https://www.nyc.gov/assets/nypd/downloads/pdf/crime_statistics/"

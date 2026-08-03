@@ -217,6 +217,19 @@ export function buildMapStyle(tilesUrl: string): StyleSpecification {
 // lost, only a redundant hex/choropleth map-shading affordance the spec
 // explicitly asked to retire. See buildCitywideGridLayers()/
 // buildReachLayers() below for what replaced them.
+// LAYOUT-V3 WAVE 1e (2026-08-03, SPEC-layout-v3.md §8): a real building is
+// "residential" (clickable for its own year/hazard record) only when its
+// own PLUTO landuse code says so -- `null` (no PLUTO/HPD match at all, or a
+// footprint with no bbl) is treated the same as `false` here: a building
+// this codebase has no record for gets no interactive affordance, never a
+// guessed one. `["coalesce", ["get", "residential"], false]`/`["coalesce",
+// ["get", "hazard_class_c"], 0]` (below, inlined at each real call site
+// rather than a shared constant -- this file's own style-spec types don't
+// structurally accept a widened array type extracted out of its literal
+// expression context, so every other filter/expression here is written
+// fresh at its own call site too) guard against a literal `null` property
+// value, which MapLibre's own `==`/`>` operators otherwise reject outright.
+
 export function buildOverlayLayers(): StyleSpecification["layers"] {
   return [
     {
@@ -224,12 +237,72 @@ export function buildOverlayLayers(): StyleSpecification["layers"] {
       // same idea the basemap's own roads-minor/roads-major apply above:
       // building mass only makes visual sense once you're zoomed in
       // enough to read individual shapes.
+      //
+      // LAYOUT-V3 WAVE 1e: a residential building (real PLUTO landuse
+      // match) reads at the original ~34% opacity VISUAL.md's own "Buildings
+      // | Steel #8A8D8F mass at ~34% opacity" spec names; a non-residential
+      // or unknown-record building is dimmed to a lower opacity -- still
+      // pure STEEL (no new hue, no gradient -- an opacity `case` nested
+      // inside the existing zoom `interpolate`, the identical pattern this
+      // file's roads-minor/streets-line layers already use), a real, felt
+      // "these buildings respond, those don't" signal at rest, before any
+      // hover ever happens (SPEC-layout-v3.md §8 Wave 1e acceptance: "non-
+      // residential buildings clearly distinguishable").
       id: "buildings-fill",
       type: "fill",
       source: "buildings",
       paint: {
         "fill-color": STEEL,
-        "fill-opacity": ["interpolate", ["linear"], ["zoom"], 13, 0, 15, 0.34],
+        "fill-opacity": [
+          "interpolate",
+          ["linear"],
+          ["zoom"],
+          13,
+          0,
+          15,
+          ["case", ["==", ["coalesce", ["get", "residential"], false], true], 0.34, 0.2],
+        ],
+      },
+    },
+    {
+      // A persistent (not hover-gated) signal for a residential building
+      // with at least one real open Class C ("immediately hazardous") HPD
+      // violation -- lets a user see which buildings on a block carry a
+      // real flag without having to click every one, the same "felt, not
+      // just clickable" bar the tile grid's own `tile__value--flag` (red
+      // text) already sets for the exact same fact. Red is this app's one
+      // accent colour (VISUAL.md §2: "Pillar-box red... Accent only"),
+      // already used for exactly this kind of flag.
+      id: "buildings-hazard-outline",
+      type: "line",
+      source: "buildings",
+      filter: [
+        "all",
+        ["==", ["coalesce", ["get", "residential"], false], true],
+        [">", ["coalesce", ["get", "hazard_class_c"], 0], 0],
+      ],
+      paint: { "line-color": RED, "line-width": 1.1, "line-opacity": 0.55 },
+    },
+    {
+      // The click/hover hit layer for the per-building info panel
+      // (MapView.tsx's own building-click handling) -- filtered to
+      // residential buildings only, so a non-residential building never
+      // shows a hover highlight or opens a popup (the "exclude" half of
+      // SPEC-layout-v3.md §8 Wave 1e's "clearly distinguishable or
+      // excluded" acceptance). Invisible at rest (0 opacity, same
+      // established pattern as citywide-cells-fill below), a stronger red
+      // than that layer's own 0.16 block-hover fill on real hover
+      // (feature-state-driven, mirrors citywide-cells-fill's own
+      // mousemove-driven hover exactly) -- deliberately painted on top of
+      // it in this array (buildings sit visually "inside" a block, so
+      // their own hover reads as a more specific, stronger signal).
+      id: "buildings-residential-hover",
+      type: "fill",
+      source: "buildings",
+      filter: ["==", ["coalesce", ["get", "residential"], false], true],
+      paint: {
+        "fill-color": RED,
+        "fill-opacity": ["case", ["boolean", ["feature-state", "hover"], false], 0.3, 0],
       },
     },
     {

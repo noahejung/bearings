@@ -82,6 +82,69 @@ def points_in_bbox(bbox: dict) -> pd.DataFrame:
     )
 
 
+# Residential PLUTO land-use codes -- confirmed live 2026-08-03 via a
+# `$select=landuse,count(*)&$group=landuse` probe (11 real codes, "1"
+# through "11", matching PLUTO's documented taxonomy) plus a known
+# multi-family walk-up (BBL 3030310015, same building test_hpd.py already
+# fixtures: landuse="2", unitsres="12") and the Empire State Building (BBL
+# 1008350041: landuse="5", unitsres="0" -- confirmed commercial, not
+# residential). "1" = one/two-family, "2" = multi-family walk-up, "3" =
+# multi-family elevator, "4" = mixed residential & commercial -- "4" is
+# folded into "residential" because a mixed building still has real
+# residential units in it (ground-floor retail under apartments is still
+# livable upstairs), the same "don't exclude the real thing because of an
+# adjacent label" call PLUTO's own 11-code taxonomy invites. "5" upward is
+# commercial/industrial/institutional/open-space/parking/vacant -- never
+# residential.
+_RESIDENTIAL_LANDUSE_CODES = {"1", "2", "3", "4"}
+
+
+def _is_residential(landuse: str | None) -> bool | None:
+    """Whether a PLUTO landuse code is one of the four residential
+    categories above. `None` (never a guessed True/False) when the lot's
+    own landuse is itself missing -- PLUTO does carry a small number of
+    lots with no landuse code at all (confirmed live via a `$where=landuse
+    IS NULL` probe), and a missing code is not evidence either way."""
+    if not landuse:
+        return None
+    return landuse in _RESIDENTIAL_LANDUSE_CODES
+
+
+def citywide_land_use() -> pd.DataFrame:
+    """Every PLUTO tax lot citywide with a real bbl, its yearbuilt (0 =
+    PLUTO's own "not recorded" sentinel, kept as-is here -- same convention
+    citywide_points() already uses, filtered downstream) and its landuse
+    code -- for the per-building attribute bake (sources/buildings.py's
+    fetch_attributes()), which joins this against the already-baked
+    building-footprint Parquet by bbl. Deliberately a SEPARATE fetch from
+    citywide_points() (not `landuse` added onto that function) -- this one
+    doesn't need lat/lng (it joins by bbl, not by bucketing a point into an
+    H3 cell), and leaving citywide_points()'s existing, already-relied-upon
+    (cellprofile.py) shape untouched avoids any risk of an unrelated
+    regression there."""
+    df = socrata.fetch("pluto", select="bbl,yearbuilt,landuse", where="bbl IS NOT NULL")
+    if df.empty:
+        return pd.DataFrame(
+            {
+                "bbl": pd.Series(dtype=str),
+                "year_built": pd.Series(dtype=int),
+                "landuse": pd.Series(dtype=str),
+            }
+        )
+    year_built = df["yearbuilt"].astype(float).fillna(0).astype(int)
+    out = pd.DataFrame(
+        {
+            "bbl": df["bbl"].map(_clean_bbl),
+            "year_built": year_built,
+            "landuse": df["landuse"],
+        }
+    )
+    # Same reasoning as citywide_points()'s own trailing filter: a handful
+    # of rows carry a bbl that doesn't parse, which must not silently
+    # corrupt the bbl-keyed join in fetch_attributes().
+    return out[out["bbl"].notna()].reset_index(drop=True)
+
+
 def _clean_bbl(raw: str) -> str | None:
     """PLUTO's own `bbl` column is a decimal-suffixed numeric string
     ("2054800111.00000000", confirmed live) -- collapse it to the same

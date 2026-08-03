@@ -94,6 +94,18 @@ vi.mock("maplibre-gl", () => {
     setFeatureState() {
       return this;
     }
+    // LAYOUT-V3 WAVE 1e: MapView.tsx's citywide-cell click handler now also
+    // queries the "buildings-residential-hover" layer at the click point to
+    // decide whether to show/clear the per-building info marker (see that
+    // handler's own comment for why one handler does both lookups). jsdom
+    // has no WebGL hit-testing (this file's own top comment), so this fake
+    // always reports "no building under the click" -- the tests below don't
+    // exercise the building-marker path, only that a real citywide-cell
+    // click still swaps the block report correctly with this method present
+    // and not throwing.
+    queryRenderedFeatures() {
+      return [];
+    }
     fitBounds() {
       return this;
     }
@@ -335,6 +347,13 @@ const CELLS_INDEX = {
 const MAP_GEOMETRY = {
   subject: { lat: 40.7484, lng: -73.9857, bbl: "1008350041", cell: ESB_CELL },
   bbox: { south: 40.7421, north: 40.7547, west: -73.9957, east: -73.9757 },
+  // LAYOUT-V3 WAVE 1e: every real footprint now carries its own real PLUTO/
+  // HPD attributes (types.ts's MapBuilding) -- this fixture's one footprint
+  // is deliberately a real, non-null residential building (not all-null),
+  // matching this project's own "a fixture that only ever observes zeros/
+  // Nones proves nothing" rule for the App.test.tsx-level integration
+  // surface (MapView.test.ts-equivalent coverage for the actual attribute
+  // join lives in test_buildings.py/test_mapgeo.py on the backend).
   buildings: [
     {
       bbl: "1008350041",
@@ -345,6 +364,10 @@ const MAP_GEOMETRY = {
         [40.7482, -73.9855],
         [40.7482, -73.9859],
       ],
+      year_built: 1931,
+      era: "prewar",
+      residential: false,
+      hazard_class_c: 0,
     },
   ],
   streets: [{ physicalid: "12345", coords: [[40.748, -73.986], [40.749, -73.985]], rank: 2 }],
@@ -510,18 +533,21 @@ describe("App (full mount)", () => {
       expect(screen.getByRole("heading", { name: GEOCODE_RESULT.label })).toBeInTheDocument(),
     );
 
-    // The six real block-level report fields, from CellReportView -- named
-    // by their own heading (VISUAL.md §1's NO-LARP rule).
+    // The five real block-level report fields, from CellReportView -- named
+    // by their own heading (VISUAL.md §1's NO-LARP rule). LAYOUT-V3 WAVE 1e
+    // (2026-08-03): "building age & serious hazards" is REMOVED from this
+    // grid -- it becomes a real per-building map interaction instead (see
+    // CellReportView.tsx's own item-1e comment), so its absence here is
+    // asserted explicitly, not just left out.
     expect(screen.getByRole("heading", { name: /getting around/i })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: /grocery & everyday places/i })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: /crime near here/i })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: /noise complaints/i })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: /living street trees/i })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: /building age & serious hazards/i })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: /building age & serious hazards/i })).not.toBeInTheDocument();
 
     // Real values actually reached the DOM, not just the field chrome.
     expect(screen.getByText("140")).toBeInTheDocument(); // noise complaints
-    expect(screen.getByText("1920")).toBeInTheDocument(); // building age
     expect(screen.getByText("4 min")).toBeInTheDocument(); // ride time to Midtown
 
     // The fact-check section is present, wired to the real searched address.

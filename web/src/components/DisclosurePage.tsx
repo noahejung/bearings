@@ -62,15 +62,23 @@ interface Section {
   title: string;
   what: string;
   // A real, per-cell data fact (not methodology) that used to sit inline in
-  // the pre-Wave-1d tile disclosure -- optional because only crime carries
-  // one today (its own week_ending/total_ytd sentence). Kept as its own
-  // field rather than folded into `what`, so a section with no loaded cell
-  // (and therefore no real fact to state) simply omits this paragraph
-  // instead of showing a stale or fabricated placeholder.
+  // the pre-Wave-1d tile disclosure -- optional because only crime/building
+  // age carry one today (crime's own week_ending/total_ytd sentence;
+  // building age's own median-year/hazard-count sentence, LAYOUT-V3 WAVE
+  // 1e). Kept as its own field rather than folded into `what`, so a section
+  // with no loaded cell (and therefore no real fact to state) simply omits
+  // this paragraph instead of showing a stale or fabricated placeholder.
   detail?: string;
   how: string;
   source: { name: string; url: string } | null;
+  // LAYOUT-V3 WAVE 1e: "Building age & serious hazards" is the one section
+  // whose real data comes from TWO datasets (PLUTO for year built, HPD for
+  // hazards) -- `source` alone would only ever cite one. Optional so every
+  // other section (still genuinely one dataset each) is unaffected.
+  source2?: { name: string; url: string } | null;
 }
+
+const ERA_LABELS: Record<string, string> = { prewar: "Pre-war", postwar: "Post-war", modern: "Modern" };
 
 export function DisclosurePage({ cell, onBack }: { cell: CellProfile | null; onBack: () => void }) {
   // Byte-identical to CellReportView.tsx's own pre-Wave-1d crime disclosure
@@ -82,6 +90,27 @@ export function DisclosurePage({ cell, onBack }: { cell: CellProfile | null; onB
   const crimeDetail =
     cell && cell.safety.crime
       ? `NYPD crime data, week ending ${cell.safety.crime.week_ending} — ${cell.safety.crime.total_ytd.toLocaleString()} major crimes so far this year in this area.`
+      : undefined;
+
+  // LAYOUT-V3 WAVE 1e (2026-08-03, SPEC-layout-v3.md §8): the real fact this
+  // section's tile used to carry ("Most buildings here went up around
+  // {year}... Serious safety problems flagged... across every building on
+  // this block") — same underlying two facts (median year/era, open Class C
+  // count), composed fresh for this page's own standalone context rather
+  // than moved verbatim, the same precedent crimeDetail above already sets
+  // (its own wording differs from the tile's pre-move crime disclosure too).
+  // Still baked and served on every real cell (bearings/cellprofile.py's
+  // building_age/housing_hazards, unchanged by this wave) even though no
+  // tile renders it any more -- the per-building map interaction is the
+  // primary way to see this now, but the block-wide average stays reachable
+  // here rather than vanishing outright.
+  const buildingDetail =
+    cell && cell.building_age.median_year_built !== null
+      ? `Most buildings on this block went up around ${Math.round(cell.building_age.median_year_built)}${
+          cell.building_age.era ? ` (${ERA_LABELS[cell.building_age.era] ?? cell.building_age.era})` : ""
+        } — ${cell.housing_hazards.class_c_violations} open, serious safety violation${
+          cell.housing_hazards.class_c_violations === 1 ? "" : "s"
+        } across every building on this block.`
       : undefined;
 
   const sections: Section[] = [
@@ -117,10 +146,20 @@ export function DisclosurePage({ cell, onBack }: { cell: CellProfile | null; onB
       source: cell ? cell.trees.source : null,
     },
     {
+      // LAYOUT-V3 WAVE 1e (2026-08-03, SPEC-layout-v3.md §8, Noah: "what's
+      // stopping us from searching up every livable building and mapping
+      // that out"): building age/hazards are no longer a side-panel tile at
+      // all -- click any home or apartment building on the map for its own
+      // real record, not a block-wide average. `detail` below keeps the
+      // block-wide average itself reachable (it's still real, baked data),
+      // just reframed as background context rather than the primary way to
+      // see it.
       title: "Building age & serious hazards",
-      what: "Median year built and open, serious (Class C) safety violations for buildings in this block.",
+      what: "Click any home or apartment building on the map for its own real year built and open, serious (Class C) safety violations — not a block-wide average.",
+      detail: buildingDetail,
       how: cell ? cell.housing_hazards.note : FALLBACK_HAZARD_NOTE,
       source: cell ? cell.building_age.source : null,
+      source2: cell ? cell.housing_hazards.source : null,
     },
   ];
 
@@ -151,6 +190,7 @@ export function DisclosurePage({ cell, onBack }: { cell: CellProfile | null; onB
             {s.source && (
               <p className="disclosure__source">
                 <SourceTag source={s.source} />
+                {s.source2 && <SourceTag source={s.source2} />}
               </p>
             )}
             {!s.source && (
