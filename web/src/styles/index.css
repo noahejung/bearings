@@ -1178,11 +1178,27 @@ body {
 }
 
 /* ---------- map field ---------- */
+/* LAYOUT-V3 WAVE 1c (2026-08-02, Noah: "can you vertically align the cards
+   somewhere appropriate? maybe top justified with the map top"): this used
+   to carry its own `margin-top: 1.5rem` from before Wave 1 nested it inside
+   `.mapgrid` -- back when MapView rendered as a standalone block in normal
+   document flow and needed its own top spacing from whatever came before it
+   (AddressSearch/PreferenceBar). `.mapgrid` (below) now already supplies
+   that exact same 1.5rem of spacing above the WHOLE two-column row, so this
+   leftover margin was pure extra: `.mapgrid` sets `align-items: start` so
+   both grid children (this map section, `.sidepanel`) are meant to start
+   flush with the same row-start line, but only `.mapfield` carried its own
+   additional 24px push, silently offsetting the map's own top border rule
+   (its real, visible top edge) 24px below the side panel's tiles even
+   though the grid item box itself began at the correct line. Confirmed via
+   Playwright measurement at 1366px: `.mapfield` top was 951.59px vs
+   `.mapgrid`/`.sidepanel` top 927.59px, a difference of exactly 24px (this
+   rule's `1.5rem` at the default 16px root) -- removing it makes both
+   columns' boxes start at the identical grid-row-start y-coordinate. */
 .mapfield {
   border-top: 1px solid var(--ink);
   border-bottom: 1px solid var(--ink);
   padding: 1.4rem 0 1.6rem;
-  margin-top: 1.5rem;
 }
 
 .mapfield__note {
