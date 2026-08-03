@@ -31,6 +31,13 @@ const CRIME_CAVEAT =
   "Shown as this precinct's percentile position among all NYC precincts, ranked by raw year-to-date major-crime count -- not a per-resident rate; NYC Open Data publishes no population figure per precinct. Reported counts reflect policing and reporting intensity as well as public safety, and precinct boundaries are coarse.";
 const HAZARD_NOTE =
   "Open Class C (\"immediately hazardous\") HPD violations only, summed across every tax lot centred in this cell -- a violation is entered only after an HPD inspection confirms a real code violation, which is a step up from a raw, unverified complaint. Still reflects inspection and reporting intensity, not necessarily every real issue: a 0 here means no verified open hazard on record, not that none could exist.";
+// LAYOUT-V3 WAVE 1d item 15 (2026-08-03): mirrors bearings/cellprofile.py's
+// NOISE_PERCENTILE_CAVEAT exactly, grepped live from source. `percentile`
+// values on each fixture below are REAL, computed via the exact same
+// citywide.percentile_rank() the backend uses, against the live ~7,017-cell
+// noise distribution (verified 2026-08-03) -- not fabricated placeholders.
+const NOISE_CAVEAT =
+  "Ranks this block's 311 noise complaints against every block citywide, though complaint volume reflects who calls 311 as much as real noise and rises faster in gentrifying neighborhoods.";
 
 const EMPTY_COUNTS = { grocery: 0, cafe: 0, bar: 0, restaurant: 0, pharmacy: 0, gym: 0, park: 0, laundry: 0 };
 
@@ -41,7 +48,7 @@ const SIR_CELL: CellProfile = {
   h3: "892a106084bffff",
   shard: "862a1060fffffff",
   centroid: { lat: 40.53565447283312, lng: -74.18829945736736 },
-  noise: { complaints_12mo: 1, source: NOISE_SOURCE },
+  noise: { complaints_12mo: 1, percentile: 15.932734786945987, caveat: NOISE_CAVEAT, source: NOISE_SOURCE },
   amenities: { counts: EMPTY_COUNTS, source: AMENITIES_SOURCE },
   trees: { street_trees: 113, source: TREES_SOURCE },
   building_age: { median_year_built: 1985.0, era: "postwar", source: PLUTO_SOURCE },
@@ -72,7 +79,7 @@ const NO_STATION_CELL: CellProfile = {
   ...SIR_CELL,
   h3: "892a1060e4fffff",
   centroid: { lat: 40.55108963109203, lng: -74.201760142681 },
-  noise: { complaints_12mo: 6, source: NOISE_SOURCE },
+  noise: { complaints_12mo: 6, percentile: 28.01054581730084, caveat: NOISE_CAVEAT, source: NOISE_SOURCE },
   trees: { street_trees: 133, source: TREES_SOURCE },
   building_age: { median_year_built: 1980.0, era: "postwar", source: PLUTO_SOURCE },
   transit: {
@@ -95,7 +102,7 @@ const CONTROL_CELL: CellProfile = {
   h3: "892a100d293ffff",
   shard: "862a100d7ffffff",
   centroid: { lat: 40.75015472731649, lng: -73.97717597041498 },
-  noise: { complaints_12mo: 70, source: NOISE_SOURCE },
+  noise: { complaints_12mo: 70, percentile: 68.41242696308964, caveat: NOISE_CAVEAT, source: NOISE_SOURCE },
   amenities: {
     counts: { grocery: 3, cafe: 15, bar: 4, restaurant: 8, pharmacy: 4, gym: 7, park: 6, laundry: 0 },
     source: AMENITIES_SOURCE,
@@ -238,22 +245,41 @@ describe("CellReportView -- onTileHighlight wiring (item 4)", () => {
     expect(onTileHighlight).toHaveBeenLastCalledWith(null);
   });
 
-  it("keeps the map highlight on an expanded tile after the mouse leaves (the touch-equivalent path)", () => {
+  // LAYOUT-V3 WAVE 1d item 13 (2026-08-03, "why are the hexagons back" --
+  // see CellReportView.tsx's own item-13 comment for the live-diagnosed
+  // root cause): expanding a tile's disclosure with a real click (no
+  // hover) no longer ALSO drives the map highlight -- that fallback was
+  // exactly the mechanism that left a real H3 hexagon parked on the map
+  // indefinitely once the cursor moved away. This replaces the old
+  // "touch-equivalent path" test (which asserted the opposite) with its
+  // Wave-1d successor: expanding alone must NOT emphasize the map.
+  it("expanding a tile's disclosure (a click, no hover) does NOT drive the map highlight (item 13 fix)", () => {
     const onTileHighlight = vi.fn();
     render(<CellReportView cell={CONTROL_CELL} onTileHighlight={onTileHighlight} />);
     const toggle = screen.getAllByRole("button", { name: /\+ details/i })[0];
-    fireEvent.click(toggle); // expand, no hover involved (the touch path)
-    expect(onTileHighlight).toHaveBeenLastCalledWith("amenities");
+    fireEvent.click(toggle); // expand, no hover involved
+    expect(onTileHighlight).not.toHaveBeenCalledWith("amenities");
+    expect(screen.getByRole("region")).toBeInTheDocument(); // the disclosure itself still opens
   });
 
-  it("clears hover/expand state (and tells the map to drop the highlight) when the cell itself changes", () => {
+  it("clears hover state (and tells the map to drop the highlight) when the cell itself changes", () => {
     const onTileHighlight = vi.fn();
+    const amenitiesTile = () =>
+      screen.getByRole("heading", { name: /grocery & everyday places/i }).closest("article")!;
     const { rerender } = render(<CellReportView cell={CONTROL_CELL} onTileHighlight={onTileHighlight} />);
-    fireEvent.click(screen.getAllByRole("button", { name: /\+ details/i })[0]);
+    fireEvent.mouseEnter(amenitiesTile());
     expect(onTileHighlight).toHaveBeenLastCalledWith("amenities");
 
     rerender(<CellReportView cell={SIR_CELL} onTileHighlight={onTileHighlight} />);
     expect(onTileHighlight).toHaveBeenLastCalledWith(null);
+  });
+
+  it("expanding a disclosure survives a rerender with the SAME cell, and still collapses on toggle (regression guard, item 13)", () => {
+    render(<CellReportView cell={CONTROL_CELL} />);
+    const toggle = screen.getAllByRole("button", { name: /\+ details/i })[0];
+    fireEvent.click(toggle);
+    expect(screen.getByRole("region")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /− details/i }));
     expect(screen.queryByRole("region")).not.toBeInTheDocument();
   });
 });

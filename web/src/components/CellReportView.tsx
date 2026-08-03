@@ -80,11 +80,6 @@ const ERA_LABELS: Record<"prewar" | "postwar" | "modern", string> = {
 // independently editable.
 const BAR_SCALE_MAX_MIN = 60;
 
-function stationCountLabel(n: number): string {
-  if (n === 0) return "No subway or PATH station within about a 6-minute walk of this block.";
-  return `${n} subway or PATH station${n === 1 ? "" : "s"} within about a 6-minute walk of this block's centre.`;
-}
-
 // "Getting around" -- the one transit field, rendered below the map, full
 // width (SPEC-layout-v3.md §3/§5: moved out of the side panel deliberately,
 // since it's about to grow editable destination rows in a later wave that
@@ -126,19 +121,9 @@ export function GettingAroundField({ cell }: { cell: CellProfile }) {
               cellprofile.py's _transit_by_cell() fills all 4 anchors with
               either a real ride time or a real, honest unreachable_reason,
               never nothing -- so it's hardcoded confirmed to match, same as
-              amenities/noise/trees below. Previously scoped to
-              `stations_within_500m > 0`, a real but much narrower fact (no
-              station within ~500m) that isn't "no data": a cell with zero
-              nearby stations can still show four fully-populated ride times
-              via farther stations, and used to show a red NO DATA badge
-              above them anyway (2026-07-28 UX audit finding #4). That
-              narrower fact still has its own honest sentence right below,
-              via stationCountLabel() -- it never needed the card-level
-              stamp's visual authority. */}
+              amenities/noise/trees below. */}
           <Stamp variant="confirmed" compact />
         </header>
-
-        <p className="field__empty">{stationCountLabel(cell.transit.stations_within_500m)}</p>
 
         <div className="anchors">
           <p className="anchors__label">Ride time to —</p>
@@ -169,13 +154,6 @@ export function GettingAroundField({ cell }: { cell: CellProfile }) {
           </p>
         )}
 
-        <p className="field__caveat mono">
-          <span className="field__caveat-kicker" aria-hidden="true">
-            note
-          </span>
-          {cell.transit.caveat} Calculated from this block&rsquo;s centre — not one specific
-          building&rsquo;s front door.
-        </p>
         <p className="field__provenance">
           Real MTA/PATH schedules · weekday 8am departure · fastest route to four key
           destinations in the city.
@@ -274,13 +252,27 @@ export function CellReportView({
   const [hoveredKey, setHoveredKey] = useState<TileHighlightKey | null>(null);
   const [expandedKey, setExpandedKey] = useState<TileHighlightKey | null>(null);
 
-  // A real hover always wins over a merely-expanded tile (the user's
-  // cursor is telling us what they're looking at right now); once the
-  // cursor leaves, whichever tile is still expanded keeps the map
-  // emphasis, so a tap-to-expand on a touch device (which never fires a
-  // real hover) still drives the map -- the touch-equivalent path item 4
-  // needs, per its own acceptance note about mobile widths.
-  const activeHighlight = hoveredKey ?? expandedKey;
+  // LAYOUT-V3 WAVE 1d item 13 (2026-08-03, "why are the hexagons back" --
+  // diagnosed live, not guessed: a real H3 cell polygon at 0.26 fill-
+  // opacity + a 2px outline was staying parked on the map for as long as
+  // ANY noise/trees/building tile's disclosure was expanded, even long
+  // after the cursor moved away and the user was doing nothing else --
+  // confirmed via Playwright: expanding "Living street trees", then moving
+  // the mouse fully off the panel, left `tile-highlight-region`'s source
+  // holding a real 6-point polygon indefinitely, visibly rendered on the
+  // map at rest. This USED to also fall back to `expandedKey` (Wave 1c's
+  // own "touch-equivalent path" for devices with no hover event) -- that
+  // fallback is exactly the mechanism that kept a hex parked at rest, so it
+  // is the fix: the map highlight now tracks only a REAL, LIVE hover
+  // (`hoveredKey`), which by construction can never survive the cursor
+  // actually leaving. A real, stated trade-off, not an oversight: a tap-to-
+  // expand on a touch device (no hover event ever fires there) no longer
+  // also highlights the map -- SPEC-layout-v3.md §8 Wave 1d's own
+  // acceptance ("hexagons appear only when meaningful ... not at rest")
+  // is the more load-bearing instruction than 1c's touch affordance, so
+  // this wave resolves the conflict in its favour; touch-highlighting can
+  // be revisited in a future wave if wanted.
+  const activeHighlight = hoveredKey;
 
   useEffect(() => {
     onTileHighlight?.(activeHighlight);
@@ -335,7 +327,6 @@ export function CellReportView({
             <h2 className="tile__title" id="cell-amenities-heading">
               Grocery &amp; everyday places
             </h2>
-            <Stamp variant="confirmed" compact />
           </header>
           <p className="tile__value">
             <Stat value={totalAmenities} />
@@ -349,7 +340,16 @@ export function CellReportView({
             <h2 className="tile__title" id="cell-safety-heading">
               Crime near here
             </h2>
-            <Stamp variant={crime ? "confirmed" : "no_data"} compact />
+            {/* LAYOUT-V3 WAVE 1d item 1: the CONFIRMED-class stamp is gone
+                from every tile -- it fired on essentially every load (a
+                fixed badge saying "yes, this number is real" adds no new
+                information once it's true almost always), which is exactly
+                the visual-clutter complaint this wave's cut pass targets.
+                NO_DATA stays: that's the one stamp state that still tells
+                the user something they couldn't already see (None, not 0 --
+                this project's own None-vs-0 invariant), so it renders only
+                in that branch below, never the confirmed one. */}
+            {!crime && <Stamp variant="no_data" compact />}
           </header>
           {!crime ? (
             <p className="tile__value tile__value--empty">We don&rsquo;t have crime data for this block yet.</p>
@@ -366,12 +366,22 @@ export function CellReportView({
             <h2 className="tile__title" id="cell-quiet-heading">
               Noise complaints
             </h2>
-            <Stamp variant="confirmed" compact />
           </header>
           <p className="tile__value">
             <Stat value={cell.noise.complaints_12mo} />
           </p>
-          <p className="tile__sub">reports, trailing 12mo</p>
+          {/* LAYOUT-V3 WAVE 1d item 15 (Noah: "can we also get the
+              relativity on noise soon") -- the raw count above stays the
+              headline (never replaced, per this project's "count stays"
+              rule from the 2026-08-02 noise-percentile report); this line
+              adds the citywide relative framing right on the tile itself,
+              not buried behind "+ details", so both truths are visible
+              without an extra tap. `cell.noise.percentile` is real,
+              already baked (cellprofile.py's `_bake_all()`, commit
+              `0c39c5d`) -- this wave is the first to render it. */}
+          <p className="tile__sub">
+            reports, trailing 12mo · {formatPercentile(cell.noise.percentile)} citywide
+          </p>
           {disclosureToggle("noise")}
         </article>
 
@@ -380,7 +390,6 @@ export function CellReportView({
             <h2 className="tile__title" id="cell-green-heading">
               Living street trees
             </h2>
-            <Stamp variant="confirmed" compact />
           </header>
           <p className="tile__value">
             <Stat value={cell.trees.street_trees} />
@@ -394,7 +403,7 @@ export function CellReportView({
             <h2 className="tile__title" id="cell-building-heading">
               Building age &amp; serious hazards
             </h2>
-            <Stamp variant={hasBuildingAge ? "confirmed" : "no_data"} compact />
+            {!hasBuildingAge && <Stamp variant="no_data" compact />}
           </header>
 
           {!hasBuildingAge ? (
@@ -424,6 +433,17 @@ export function CellReportView({
         <div className="tiledetail" id="tile-detail-panel" role="region" aria-label={`${TILE_TITLES[expandedKey]} — more detail`}>
           <p className="tiledetail__title mono">{TILE_TITLES[expandedKey]}</p>
 
+          {/* LAYOUT-V3 WAVE 1d item 10 (2026-08-03, Noah: "tile disclosures
+              say WHAT the data is, not HOW it's acquired"). Every branch
+              below now states exactly what the tile's own number means
+              (the WHAT) plus its source name -- the full acquisition/
+              methodology text each branch used to carry inline (how
+              amenities are measured, noise/crime's citywide-percentile
+              caveats, the tree count's "since 2015" gap, the HPD
+              inspection note) moves verbatim to the disclosure page
+              (App.tsx's DisclosurePage, item 14) rather than being deleted
+              -- the app-level honesty inventory in the wave report tracks
+              every one of those strings by its new home. */}
           {expandedKey === "amenities" && (
             <>
               <ul className="amenities">
@@ -437,8 +457,7 @@ export function CellReportView({
                 ))}
               </ul>
               <p className="field__provenance">
-                Real, named places in this block only — measured as a straight line, not an
-                actual route, so it can over- or under-count near rivers, parks, or highways.
+                Real, named places in this block.
                 <br />
                 <SourceTag source={cell.amenities.source} />
               </p>
@@ -446,25 +465,17 @@ export function CellReportView({
           )}
 
           {expandedKey === "crime" && crime && (
-            <>
-              <p className="field__empty">
-                Ranks {formatPercentile(crime.crime_percentile)} for reported major crime, compared
-                with the rest of New York City.
-              </p>
-              <p className="field__provenance">
-                NYPD crime data, week ending {crime.week_ending} · {crime.total_ytd.toLocaleString()}{" "}
-                major crimes so far this year in this area.
-                <br />
-                {cell.safety.crime_caveat}
-                <br />
-                <SourceTag source={cell.safety.source} />
-              </p>
-            </>
+            <p className="field__provenance">
+              Ranks {formatPercentile(crime.crime_percentile)} for reported major crime, compared
+              with the rest of New York City.
+              <br />
+              <SourceTag source={cell.safety.source} />
+            </p>
           )}
 
           {expandedKey === "noise" && (
             <p className="field__provenance">
-              Noise complaints neighbors reported to the city, trailing 12 months · in this block.
+              Noise complaints neighbors reported to the city, trailing 12 months, in this block.
               <br />
               <SourceTag source={cell.noise.source} />
             </p>
@@ -472,8 +483,7 @@ export function CellReportView({
 
           {expandedKey === "trees" && (
             <p className="field__provenance">
-              From the city's last street-tree count, 2015 · in this block. Trees planted
-              since won't show here.
+              From the city's last street-tree count, 2015, in this block.
               <br />
               <SourceTag source={cell.trees.source} />
             </p>
@@ -500,8 +510,6 @@ export function CellReportView({
                 {violations > 0 && <em> — across every building on this block</em>}
               </p>
               <p className="field__provenance">
-                {cell.housing_hazards.note}
-                <br />
                 <SourceTag source={cell.building_age.source} />
                 <br />
                 <SourceTag source={cell.housing_hazards.source} />

@@ -2,11 +2,11 @@ import { useState } from "react";
 import { ApiError, getCell, getGeocode, postFactcheck } from "./api";
 import { AddressSearch } from "./components/AddressSearch";
 import { CellReportView, GettingAroundField, type TileHighlightKey } from "./components/CellReportView";
+import { DisclosurePage } from "./components/DisclosurePage";
 import { FactCheckView } from "./components/FactCheckView";
-import { Header } from "./components/Header";
 import { MapView } from "./components/MapView";
 import { PreferenceBar } from "./components/PreferenceBar";
-import { EXAMPLE_ADDRESSES, EXAMPLE_LISTING_ADDRESS, EXAMPLE_LISTING_TEXT } from "./data/examples";
+import { EXAMPLE_LISTING_ADDRESS, EXAMPLE_LISTING_TEXT } from "./data/examples";
 import type { PinnedPlace } from "./lib/preferences";
 import type { CellProfile, FactcheckResult } from "./types";
 
@@ -53,6 +53,16 @@ export default function App() {
   // need to read/write it.
   const [activeCategories, setActiveCategories] = useState<Set<string>>(new Set());
   const [pins, setPins] = useState<PinnedPlace[]>([]);
+  const [pinLoading, setPinLoading] = useState(false);
+  const [pinError, setPinError] = useState<string | null>(null);
+
+  // LAYOUT-V3 WAVE 1d item 14 (2026-08-03, SPEC-layout-v3.md §8): the
+  // methodology/disclosure page -- a real, separate app view (not a scroll
+  // target), toggled here rather than routed, since this app has no router
+  // dependency (matches the existing "no react-router" shape rather than
+  // adding one for a single extra screen). `false` = the normal report
+  // view; `true` = DisclosurePage replaces the whole <main>.
+  const [showDisclosure, setShowDisclosure] = useState(false);
 
   // LAYOUT-V3 WAVE 1c item 4: which side-panel tile (if any) the map should
   // currently emphasize -- CellReportView owns the hover/expand logic
@@ -80,6 +90,23 @@ export default function App() {
 
   function removePin(label: string) {
     setPins((prev) => prev.filter((p) => p.label !== label));
+  }
+
+  // LAYOUT-V3 WAVE 1d item 11: the consolidated search bar's own "pin"
+  // button calls this with whatever address is currently typed/selected --
+  // the exact same GET /api/geocode call PreferenceBar.tsx's now-removed
+  // pin form used to make, just triggered from the one bar instead of two.
+  async function pinAddress(address: string) {
+    setPinLoading(true);
+    setPinError(null);
+    try {
+      const result = await getGeocode(address);
+      addPin({ label: result.label, lat: result.lat, lng: result.lng });
+    } catch (e) {
+      setPinError(e instanceof ApiError ? e.message : "Something went wrong pinning that place.");
+    } finally {
+      setPinLoading(false);
+    }
   }
 
   function resetFactcheck() {
@@ -187,103 +214,123 @@ export default function App() {
 
   return (
     <div className="wrap">
-      <Header address={searchedAddress} />
-
+      {/* LAYOUT-V3 WAVE 1d items 6/7 (2026-08-03, SPEC-layout-v3.md §8):
+          the masthead ("Bearings" + tagline) and the top information band
+          labeling the searched address are both gone -- Header.tsx itself
+          is deleted, not just unmounted. The app now opens straight at the
+          search bar; address identity, when there is one, lives at the
+          panel's own compact `.record-line` below (item 2's line), not a
+          page-level band duplicating the same fact. */}
       <main>
-        <AddressSearch
-          value={addressInput}
-          onChange={setAddressInput}
-          onSubmit={handleSearch}
-          examples={EXAMPLE_ADDRESSES}
-          loading={reportLoading}
-          error={reportError}
-          compact={cellReport !== null}
-        />
-
-        {/* Slim bar above the map (SPEC-lens-report.md §2) -- category
-            chips + pin search, both session-only. */}
-        <PreferenceBar
-          activeCategories={activeCategories}
-          onToggleCategory={toggleCategory}
-          pins={pins}
-          onAddPin={addPin}
-          onRemovePin={removePin}
-        />
-
-        {/* LAYOUT-V3 WAVE 1c (2026-08-03, SPEC-layout-v3.md §8 Wave 1c item
-            2, Noah: the old kicker+title block here "appears for no clear
-            reason" -- replaced with ONE compact line, not a title ceremony
-            (no separate "The record" kicker paragraph, no big display-font
-            headline). Kept ABOVE `.mapgrid` rather than moved inside
-            `.sidepanel` deliberately: item 1 (this same wave) requires the
-            side panel's first TILE to top-align with the map canvas, and
-            putting this line inside `.sidepanel` would push the tiles down
-            by its own height with nothing matching on the map side to
-            compensate -- see MapView.tsx's own item-1 comment. */}
-        {cellReport && (
-          <h2 className="record-line mono" id="report-heading">
-            {searchedAddress ?? "This block"}
-          </h2>
-        )}
-
-        {/* LAYOUT-V3 WAVE 1 (2026-08-02, SPEC-layout-v3.md §3): the "answer
-            to what's here" now lives BESIDE the map, not below a scroll-
-            jump. .mapgrid is the page-level two-column grid (map | side
-            panel); MapView mounts unconditionally inside it either way
-            (Task 4/VISUAL.md §5 -- it fetches the citywide grid on its own
-            and is interactive before any report has ever loaded), while
-            the side panel's own content depends on report state: loading,
-            empty (nothing clicked/searched yet), or the five real
-            non-transit stat cards from CellReportView. */}
-        <div className="mapgrid" id="report">
-          <MapView
-            address={searchedAddress}
-            selectedCell={selectedCell}
-            onCellClick={handleCellClick}
-            activeCategories={activeCategories}
-            pins={pins}
-            highlightedTile={highlightedTile}
-            crimePrecinct={cellReport?.safety.precinct ?? null}
-          />
-
-          <aside className="sidepanel" aria-label="This block's record">
-            {reportLoading && !cellReport && (
-              <p className="sidepanel__placeholder mono" role="status">
-                Pulling the record<span className="loading__dots" aria-hidden="true" />
-              </p>
-            )}
-            {!reportLoading && !cellReport && (
-              <p className="sidepanel__placeholder mono">
-                Click any block for its real record, or search an address for 5, 10, and
-                15-minute walk rings plus nearby places you turn on above.
-              </p>
-            )}
-            {cellReport && <CellReportView cell={cellReport} onTileHighlight={setHighlightedTile} />}
-          </aside>
-        </div>
-
-        {cellReport && (
+        {showDisclosure ? (
+          <DisclosurePage cell={cellReport} onBack={() => setShowDisclosure(false)} />
+        ) : (
           <>
-            <GettingAroundField cell={cellReport} />
+            <AddressSearch
+              value={addressInput}
+              onChange={setAddressInput}
+              onSubmit={handleSearch}
+              onPin={pinAddress}
+              pinLoading={pinLoading}
+              pinError={pinError}
+              loading={reportLoading}
+              error={reportError}
+              compact={cellReport !== null}
+            />
 
-            {searchedAddress && (
-              <FactCheckView
+            {/* Slim bar above the map (SPEC-lens-report.md §2) -- category
+                chips + the pinned-places list, session-only. */}
+            <PreferenceBar
+              activeCategories={activeCategories}
+              onToggleCategory={toggleCategory}
+              pins={pins}
+              onRemovePin={removePin}
+            />
+
+            {/* LAYOUT-V3 WAVE 1d item 2 (2026-08-03, Noah: the "this block"
+                identity framing goes -- "the line where it sits becomes the
+                plain address/area label itself, no framing word"). Renders
+                ONLY when a real address was actually searched: the old
+                `?? "This block"` fallback for a bare grid click invented a
+                framing label this project has no real area name to back
+                (a cell carries no neighbourhood/borough name of its own --
+                see types.ts's CellProfile) -- inventing one would fabricate
+                an identity the data doesn't have, and the tiles below are
+                already the honest record either way. A bare click's side
+                panel therefore starts directly at the tile grid, with
+                nothing standing in for an address that was never given. */}
+            {cellReport && searchedAddress && (
+              <h2 className="record-line mono" id="report-heading">
+                {searchedAddress}
+              </h2>
+            )}
+
+            {/* LAYOUT-V3 WAVE 1 (2026-08-02, SPEC-layout-v3.md §3): the
+                "answer to what's here" now lives BESIDE the map, not below
+                a scroll-jump. .mapgrid is the page-level two-column grid
+                (map | side panel); MapView mounts unconditionally inside it
+                either way (Task 4/VISUAL.md §5 -- it fetches the citywide
+                grid on its own and is interactive before any report has
+                ever loaded), while the side panel's own content depends on
+                report state: loading, empty (nothing clicked/searched yet),
+                or the five real non-transit stat cards from
+                CellReportView. */}
+            <div className="mapgrid" id="report">
+              <MapView
                 address={searchedAddress}
-                listingText={listingText}
-                onListingTextChange={setListingText}
-                onSubmit={submitFactcheck}
-                onLoadExample={loadExampleListing}
-                loading={factcheckLoading}
-                error={factcheckError}
-                result={factcheckResult}
+                selectedCell={selectedCell}
+                onCellClick={handleCellClick}
+                activeCategories={activeCategories}
+                pins={pins}
+                highlightedTile={highlightedTile}
+                crimePrecinct={cellReport?.safety.precinct ?? null}
               />
+
+              <aside className="sidepanel" aria-label="Block record">
+                {reportLoading && !cellReport && (
+                  <p className="sidepanel__placeholder mono" role="status">
+                    Pulling the record<span className="loading__dots" aria-hidden="true" />
+                  </p>
+                )}
+                {!reportLoading && !cellReport && (
+                  <p className="sidepanel__placeholder mono">
+                    Click any block for its real record, or search an address for 5, 10, and
+                    15-minute walk rings plus nearby places you turn on above.
+                  </p>
+                )}
+                {cellReport && <CellReportView cell={cellReport} onTileHighlight={setHighlightedTile} />}
+              </aside>
+            </div>
+
+            {cellReport && (
+              <>
+                <GettingAroundField cell={cellReport} />
+
+                {searchedAddress && (
+                  <FactCheckView
+                    address={searchedAddress}
+                    listingText={listingText}
+                    onListingTextChange={setListingText}
+                    onSubmit={submitFactcheck}
+                    onLoadExample={loadExampleListing}
+                    loading={factcheckLoading}
+                    error={factcheckError}
+                    result={factcheckResult}
+                  />
+                )}
+              </>
             )}
           </>
         )}
       </main>
 
       <footer className="footer">
-        <p>Built on public data — every number traces to a source you can click.</p>
+        <p>
+          Built on public data — every number traces to a source you can click.{" "}
+          <button type="button" className="footer__disclosurelink" onClick={() => setShowDisclosure(true)}>
+            How this data works
+          </button>
+        </p>
       </footer>
     </div>
   );

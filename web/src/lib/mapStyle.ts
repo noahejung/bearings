@@ -28,6 +28,40 @@ const INK = "#111111";
 const STEEL = "#8A8D8F";
 const RED = "#D7263D";
 
+// LAYOUT-V3 WAVE 1d item 12 (2026-08-03, SPEC-layout-v3.md §8, Noah:
+// "navigable or trimmed" for the slice of New Jersey inside NYC_BBOX --
+// "default: trim/dim"). config.NYC_BBOX's west edge (-74.30) reaches past
+// the Hudson into Bergen/Hudson County, NJ, because the citywide per-cell
+// bake (cellprofile.py) is real-NYC-building-footprint-derived and NYC-only
+// -- panning/zooming toward the Hudson today shows real basemap streets
+// with nothing behind them (no citywide grid, no report data), inviting a
+// dead-feeling area. This is a real, hand-plotted approximation of "west of
+// the Hudson / Kill van Kull / Arthur Kill within NYC_BBOX" (public
+// landmark coordinates -- GW Bridge, the Hudson waterfront, Kill van Kull,
+// Raritan Bay -- not a precise administrative boundary), used ONLY to
+// dim the basemap's own terrain/roads there, never to hide anything a real
+// search/click draws on top of it (this layer sits BELOW the buildings/
+// streets/citywide-grid/reach-ring overlay in buildOverlayLayers()'s own
+// paint order, so a genuine local overlay drawn over this area -- e.g. the
+// Newport, NJ PATH anchor's own neighbourhood, if a search ever resolves
+// there -- still renders at full contrast on top of the dim). Reversible:
+// deleting this one source/layer pair restores the plain basemap.
+const NJ_MASK_POLYGON: [number, number][] = [
+  [-74.30, 40.93], // NW corner of NYC_BBOX
+  [-74.30, 40.47], // SW corner
+  [-74.25, 40.47], // south edge, to where the boundary line starts
+  [-74.23, 40.5],
+  [-74.13, 40.6], // Kill van Kull / north shore of Staten Island
+  [-74.05, 40.66], // Upper Bay / Bayonne
+  [-74.02, 40.71], // Jersey City waterfront, opposite Lower Manhattan
+  [-74.0, 40.75], // Hoboken waterfront, opposite Midtown
+  [-73.96, 40.8], // opposite Upper Manhattan
+  [-73.95, 40.85], // George Washington Bridge landing
+  [-73.93, 40.87], // Riverdale/Yonkers latitude
+  [-73.9, 40.93], // boundary line reaches the north edge of NYC_BBOX
+  [-74.3, 40.93], // close back to the NW corner
+];
+
 // Real Protomaps Basemap `landuse` `kind` values that read as green/open
 // space -- steel, not a fifth colour, per VISUAL.md §2's "no colour
 // outside the four".
@@ -61,6 +95,16 @@ export function buildMapStyle(tilesUrl: string): StyleSpecification {
         url: `pmtiles://${tilesUrl}`,
         attribution:
           '© <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer">OpenStreetMap</a> contributors',
+      },
+      // Static, baked into the style itself (no fetch, never updates) --
+      // see NJ_MASK_POLYGON's own comment for what this is and why.
+      "nj-mask": {
+        type: "geojson",
+        data: {
+          type: "Feature",
+          properties: {},
+          geometry: { type: "Polygon", coordinates: [NJ_MASK_POLYGON] },
+        },
       },
     },
     layers: [
@@ -123,6 +167,20 @@ export function buildMapStyle(tilesUrl: string): StyleSpecification {
           "line-opacity": 0.72,
           "line-width": ["interpolate", ["linear"], ["zoom"], 8, 0.5, 16, 2.4],
         },
+      },
+      {
+        // LAYOUT-V3 WAVE 1d item 12 -- painted last among the base style's
+        // own layers (topmost of earth/water/roads, still below every
+        // per-address local overlay MapView.tsx appends afterward via
+        // `map.addLayer()`). A flat BONE wash, not a fifth colour -- reads
+        // as "receded/out of scope," never a fabricated absence (the real
+        // basemap streets/water underneath are still faintly visible
+        // through it, honestly showing there IS land there, just not this
+        // app's covered area).
+        id: "nj-mask-fill",
+        type: "fill",
+        source: "nj-mask",
+        paint: { "fill-color": BONE, "fill-opacity": 0.72 },
       },
     ],
   };

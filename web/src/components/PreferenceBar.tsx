@@ -1,49 +1,30 @@
-import { useId, useState, type FormEvent } from "react";
-import { ApiError, getGeocode } from "../api";
 import { REACH_CHIPS, type PinnedPlace } from "../lib/preferences";
 
 // The preference bar (SPEC-lens-report.md §2) -- a slim bar above the map.
-// Two mechanics, both session-only (no localStorage/URL state anywhere in
-// this file, matching lib/preferences.ts's own module docstring):
-//   - category chips, toggled on/off, driving MapView's amenity/station dots.
-//   - a pin-a-place search, reusing the SAME geocoder (GET /api/geocode)
-//     App.tsx's own address search already calls (PLAN-lens-report.md §0:
-//     this codebase has no separate venue/business-name search index).
+// Category chips, toggled on/off, driving MapView's amenity/station dots,
+// plus the pinned-places list.
+//
+// LAYOUT-V3 WAVE 1d item 11 (2026-08-03, SPEC-layout-v3.md §8, Noah: "a
+// save/pin button next to the [search] bar... replaces the split search-
+// vs-pin flow"): this file's own separate pin-a-place text input + "pin it"
+// button (a second geocoder entry point, duplicating AddressSearch.tsx's
+// own bar) is gone -- pinning now happens from the single consolidated
+// search bar (AddressSearch.tsx), which App.tsx wires straight to the same
+// `addPin`/`pins` state this component already read. This component keeps
+// only what's still genuinely its own: the category chips and the pinned-
+// places list/remove control, neither of which duplicates anything else on
+// the page.
 export function PreferenceBar({
   activeCategories,
   onToggleCategory,
   pins,
-  onAddPin,
   onRemovePin,
 }: {
   activeCategories: Set<string>;
   onToggleCategory: (key: string) => void;
   pins: PinnedPlace[];
-  onAddPin: (pin: PinnedPlace) => void;
   onRemovePin: (label: string) => void;
 }) {
-  const [pinQuery, setPinQuery] = useState("");
-  const [pinLoading, setPinLoading] = useState(false);
-  const [pinError, setPinError] = useState<string | null>(null);
-  const inputId = useId();
-
-  async function handlePinSubmit(e: FormEvent) {
-    e.preventDefault();
-    const trimmed = pinQuery.trim();
-    if (!trimmed) return;
-    setPinLoading(true);
-    setPinError(null);
-    try {
-      const result = await getGeocode(trimmed);
-      onAddPin({ label: result.label, lat: result.lat, lng: result.lng });
-      setPinQuery("");
-    } catch (e) {
-      setPinError(e instanceof ApiError ? e.message : "Something went wrong pinning that place.");
-    } finally {
-      setPinLoading(false);
-    }
-  }
-
   return (
     <section className="prefbar" aria-label="Map preferences">
       <div className="prefbar__chips" role="group" aria-label="Show nearby places by category">
@@ -62,29 +43,6 @@ export function PreferenceBar({
           );
         })}
       </div>
-
-      <form className="prefbar__pin" onSubmit={handlePinSubmit}>
-        <label className="sr-only" htmlFor={inputId}>
-          Pin a place by address
-        </label>
-        <input
-          id={inputId}
-          type="text"
-          autoComplete="off"
-          spellCheck={false}
-          placeholder="pin a place — e.g. an address"
-          value={pinQuery}
-          onChange={(e) => setPinQuery(e.target.value)}
-        />
-        <button type="submit" className="button button--ghost" disabled={pinLoading || !pinQuery.trim()}>
-          {pinLoading ? "pinning…" : "pin it"}
-        </button>
-      </form>
-      {pinError && (
-        <p className="prefbar__error" role="alert">
-          {pinError}
-        </p>
-      )}
 
       {pins.length > 0 && (
         <ul className="prefbar__pins" aria-label="Pinned places">

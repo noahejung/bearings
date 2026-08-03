@@ -192,6 +192,13 @@ const ESB_CELL_PROFILE = {
   centroid: { lat: 40.74992386935106, lng: -73.98572782944613 },
   noise: {
     complaints_12mo: 140,
+    // LAYOUT-V3 WAVE 1d item 15 (2026-08-03): a real percentile, computed
+    // via citywide.percentile_rank() against the live ~7,017-cell noise
+    // distribution for this exact complaint count (verified 2026-08-03) --
+    // not a fabricated placeholder.
+    percentile: 80.17671369531139,
+    caveat:
+      "Ranks this block's 311 noise complaints against every block citywide, though complaint volume reflects who calls 311 as much as real noise and rises faster in gentrifying neighborhoods.",
     source: { name: "NYC 311", url: "https://data.cityofnewyork.us/d/erm2-nwe9" },
   },
   amenities: {
@@ -250,6 +257,9 @@ const RIVERDALE_CELL_PROFILE = {
   centroid: { lat: 40.8967, lng: -73.9106 },
   noise: {
     complaints_12mo: 6,
+    percentile: 28.01054581730084,
+    caveat:
+      "Ranks this block's 311 noise complaints against every block citywide, though complaint volume reflects who calls 311 as much as real noise and rises faster in gentrifying neighborhoods.",
     source: { name: "NYC 311", url: "https://data.cityofnewyork.us/d/erm2-nwe9" },
   },
   amenities: {
@@ -472,10 +482,14 @@ afterEach(() => {
 });
 
 describe("App (full mount)", () => {
-  it("renders the masthead, mounts the citywide map immediately, and submits an address via the fast geocode+cell path", async () => {
+  it("opens straight at the search bar, mounts the citywide map immediately, and submits an address via the fast geocode+cell path", async () => {
     render(<App />);
 
-    expect(screen.getByText("Bearings")).toBeInTheDocument();
+    // LAYOUT-V3 WAVE 1d items 6/7 (2026-08-03): the masthead ("Bearings" +
+    // tagline) and the top address-labeling band are both gone -- the app
+    // opens directly at the search bar, no title ceremony above it.
+    expect(screen.queryByText("Bearings")).not.toBeInTheDocument();
+    expect(screen.getByPlaceholderText(/5TH AVE/i)).toBeInTheDocument();
 
     // The map is visible before any search or click -- Task 1/4: it must
     // not be gated behind a loaded report. LAYOUT-V3 WAVE 1c (2026-08-03,
@@ -508,7 +522,7 @@ describe("App (full mount)", () => {
     // Real values actually reached the DOM, not just the field chrome.
     expect(screen.getByText("140")).toBeInTheDocument(); // noise complaints
     expect(screen.getByText("1920")).toBeInTheDocument(); // building age
-    expect(screen.getByText(/5 subway or PATH station/i)).toBeInTheDocument();
+    expect(screen.getByText("4 min")).toBeInTheDocument(); // ride time to Midtown
 
     // The fact-check section is present, wired to the real searched address.
     expect(screen.getByRole("heading", { name: /check a listing/i })).toBeInTheDocument();
@@ -562,7 +576,6 @@ describe("App (full mount)", () => {
     );
 
     expect(screen.getByText(/We don.t have crime data for this block yet/i)).toBeInTheDocument();
-    expect(screen.getByText(/No subway or PATH station within about a 6-minute walk/i)).toBeInTheDocument();
   });
 
   it("clicking a grid cell swaps the report to that cell's data (the missing click-to-load feature)", async () => {
@@ -596,7 +609,12 @@ describe("App (full mount)", () => {
     // A bare click carries no address -- the previously searched address
     // must be cleared, not left on screen implying this block-level
     // record is still about a specific address it no longer is.
-    expect(screen.getByRole("heading", { name: "This block" })).toBeInTheDocument();
+    // LAYOUT-V3 WAVE 1d item 2 (2026-08-03): the old "This block" framing
+    // fallback is gone -- a bare click renders NO identity heading at all
+    // (no fabricated area label; the tiles below are the honest record),
+    // rather than a generic placeholder.
+    expect(screen.queryByRole("heading", { name: "This block" })).not.toBeInTheDocument();
+    expect(document.getElementById("report-heading")).not.toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: GEOCODE_RESULT.label })).not.toBeInTheDocument();
     // The fact-check section requires a real address -- it must not render
     // for an addressless block click.

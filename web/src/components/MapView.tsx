@@ -3,7 +3,7 @@ import type { Feature, FeatureCollection } from "geojson";
 import maplibregl, { type LngLat, type Map as MapLibreMap, type Marker } from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import { Protocol } from "pmtiles";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ApiError, getCellsIndex, getCitywide, getMapGeometry, getReach } from "../api";
 import { buildMapStyle, buildOverlayLayers } from "../lib/mapStyle";
 import type { PinnedPlace } from "../lib/preferences";
@@ -49,10 +49,6 @@ import { colorFor } from "./RouteBullet";
 // cell" is decided (that stays the backend's data-derived job, see
 // cellprofile.py's own module docstring) -- it is purely a camera bound.
 const NYC_BBOX = { south: 40.47, north: 40.93, west: -74.30, east: -73.70 };
-
-const INK = "#111111";
-const RED = "#D7263D";
-const STEEL = "#8A8D8F";
 
 // Mirrors bearings/transit.py's WALK_SPEED_MPS -- the same "Mirrors ..."
 // duplication pattern NYC_BBOX above already uses. Only ever used here for
@@ -969,59 +965,15 @@ export function MapView({
     }
   }
 
-  // LAYOUT-V3 WAVE 1c (2026-08-03, SPEC-layout-v3.md §8 Wave 1c item 2,
-  // Noah: interface-narration captions like this one "appear for no clear
-  // reason"): the old leading entry here ("Click anywhere on the map to
-  // see that block's real record") told the user the map was clickable in
-  // WORDS. Item 3/4 of the same wave give the map a real, felt affordance
-  // instead -- a pointer cursor plus a visible highlight fill over
-  // whichever block is under the cursor (see effect 2 below) -- so the
-  // fact is now demonstrated, not narrated, and this caption is redundant
-  // with it. Screen readers still get the equivalent fact: the map
-  // canvas's own `aria-label` below already states "Every real city block
-  // is clickable to load its record," so nothing is lost for anyone who
-  // can't see the cursor change.
-  const legend = useMemo(
-    () => [
-      ...(geo
-        ? [
-            { swatch: { background: STEEL, opacity: 0.34 }, label: "Buildings" },
-            { swatch: { background: INK, height: 2 }, label: "Streets, by size" },
-            { swatch: { background: RED }, label: "Subway & PATH lines" },
-          ]
-        : []),
-      {
-        swatch: { background: RED, borderRadius: "50%", width: 8, height: 8 },
-        label: "The searched or selected block",
-      },
-      ...(reach
-        ? [
-            {
-              swatch: { background: RED, opacity: 0.22, borderRadius: "50%", width: 12, height: 12 },
-              label: "Roughly a 5, 10, 15-minute walk — a straight line, not a real route",
-            },
-          ]
-        : []),
-      ...(reach && activeCategories.size > 0
-        ? [
-            {
-              swatch: { background: INK, borderRadius: "50%", width: 7, height: 7 },
-              label: "Nearby places you've turned on above",
-            },
-          ]
-        : []),
-      ...(pins.length > 0
-        ? [
-            {
-              swatch: { background: RED, borderRadius: "50%", width: 8, height: 8 },
-              label: "Pinned places, however far",
-            },
-          ]
-        : []),
-    ],
-    [geo, reach, activeCategories, pins],
-  );
-
+  // LAYOUT-V3 WAVE 1d item 3 (2026-08-03, SPEC-layout-v3.md §8, cut pass):
+  // the map legend (this file's own former `legend` useMemo + the
+  // `.mapfield__legend` swatch row it fed) is gone outright, not relocated
+  // -- every fact it spelled out (red dot = selected block, translucent
+  // rings = walk-time bands, ink dots = nearby places) is already visible
+  // on the map itself the moment it appears, and the map canvas's own
+  // `aria-label` below still states the core "every block is clickable"
+  // fact for anyone who can't see it rendered.
+  //
   // LAYOUT-V3 WAVE 1 (2026-08-02, SPEC-layout-v3.md §2/§3): the old
   // `.mapfield__stage` two-column grid and its second column -- the
   // "What's here" hover-legend `.readout` panel -- are both gone from this
@@ -1058,27 +1010,20 @@ export function MapView({
         />
       </div>
 
-      <div className="mapfield__controls">
-        <span>Map view</span>
-        <div className="lensbar" role="group" aria-label="Map view">
-          <button type="button" className="lensbar__option" aria-pressed="true">
-            minimal
-          </button>
-          <button type="button" className="lensbar__option" disabled aria-disabled="true" title="Coming in a future update">
-            transit + 3d — coming soon
-          </button>
-        </div>
-      </div>
+      {/* LAYOUT-V3 WAVE 1d item 4 (2026-08-03, SPEC-layout-v3.md §8, Noah:
+          "the Transit +3d control" -- precisely, this whole `.mapfield__
+          controls` block, traced by reading this file, not guessed).
+          Removed outright, not just the disabled "transit + 3d — coming
+          soon" button: with that second lens gone, the remaining "Map
+          view: [minimal]" row was a permanently-pressed, single-option
+          toggle with nothing to switch to -- dead chrome by the same
+          standard item 2's own cut pass applies ("does removing this make
+          the next user action harder?" No: there was never a second real
+          state to reach). The 3D-tilt lens (SPEC-layout-v3.md §6) stays
+          deferred scope either way; this block returns with it if/when
+          that lens ships. */}
 
-      <div className="mapfield__legend">
-        {legend.map((item, i) => (
-          <span key={i}>
-            {item.swatch && <i style={item.swatch} />}
-            {item.label}
-          </span>
-        ))}
-      </div>
-      {loading && <p className="mapfield__status mono">Loading the neighbourhood record…</p>}
+      {loading && <p className="mapfield__status mono">Loading the neighborhood record…</p>}
       {error && <p className="mapfield__status mapfield__status--error mono">{error}</p>}
 
       {geo && <p className="mapfield__note mono">{geo.basemap_note}</p>}

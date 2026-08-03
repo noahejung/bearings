@@ -152,55 +152,10 @@ body {
   padding: 22px clamp(14px, 1vw, 20px) 90px;
 }
 
-/* ---------- information band — the engineering-drawing register, top and
-   bottom of every sheet (DESIGN.md §5, VISUAL.md §4) ---------- */
-.band {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 16px;
-  flex-wrap: wrap;
-  border-top: 1.5px solid var(--ink);
-  border-bottom: 1.5px solid var(--ink);
-  padding: 7px 0;
-  font-family: var(--font-mono);
-  font-size: 10px;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-}
-
-/* ---------- masthead — the wordmark, largest and most considered mark on
-   the sheet (DESIGN.md §6 Primary) ---------- */
-.masthead {
-  display: block;
-  text-decoration: none;
-  color: var(--ink);
-  margin-top: 34px;
-}
-
-.masthead__word {
-  font-weight: 700;
-  line-height: 0.86;
-  font-stretch: condensed;
-  font-size: clamp(40px, 7vw, 96px);
-  letter-spacing: -0.03em;
-  text-transform: uppercase;
-}
-
-.masthead__word sup {
-  font-size: 0.18em;
-  vertical-align: super;
-  margin-left: 0.1em;
-}
-
-.masthead__tag {
-  margin-top: 10px;
-  font-family: var(--font-mono);
-  font-size: 11px;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--steel);
-}
+/* LAYOUT-V3 WAVE 1d items 6/7 (2026-08-03, SPEC-layout-v3.md §8): the
+   information band (`.band`) and masthead (`.masthead*`) are both gone --
+   Header.tsx itself is deleted, not just unmounted; the app now opens
+   straight at the search bar. Removed here rather than left as dead CSS. */
 
 /* ---------- address search ---------- */
 .search {
@@ -302,6 +257,87 @@ body {
   cursor: not-allowed;
 }
 
+/* LAYOUT-V3 WAVE 1d item 11 (2026-08-03, SPEC-layout-v3.md §8) -- the
+   consolidated bar's own second action, sitting beside "Pull the record"
+   inside the same bordered `.search__field` row. Deliberately NOT styled
+   like the primary (ink-filled) button -- a ghost/outline treatment marks
+   it as the secondary action, matching `.button--ghost`'s own convention
+   elsewhere in this file. */
+.search__pin {
+  flex-shrink: 0;
+  border: none;
+  border-left: 1.5px solid var(--ink);
+  background: transparent;
+  color: var(--ink);
+  padding: 0.85rem 1.1rem;
+  font-family: var(--font-mono);
+  font-weight: 600;
+  font-size: 0.82rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+
+.search__pin:hover:not(:disabled) {
+  background: var(--ink);
+  color: var(--bone);
+}
+
+/* `button.search__pin:disabled` (not just `.search__pin:disabled`): the
+   extra `button` element selector matches `.search__field button:disabled`
+   above's OWN specificity (0,2,1) exactly -- a plain `.search__pin:disabled`
+   is only (0,2,0), so that broader rule's `background: var(--steel)` won
+   regardless of source order, combining with this rule's `color:
+   var(--steel)` into invisible steel-on-steel text (confirmed live via
+   Playwright + getComputedStyle before this fix). At equal specificity,
+   source order decides -- this rule is declared later, so it wins. */
+button.search__pin:disabled {
+  background: transparent;
+  color: var(--steel);
+  cursor: not-allowed;
+}
+
+/* LAYOUT-V3 WAVE 1d item 11 -- the debounced typeahead's own dropdown.
+   `position: absolute` (not normal flow) so opening/closing it never
+   shifts anything else on the page -- `.search__form` (the positioning
+   parent) already has its own `max-width`, so this inherits the exact
+   same width as `.search__field` above it without repeating the value. */
+.search__form {
+  position: relative;
+}
+
+.search__suggestions {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 100%;
+  z-index: 5;
+  border: 1.5px solid var(--ink);
+  border-top: none;
+  background: var(--bone);
+  max-height: 16rem;
+  overflow-y: auto;
+}
+
+.search__suggestion {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 0.6rem 1rem;
+  font-family: var(--font-mono);
+  font-size: 0.82rem;
+  border-bottom: 1px solid rgba(17, 17, 17, 0.12);
+}
+
+.search__suggestion:last-child {
+  border-bottom: none;
+}
+
+.search__suggestion:hover {
+  background: rgba(17, 17, 17, 0.06);
+}
+
 .search__error {
   max-width: 42rem;
   margin: 0.85rem 0 0;
@@ -312,69 +348,9 @@ body {
   font-size: 0.82rem;
 }
 
-/* ---------- example chips ---------- */
-.examples {
-  max-width: 52rem;
-  margin: 1.75rem 0 0;
-}
-
-.examples__label {
-  display: block;
-  font-family: var(--font-mono);
-  font-size: 0.68rem;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-  color: var(--steel);
-  margin-bottom: 0.6rem;
-}
-
-.examples ul {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.6rem;
-}
-
-.example {
-  position: relative;
-  display: flex;
-  flex-direction: column;
-  gap: 0.15rem;
-  align-items: flex-start;
-  border: 1px solid var(--steel);
-  padding: 0.55rem 0.85rem;
-  text-align: left;
-  transition: border-color 0.12s ease, background 0.12s ease;
-}
-
-.example:hover:not(:disabled) {
-  border-color: var(--ink);
-  background: rgba(17, 17, 17, 0.05);
-}
-
-.example:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-.example__badge {
-  font-family: var(--font-mono);
-  font-size: 0.62rem;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--red);
-  margin-bottom: 0.1rem;
-}
-
-.example__label {
-  font-weight: 700;
-  font-size: 0.92rem;
-}
-
-.example__sub {
-  font-family: var(--font-mono);
-  font-size: 0.72rem;
-  color: var(--steel);
-}
+/* LAYOUT-V3 WAVE 1d item 5 (2026-08-03, SPEC-layout-v3.md §8): the "or
+   try —" example chips (`.examples*`) are gone outright, not relocated --
+   removed here rather than left as dead CSS. */
 
 /* ---------- loading ---------- */
 .loading {
@@ -1251,27 +1227,11 @@ body {
   max-width: 74ch;
 }
 
-/* LAYOUT-V3 WAVE 1c, ROUND 2 (2026-08-03): moved from ABOVE `.mapfield__frame`
-   to below it (MapView.tsx's own render order) so nothing variable-height
-   sits between this card's top border and the canvas -- see `.mapfield`'s
-   own comment. `margin-top` still supplies the visual gap between the
-   canvas and this control row, just on the other side of it now. */
-.mapfield__controls {
-  margin-top: 1rem;
-  display: flex;
-  gap: 0.6rem;
-  align-items: center;
-  flex-wrap: wrap;
-}
-
-.mapfield__controls span,
-.mapfield__controls label {
-  font-family: var(--font-mono);
-  font-size: 0.66rem;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-  color: var(--steel);
-}
+/* LAYOUT-V3 WAVE 1d item 4 (2026-08-03, SPEC-layout-v3.md §8): the
+   "Map view: [minimal]" control row (`.mapfield__controls`, `.lensbar*`)
+   is gone -- see MapView.tsx's own item-4 comment for why the whole row,
+   not just the disabled "transit + 3d" button, was cut. Removed here
+   rather than left as dead CSS. */
 
 .mapfield__toggle {
   border: 1.5px solid var(--ink);
@@ -1416,26 +1376,9 @@ body {
   line-height: 1;
 }
 
-.mapfield__legend {
-  display: flex;
-  gap: 18px;
-  flex-wrap: wrap;
-  margin-top: 12px;
-  font-family: var(--font-mono);
-  font-size: 9.5px;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--steel);
-  align-items: center;
-}
-
-.mapfield__legend i {
-  display: inline-block;
-  width: 16px;
-  height: 3px;
-  margin-right: 6px;
-  vertical-align: middle;
-}
+/* LAYOUT-V3 WAVE 1d item 3 (2026-08-03, SPEC-layout-v3.md §8): the map
+   legend (`.mapfield__legend*`) is gone -- see MapView.tsx's own item-3
+   comment. Removed here rather than left as dead CSS. */
 
 /* ---------- map + side-panel grid ----------
    LAYOUT-V3 WAVE 1 (2026-08-02, SPEC-layout-v3.md §3) established the
@@ -1699,6 +1642,104 @@ body {
   line-height: 1.6;
 }
 
+/* LAYOUT-V3 WAVE 1d item 14 (2026-08-03, SPEC-layout-v3.md §8) -- the
+   disclosure page's one guaranteed entry point, always reachable
+   regardless of report state. Underlined, not button-chrome: reads as a
+   real link inline in the footer's own sentence, not a competing CTA. */
+.footer__disclosurelink {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+/* ---------- disclosure page (LAYOUT-V3 WAVE 1d item 14, 2026-08-03) ----------
+   The honest home for every methodology/caveat/source string item 10 cut
+   out of the side-panel tiles -- see DisclosurePage.tsx's own docstring.
+   `.disclosure__sections` reuses `.fields`' exact "border grid of cards"
+   convention (same auto-fit/320px-floor pattern, same top+bottom rule
+   bookends) rather than inventing a second grid language for what is,
+   structurally, the same "one card per metric" shape. */
+.disclosure {
+  margin-top: 1rem;
+}
+
+.disclosure__head {
+  border-top: 1.5px solid var(--ink);
+  padding-top: 1.4rem;
+}
+
+.disclosure__back {
+  margin-bottom: 1rem;
+}
+
+.disclosure__title {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-stretch: condensed;
+  text-transform: uppercase;
+  font-size: clamp(1.6rem, 3.6vw, 2.4rem);
+  letter-spacing: -0.01em;
+}
+
+.disclosure__lede {
+  margin-top: 0.6rem;
+  max-width: 62ch;
+  font-size: 0.95rem;
+  line-height: 1.6;
+  color: var(--steel);
+}
+
+.disclosure__sections {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 0;
+  margin-top: 2rem;
+  border-top: 1px solid var(--ink);
+  border-bottom: 1px solid var(--ink);
+}
+
+.disclosure__section {
+  border-bottom: 1px solid var(--ink);
+  border-right: 1px solid var(--ink);
+  padding: 1.3rem 1.4rem 1.5rem;
+}
+
+.disclosure__section:nth-child(odd) {
+  border-left: 1px solid var(--ink);
+}
+
+.disclosure__sectiontitle {
+  font-family: var(--font-display);
+  font-weight: 700;
+  text-transform: uppercase;
+  font-size: 0.95rem;
+  letter-spacing: -0.005em;
+}
+
+.disclosure__what {
+  margin-top: 0.6rem;
+  font-size: 0.9rem;
+  line-height: 1.5;
+}
+
+.disclosure__how {
+  margin-top: 0.6rem;
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  line-height: 1.55;
+  color: var(--steel);
+}
+
+.disclosure__source {
+  margin-top: 0.8rem;
+}
+
+.disclosure__source--pending {
+  font-size: 0.72rem;
+  color: var(--steel);
+}
+
 /* ---------- preference bar (SPEC-lens-report.md §2) ---------- */
 .prefbar {
   margin-top: 1.5rem;
@@ -1731,32 +1772,10 @@ body {
   color: var(--bone);
 }
 
-.prefbar__pin {
-  display: flex;
-  gap: 0.5rem;
-  max-width: 32rem;
-}
-
-.prefbar__pin input {
-  flex: 1;
-  border: 1.5px solid var(--ink);
-  background: transparent;
-  padding: 0.4rem 0.6rem;
-  font-family: var(--font-mono);
-  font-size: 0.78rem;
-  color: var(--ink);
-}
-
-.prefbar__pin .button {
-  padding: 0.4rem 0.85rem;
-  font-size: 0.7rem;
-}
-
-.prefbar__error {
-  font-family: var(--font-mono);
-  font-size: 0.72rem;
-  color: var(--red);
-}
+/* LAYOUT-V3 WAVE 1d item 11 (2026-08-03): the pin-a-place form
+   (`.prefbar__pin*`, `.prefbar__error`) is gone from this file --
+   pinning now happens from AddressSearch.tsx's own consolidated bar
+   (`.search__pin`). Removed here rather than left as dead CSS. */
 
 .prefbar__pins {
   display: flex;
@@ -1792,33 +1811,9 @@ body {
   color: var(--red);
 }
 
-/* ---------- lens switcher (SPEC-lens-report.md §4 stub) ---------- */
-.lensbar {
-  display: inline-flex;
-  gap: 0.4rem;
-}
-
-.lensbar__option {
-  border: 1.5px solid var(--ink);
-  background: transparent;
-  color: var(--ink);
-  padding: 0.35rem 0.7rem;
-  font-family: var(--font-mono);
-  font-size: 0.68rem;
-  letter-spacing: 0.04em;
-}
-
-.lensbar__option[aria-pressed="true"] {
-  background: var(--ink);
-  color: var(--bone);
-}
-
-.lensbar__option:disabled {
-  border-style: dashed;
-  border-color: var(--steel);
-  color: var(--steel);
-  cursor: not-allowed;
-}
+/* LAYOUT-V3 WAVE 1d item 4 (2026-08-03): the lens switcher (`.lensbar*`)
+   is gone along with `.mapfield__controls` above -- see MapView.tsx's own
+   item-4 comment. Removed here rather than left as dead CSS. */
 
 /* ---------- subject marker + pinned-place markers ---------- */
 .mapsubject {

@@ -37,6 +37,46 @@ describe("buildMapStyle (basemap)", () => {
     const style = buildMapStyle("https://example.com/tiles/nyc-basemap.pmtiles");
     expect(validateStyleMin(style)).toEqual([]);
   });
+
+  // LAYOUT-V3 WAVE 1d item 12 (2026-08-03): the New Jersey dim mask -- a
+  // real closed-ring polygon baked directly into the style (no fetch), not
+  // a fifth colour (BONE at reduced opacity, same token every other "no
+  // colour outside the four" layer in this file uses).
+  it("includes the nj-mask-fill layer with a real, closed-ring polygon source", () => {
+    const style = buildMapStyle("https://example.com/tiles/nyc-basemap.pmtiles");
+    const layer = style.layers.find((l) => l.id === "nj-mask-fill") as
+      | { source: string; paint: { "fill-color": string } }
+      | undefined;
+    expect(layer).toBeDefined();
+    expect(layer?.paint["fill-color"]).toBe("#EDE9DE");
+
+    const source = style.sources["nj-mask"] as {
+      type: string;
+      data: { geometry: { type: string; coordinates: [number, number][][] } };
+    };
+    expect(source.type).toBe("geojson");
+    const ring = source.data.geometry.coordinates[0];
+    expect(ring.length).toBeGreaterThan(3);
+    // A real closed ring -- first and last point identical.
+    expect(ring[0]).toEqual(ring[ring.length - 1]);
+    // Every point falls inside (or on the edge of) NYC_BBOX -- this mask
+    // must never extend beyond the basemap's own baked extract.
+    for (const [lng, lat] of ring) {
+      expect(lng).toBeGreaterThanOrEqual(-74.3);
+      expect(lng).toBeLessThanOrEqual(-73.7);
+      expect(lat).toBeGreaterThanOrEqual(40.47);
+      expect(lat).toBeLessThanOrEqual(40.93);
+    }
+  });
+
+  it("paints nj-mask-fill after (on top of) the base earth/water/roads layers", () => {
+    const style = buildMapStyle("https://example.com/tiles/nyc-basemap.pmtiles");
+    const ids = style.layers.map((l) => l.id);
+    const maskIdx = ids.indexOf("nj-mask-fill");
+    expect(maskIdx).toBeGreaterThan(ids.indexOf("earth"));
+    expect(maskIdx).toBeGreaterThan(ids.indexOf("water"));
+    expect(maskIdx).toBeGreaterThan(ids.indexOf("roads-major"));
+  });
 });
 
 describe("buildOverlayLayers (MapView's own app layers)", () => {
