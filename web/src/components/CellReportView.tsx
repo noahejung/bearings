@@ -457,7 +457,7 @@ export function CellReportView({
                 ))}
               </ul>
               <p className="field__provenance">
-                Real, named places in this block.
+                Real, named places in this block only.
                 <br />
                 <SourceTag source={cell.amenities.source} />
               </p>
@@ -475,7 +475,7 @@ export function CellReportView({
 
           {expandedKey === "noise" && (
             <p className="field__provenance">
-              Noise complaints neighbors reported to the city, trailing 12 months, in this block.
+              Noise complaints neighbors reported to the city, trailing 12 months · in this block.
               <br />
               <SourceTag source={cell.noise.source} />
             </p>
@@ -483,7 +483,7 @@ export function CellReportView({
 
           {expandedKey === "trees" && (
             <p className="field__provenance">
-              From the city's last street-tree count, 2015, in this block.
+              From the city's last street-tree count, 2015 · in this block.
               <br />
               <SourceTag source={cell.trees.source} />
             </p>

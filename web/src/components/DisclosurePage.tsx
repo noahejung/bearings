@@ -38,8 +38,12 @@ import { SourceTag } from "./SourceTag";
 //     last-resort, not the primary path.
 const AMENITIES_METHOD_NOTE =
   "Measured as a straight line, not an actual route, so it can over- or under-count near rivers, parks, or highways.";
-const TREES_METHOD_NOTE =
-  "From the city's last official street-tree count, in 2015. Trees planted since then won't show up here.";
+// Byte-identical to CellReportView.tsx's own pre-Wave-1d trees disclosure
+// text ("From the city's last street-tree count, 2015 · in this block.
+// Trees planted since won't show here.") -- the "in this block" half moved
+// into the tile's own WHAT sentence instead, so only the remaining
+// methodology clause lives here, unreworded.
+const TREES_METHOD_NOTE = "From the city's last street-tree count, 2015. Trees planted since won't show here.";
 
 // Mirrors bearings/transit.py's TRANSIT_CAVEAT (grepped live 2026-08-03).
 const FALLBACK_TRANSIT_CAVEAT =
@@ -57,11 +61,29 @@ const FALLBACK_HAZARD_NOTE =
 interface Section {
   title: string;
   what: string;
+  // A real, per-cell data fact (not methodology) that used to sit inline in
+  // the pre-Wave-1d tile disclosure -- optional because only crime carries
+  // one today (its own week_ending/total_ytd sentence). Kept as its own
+  // field rather than folded into `what`, so a section with no loaded cell
+  // (and therefore no real fact to state) simply omits this paragraph
+  // instead of showing a stale or fabricated placeholder.
+  detail?: string;
   how: string;
   source: { name: string; url: string } | null;
 }
 
 export function DisclosurePage({ cell, onBack }: { cell: CellProfile | null; onBack: () => void }) {
+  // Byte-identical to CellReportView.tsx's own pre-Wave-1d crime disclosure
+  // sentence ("NYPD crime data, week ending {week_ending} · {total_ytd}
+  // major crimes so far this year in this area.") -- a real per-cell data
+  // fact, not methodology, so it wasn't a natural fit for either the tile's
+  // one WHAT sentence or the "how" methodology field; it gets its own
+  // paragraph here instead of being silently dropped.
+  const crimeDetail =
+    cell && cell.safety.crime
+      ? `NYPD crime data, week ending ${cell.safety.crime.week_ending} — ${cell.safety.crime.total_ytd.toLocaleString()} major crimes so far this year in this area.`
+      : undefined;
+
   const sections: Section[] = [
     {
       title: "Getting around",
@@ -71,13 +93,14 @@ export function DisclosurePage({ cell, onBack }: { cell: CellProfile | null; onB
     },
     {
       title: "Grocery & everyday places",
-      what: "Real, named places in this block.",
+      what: "Real, named places in this block only.",
       how: AMENITIES_METHOD_NOTE,
       source: cell ? cell.amenities.source : null,
     },
     {
       title: "Crime near here",
       what: "Ranks this block's precinct by reported major crime, compared with the rest of New York City.",
+      detail: crimeDetail,
       how: cell ? cell.safety.crime_caveat : FALLBACK_CRIME_CAVEAT,
       source: cell ? cell.safety.source : null,
     },
@@ -123,6 +146,7 @@ export function DisclosurePage({ cell, onBack }: { cell: CellProfile | null; onB
               {s.title}
             </h3>
             <p className="disclosure__what">{s.what}</p>
+            {s.detail && <p className="disclosure__what">{s.detail}</p>}
             <p className="disclosure__how">{s.how}</p>
             {s.source && (
               <p className="disclosure__source">
