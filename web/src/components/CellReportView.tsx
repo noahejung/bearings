@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import { crimeRelativeLabel, formatPercentile } from "../lib/crime";
 import { unreachableReasonSentence, unreachableReasonShortLabel } from "../lib/transit";
 import type { CellProfile, UnreachableReason } from "../types";
@@ -186,6 +187,27 @@ export function GettingAroundField({ cell }: { cell: CellProfile }) {
   );
 }
 
+// LAYOUT-V3 WAVE 1c (2026-08-03, SPEC-layout-v3.md §8 Wave 1c item 4): which
+// map subject each tile's disclosure "talks about" -- MapView.tsx reads this
+// same key to decide what to emphasize. Deliberately just the five tile
+// identities, not a richer shape: the map-side effect that consumes this
+// still has to independently decide WHETHER real client-side geometry exists
+// for a given key (see MapView.tsx's own "tile highlight" effect comment for
+// the amenities-tile gap this can't paper over from here).
+export type TileHighlightKey = "amenities" | "crime" | "noise" | "trees" | "building";
+
+// LAYOUT-V3 WAVE 1c (2026-08-03, SPEC-layout-v3.md §8 Wave 1c item 5): the
+// human-readable title for whichever tile's disclosure is currently showing
+// in the shared detail region below the grid -- see that region's own
+// comment for why a shared region replaced Wave 1b's per-tile <details>.
+const TILE_TITLES: Record<TileHighlightKey, string> = {
+  amenities: "Grocery & everyday places",
+  crime: "Crime near here",
+  noise: "Noise complaints",
+  trees: "Living street trees",
+  building: "Building age & serious hazards",
+};
+
 // The five non-transit fields -- grocery/amenities, crime, noise, trees,
 // building age + hazards -- rendered beside the map in the side panel
 // (SPEC-layout-v3.md §3/§4).
@@ -197,70 +219,234 @@ export function GettingAroundField({ cell }: { cell: CellProfile }) {
 // paragraphs inline, always visible) are exactly the "long vertical column"
 // failure mode the amended spec now names and bans. This function now
 // renders five DENSE `.tile`s instead: a plain-language label, one
-// headline value/verdict, the existing stamp, and a tap-to-toggle
-// `<details>` disclosure -- everything that isn't the headline value
-// (every consequence sentence, caveat, provenance paragraph, and source
-// citation this file rendered before) moves verbatim inside that
-// `<details>`, per the spec's explicit "zero strings deleted" rule. This is
-// an INTERIM home for that text (Wave 2 still owns building the real
-// tooltip/disclosure-page split per §4.2) -- `<details>/<summary>` was
-// chosen here specifically because it's tap-to-toggle by construction (no
-// hover-only affordance, keyboard-operable, works at 375px) without
-// needing new JS state.
-export function CellReportView({ cell }: { cell: CellProfile }) {
+// headline value/verdict, the existing stamp, and a disclosure affordance
+// -- everything that isn't the headline value (every consequence sentence,
+// caveat, provenance paragraph, and source citation this file rendered
+// before) moves verbatim into that disclosure, per the spec's explicit
+// "zero strings deleted" rule.
+//
+// LAYOUT-V3 WAVE 1c (2026-08-03, SPEC-layout-v3.md §8 Wave 1c item 5,
+// Noah: "the native <details> expansion currently stretches both tiles in
+// a grid row -- narrow, skinny, unintuitive"). Root cause: `.tilegrid` is a
+// 2-column CSS grid with default `align-items: stretch`, so when one
+// tile's own <details> grew tall (opening inline, inside a ~175px-wide
+// grid cell), the ROW's height grew to match, and CSS stretched its ROW
+// NEIGHBOUR to the same height too -- exactly Noah's "stretches both
+// tiles" complaint, confirmed by reading `.tilegrid`/`.tile`'s own CSS (no
+// explicit `align-items`, so grid's stretch default applies). Fix, per
+// SPEC-layout-v3.md §8 Wave 1c item 5's option (c): each tile now renders a
+// compact toggle BUTTON instead of a per-tile <details>, and there is
+// exactly ONE shared `.tiledetail` region below the whole grid (a plain
+// sibling, not a grid child) that renders whichever tile's disclosure
+// content is currently active. A tile's own box in `.tilegrid` therefore
+// never changes size when it (or any other tile) is expanded -- the grid's
+// row heights are governed only by the five tiles' own fixed-height
+// content, which never changes. `<button aria-expanded>` (not `<details>`)
+// is used specifically because the expanded state and the expanded CONTENT
+// now live in two different DOM locations (the button here, the content in
+// the shared region below) -- `<details>` has no way to project its own
+// content elsewhere, but `aria-expanded`/`aria-controls` is exactly the
+// standard pattern for "this control's expanded state affects a distant
+// region" (works with Enter/Space and screen readers, and with touch at
+// mobile widths -- no hover-only path, matching the same tap-to-toggle
+// requirement Wave 1b's <details> was chosen for).
+//
+// This same click-to-expand state also doubles as the map-highlight
+// trigger for SPEC-layout-v3.md §8 Wave 1c item 4 ("hovered/expanded tile"),
+// via `onTileHighlight` below -- see that prop's own comment.
+export function CellReportView({
+  cell,
+  onTileHighlight,
+}: {
+  cell: CellProfile;
+  // LAYOUT-V3 WAVE 1c item 4: called with whichever tile the map should
+  // currently emphasize (a real hover, OR a real expanded disclosure -- see
+  // `activeHighlight` below), or `null` once neither is true. Optional so
+  // this component still works standalone in tests/Storybook-style
+  // rendering with no map to drive.
+  onTileHighlight?: (tile: TileHighlightKey | null) => void;
+}) {
   const crime = cell.safety.crime;
   const hasBuildingAge = cell.building_age.median_year_built !== null;
   const totalAmenities = CATEGORY_LABELS.reduce((sum, [key]) => sum + cell.amenities.counts[key], 0);
   const violations = cell.housing_hazards.class_c_violations;
 
-  return (
-    <div className="tilegrid">
-      <article className="tile" aria-labelledby="cell-amenities-heading">
-        <header className="tile__head">
-          <h2 className="tile__title" id="cell-amenities-heading">
-            Grocery &amp; everyday places
-          </h2>
-          <Stamp variant="confirmed" compact />
-        </header>
-        <p className="tile__value">
-          <Stat value={totalAmenities} />
-        </p>
-        <p className="tile__sub">place{totalAmenities === 1 ? "" : "s"} counted nearby</p>
-        <details className="tile__disclosure">
-          <summary>details</summary>
-          <ul className="amenities">
-            {CATEGORY_LABELS.map(([key, label]) => (
-              <li className="amenity" key={key}>
-                <span className="amenity__count">
-                  <Stat value={cell.amenities.counts[key]} />
-                </span>
-                <span className="amenity__label">{label}</span>
-              </li>
-            ))}
-          </ul>
-          <p className="field__provenance">
-            Real, named places in this block only — measured as a straight line, not an
-            actual route, so it can over- or under-count near rivers, parks, or highways.
-            <br />
-            <SourceTag source={cell.amenities.source} />
-          </p>
-        </details>
-      </article>
+  const [hoveredKey, setHoveredKey] = useState<TileHighlightKey | null>(null);
+  const [expandedKey, setExpandedKey] = useState<TileHighlightKey | null>(null);
 
-      <article className="tile" aria-labelledby="cell-safety-heading">
-        <header className="tile__head">
-          <h2 className="tile__title" id="cell-safety-heading">
-            Crime near here
-          </h2>
-          <Stamp variant={crime ? "confirmed" : "no_data"} compact />
-        </header>
-        {!crime ? (
-          <p className="tile__value tile__value--empty">We don&rsquo;t have crime data for this block yet.</p>
-        ) : (
-          <>
-            <p className="tile__value tile__value--text">{crimeRelativeLabel(crime.crime_percentile)}</p>
-            <details className="tile__disclosure">
-              <summary>details</summary>
+  // A real hover always wins over a merely-expanded tile (the user's
+  // cursor is telling us what they're looking at right now); once the
+  // cursor leaves, whichever tile is still expanded keeps the map
+  // emphasis, so a tap-to-expand on a touch device (which never fires a
+  // real hover) still drives the map -- the touch-equivalent path item 4
+  // needs, per its own acceptance note about mobile widths.
+  const activeHighlight = hoveredKey ?? expandedKey;
+
+  useEffect(() => {
+    onTileHighlight?.(activeHighlight);
+    // Tell the map to drop any highlight left over from this component
+    // unmounting (a new cell's own CellReportView will re-run this effect
+    // with its own fresh state either way, but an explicit cleanup avoids
+    // a one-frame stale highlight if the panel is ever removed outright).
+    return () => onTileHighlight?.(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeHighlight]);
+
+  // A new block's report swaps in -- clear whatever hover/expand state the
+  // PREVIOUS cell's tiles were in, so neither a stale highlight nor an
+  // already-open disclosure (now showing the wrong block's numbers) can
+  // survive the swap silently.
+  useEffect(() => {
+    setHoveredKey(null);
+    setExpandedKey(null);
+  }, [cell.h3]);
+
+  function toggle(key: TileHighlightKey) {
+    setExpandedKey((prev) => (prev === key ? null : key));
+  }
+
+  function hoverHandlers(key: TileHighlightKey) {
+    return {
+      onMouseEnter: () => setHoveredKey(key),
+      onMouseLeave: () => setHoveredKey((prev) => (prev === key ? null : prev)),
+    };
+  }
+
+  function disclosureToggle(key: TileHighlightKey) {
+    const open = expandedKey === key;
+    return (
+      <button
+        type="button"
+        className="tile__disclosuretoggle"
+        aria-expanded={open}
+        aria-controls="tile-detail-panel"
+        onClick={() => toggle(key)}
+      >
+        {open ? "− details" : "+ details"}
+      </button>
+    );
+  }
+
+  return (
+    <div className="sidepanel__report">
+      <div className="tilegrid">
+        <article className="tile" aria-labelledby="cell-amenities-heading" {...hoverHandlers("amenities")}>
+          <header className="tile__head">
+            <h2 className="tile__title" id="cell-amenities-heading">
+              Grocery &amp; everyday places
+            </h2>
+            <Stamp variant="confirmed" compact />
+          </header>
+          <p className="tile__value">
+            <Stat value={totalAmenities} />
+          </p>
+          <p className="tile__sub">place{totalAmenities === 1 ? "" : "s"} counted nearby</p>
+          {disclosureToggle("amenities")}
+        </article>
+
+        <article className="tile" aria-labelledby="cell-safety-heading" {...hoverHandlers("crime")}>
+          <header className="tile__head">
+            <h2 className="tile__title" id="cell-safety-heading">
+              Crime near here
+            </h2>
+            <Stamp variant={crime ? "confirmed" : "no_data"} compact />
+          </header>
+          {!crime ? (
+            <p className="tile__value tile__value--empty">We don&rsquo;t have crime data for this block yet.</p>
+          ) : (
+            <>
+              <p className="tile__value tile__value--text">{crimeRelativeLabel(crime.crime_percentile)}</p>
+              {disclosureToggle("crime")}
+            </>
+          )}
+        </article>
+
+        <article className="tile" aria-labelledby="cell-quiet-heading" {...hoverHandlers("noise")}>
+          <header className="tile__head">
+            <h2 className="tile__title" id="cell-quiet-heading">
+              Noise complaints
+            </h2>
+            <Stamp variant="confirmed" compact />
+          </header>
+          <p className="tile__value">
+            <Stat value={cell.noise.complaints_12mo} />
+          </p>
+          <p className="tile__sub">reports, trailing 12mo</p>
+          {disclosureToggle("noise")}
+        </article>
+
+        <article className="tile" aria-labelledby="cell-green-heading" {...hoverHandlers("trees")}>
+          <header className="tile__head">
+            <h2 className="tile__title" id="cell-green-heading">
+              Living street trees
+            </h2>
+            <Stamp variant="confirmed" compact />
+          </header>
+          <p className="tile__value">
+            <Stat value={cell.trees.street_trees} />
+          </p>
+          <p className="tile__sub">counted in 2015</p>
+          {disclosureToggle("trees")}
+        </article>
+
+        <article className="tile tile--wide" aria-labelledby="cell-building-heading" {...hoverHandlers("building")}>
+          <header className="tile__head">
+            <h2 className="tile__title" id="cell-building-heading">
+              Building age &amp; serious hazards
+            </h2>
+            <Stamp variant={hasBuildingAge ? "confirmed" : "no_data"} compact />
+          </header>
+
+          {!hasBuildingAge ? (
+            <p className="tile__value tile__value--empty">We don&rsquo;t have property records for this block yet.</p>
+          ) : (
+            <div className="tile__valuerow">
+              <span className="tile__value">
+                <strong>{Math.round(cell.building_age.median_year_built as number)}</strong>
+                {cell.building_age.era && <span className="era">{ERA_LABELS[cell.building_age.era]}</span>}
+              </span>
+              <span className={`tile__value${violations > 0 ? " tile__value--flag" : ""}`}>
+                <Stat value={violations} suffix={violations === 1 ? "hazard flagged" : "hazards flagged"} />
+              </span>
+            </div>
+          )}
+          {disclosureToggle("building")}
+        </article>
+      </div>
+
+      {/* The one shared detail region every tile's toggle button controls
+          (SPEC-layout-v3.md §8 Wave 1c item 5, option (c)) -- a plain block
+          BELOW `.tilegrid`, not one of its grid children, so it can never
+          distort any tile's own geometry. Renders only the currently-
+          expanded tile's content; every string below is byte-identical to
+          what Wave 1b's per-tile <details> held (moved, not reworded). */}
+      {expandedKey && (
+        <div className="tiledetail" id="tile-detail-panel" role="region" aria-label={`${TILE_TITLES[expandedKey]} — more detail`}>
+          <p className="tiledetail__title mono">{TILE_TITLES[expandedKey]}</p>
+
+          {expandedKey === "amenities" && (
+            <>
+              <ul className="amenities">
+                {CATEGORY_LABELS.map(([key, label]) => (
+                  <li className="amenity" key={key}>
+                    <span className="amenity__count">
+                      <Stat value={cell.amenities.counts[key]} />
+                    </span>
+                    <span className="amenity__label">{label}</span>
+                  </li>
+                ))}
+              </ul>
+              <p className="field__provenance">
+                Real, named places in this block only — measured as a straight line, not an
+                actual route, so it can over- or under-count near rivers, parks, or highways.
+                <br />
+                <SourceTag source={cell.amenities.source} />
+              </p>
+            </>
+          )}
+
+          {expandedKey === "crime" && crime && (
+            <>
               <p className="field__empty">
                 Ranks {formatPercentile(crime.crime_percentile)} for reported major crime, compared
                 with the rest of New York City.
@@ -273,104 +459,57 @@ export function CellReportView({ cell }: { cell: CellProfile }) {
                 <br />
                 <SourceTag source={cell.safety.source} />
               </p>
-            </details>
-          </>
-        )}
-      </article>
+            </>
+          )}
 
-      <article className="tile" aria-labelledby="cell-quiet-heading">
-        <header className="tile__head">
-          <h2 className="tile__title" id="cell-quiet-heading">
-            Noise complaints
-          </h2>
-          <Stamp variant="confirmed" compact />
-        </header>
-        <p className="tile__value">
-          <Stat value={cell.noise.complaints_12mo} />
-        </p>
-        <p className="tile__sub">reports, trailing 12mo</p>
-        <details className="tile__disclosure">
-          <summary>details</summary>
-          <p className="field__provenance">
-            Noise complaints neighbors reported to the city, trailing 12 months · in this block.
-            <br />
-            <SourceTag source={cell.noise.source} />
-          </p>
-        </details>
-      </article>
-
-      <article className="tile" aria-labelledby="cell-green-heading">
-        <header className="tile__head">
-          <h2 className="tile__title" id="cell-green-heading">
-            Living street trees
-          </h2>
-          <Stamp variant="confirmed" compact />
-        </header>
-        <p className="tile__value">
-          <Stat value={cell.trees.street_trees} />
-        </p>
-        <p className="tile__sub">counted in 2015</p>
-        <details className="tile__disclosure">
-          <summary>details</summary>
-          <p className="field__provenance">
-            From the city's last street-tree count, 2015 · in this block. Trees planted
-            since won't show here.
-            <br />
-            <SourceTag source={cell.trees.source} />
-          </p>
-        </details>
-      </article>
-
-      <article className="tile tile--wide" aria-labelledby="cell-building-heading">
-        <header className="tile__head">
-          <h2 className="tile__title" id="cell-building-heading">
-            Building age &amp; serious hazards
-          </h2>
-          <Stamp variant={hasBuildingAge ? "confirmed" : "no_data"} compact />
-        </header>
-
-        {!hasBuildingAge ? (
-          <p className="tile__value tile__value--empty">We don&rsquo;t have property records for this block yet.</p>
-        ) : (
-          <div className="tile__valuerow">
-            <span className="tile__value">
-              <strong>{Math.round(cell.building_age.median_year_built as number)}</strong>
-              {cell.building_age.era && <span className="era">{ERA_LABELS[cell.building_age.era]}</span>}
-            </span>
-            <span className={`tile__value${violations > 0 ? " tile__value--flag" : ""}`}>
-              <Stat value={violations} suffix={violations === 1 ? "hazard flagged" : "hazards flagged"} />
-            </span>
-          </div>
-        )}
-
-        <details className="tile__disclosure">
-          <summary>details</summary>
-          {/* The year itself is not re-wrapped in its own <strong> here (unlike
-              the always-visible headline above) -- purely so this sentence's
-              own text node doesn't exactly duplicate the headline's isolated
-              "1920"-style text node, which App.test.tsx's getByText("1920")
-              (a single-match query) depends on staying unique in the DOM. The
-              real fact (year + era) is identical either way; only which
-              element wraps the number differs. */}
-          {hasBuildingAge && (
-            <p className="field__empty">
-              Most buildings here went up around {Math.round(cell.building_age.median_year_built as number)}
-              {cell.building_age.era && ` (${ERA_LABELS[cell.building_age.era]})`}.
+          {expandedKey === "noise" && (
+            <p className="field__provenance">
+              Noise complaints neighbors reported to the city, trailing 12 months · in this block.
+              <br />
+              <SourceTag source={cell.noise.source} />
             </p>
           )}
-          <p className="field__empty">
-            Serious safety problems flagged by the city, not fixed yet
-            {violations > 0 && <em> — across every building on this block</em>}
-          </p>
-          <p className="field__provenance">
-            {cell.housing_hazards.note}
-            <br />
-            <SourceTag source={cell.building_age.source} />
-            <br />
-            <SourceTag source={cell.housing_hazards.source} />
-          </p>
-        </details>
-      </article>
+
+          {expandedKey === "trees" && (
+            <p className="field__provenance">
+              From the city's last street-tree count, 2015 · in this block. Trees planted
+              since won't show here.
+              <br />
+              <SourceTag source={cell.trees.source} />
+            </p>
+          )}
+
+          {expandedKey === "building" && (
+            <>
+              {/* The year itself is not re-wrapped in its own <strong> here
+                  (unlike the always-visible headline) -- purely so this
+                  sentence's own text node doesn't exactly duplicate the
+                  headline's isolated "1920"-style text node, which
+                  App.test.tsx's getByText("1920") (a single-match query)
+                  depends on staying unique in the DOM. The real fact (year
+                  + era) is identical either way; only which element wraps
+                  the number differs. */}
+              {hasBuildingAge && (
+                <p className="field__empty">
+                  Most buildings here went up around {Math.round(cell.building_age.median_year_built as number)}
+                  {cell.building_age.era && ` (${ERA_LABELS[cell.building_age.era]})`}.
+                </p>
+              )}
+              <p className="field__empty">
+                Serious safety problems flagged by the city, not fixed yet
+                {violations > 0 && <em> — across every building on this block</em>}
+              </p>
+              <p className="field__provenance">
+                {cell.housing_hazards.note}
+                <br />
+                <SourceTag source={cell.building_age.source} />
+                <br />
+                <SourceTag source={cell.housing_hazards.source} />
+              </p>
+            </>
+          )}
+        </div>
+      )}
     </div>
   );
 }

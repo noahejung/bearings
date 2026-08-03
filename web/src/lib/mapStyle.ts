@@ -223,6 +223,7 @@ export function buildOverlayLayers(): StyleSpecification["layers"] {
     },
     ...buildCitywideGridLayers(),
     ...buildReachLayers(),
+    ...buildTileHighlightLayers(),
   ];
 }
 
@@ -239,13 +240,64 @@ export function buildOverlayLayers(): StyleSpecification["layers"] {
 // MapLibre still dispatches mousemove/click events against a 0-opacity
 // fill's real geometry, which is exactly why a fill (not the deleted
 // outline) is what carries the click.
+// LAYOUT-V3 WAVE 1c (2026-08-03, SPEC-layout-v3.md §8 Wave 1c item 3, Noah:
+// "cursor: pointer... plus a visible hover state on the block under the
+// cursor if not already present"). The hit-test fill itself is still
+// transparent at rest (`0`) for the same reason as before (no visible grid
+// -- SPEC-lens-report.md, "too much visual clutter"); MapView.tsx's own
+// mousemove handler now writes a real per-feature `hover` boolean via
+// `setFeatureState`, and this expression is the only thing that reads it --
+// a real, felt "this block is interactive" signal that only appears under
+// the cursor, never a permanent grid.
 export function buildCitywideGridLayers(): StyleSpecification["layers"] {
   return [
     {
       id: "citywide-cells-fill",
       type: "fill",
       source: "citywide-cells",
-      paint: { "fill-color": RED, "fill-opacity": 0 },
+      paint: {
+        "fill-color": RED,
+        "fill-opacity": ["case", ["boolean", ["feature-state", "hover"], false], 0.16, 0],
+      },
+    },
+  ];
+}
+
+// LAYOUT-V3 WAVE 1c (2026-08-03, SPEC-layout-v3.md §8 Wave 1c item 4):
+// what a hovered/expanded side-panel tile emphasizes on the map -- a
+// polygon region (crime's precinct, or noise/trees/building's own cell)
+// and/or a set of real named points (amenities' nearby places), fed by
+// MapView.tsx's tileHighlightGeometry(). Both sources sit empty until a
+// tile is actually active; painted LAST in buildOverlayLayers() (on top of
+// the reach rings/dots) so the emphasis is never hidden underneath them.
+// A bolder opacity than the bare hover fill above (0.16) -- this is a
+// stronger, more deliberate signal ("the side panel is talking about
+// THIS"), not a passive cursor hint.
+export function buildTileHighlightLayers(): StyleSpecification["layers"] {
+  return [
+    {
+      id: "tile-highlight-fill",
+      type: "fill",
+      source: "tile-highlight-region",
+      paint: { "fill-color": RED, "fill-opacity": 0.26 },
+    },
+    {
+      id: "tile-highlight-outline",
+      type: "line",
+      source: "tile-highlight-region",
+      paint: { "line-color": RED, "line-width": 2, "line-opacity": 0.9 },
+    },
+    {
+      id: "tile-highlight-points",
+      type: "circle",
+      source: "tile-highlight-points",
+      paint: {
+        "circle-radius": 6,
+        "circle-color": RED,
+        "circle-opacity": 0.92,
+        "circle-stroke-width": 1.5,
+        "circle-stroke-color": INK,
+      },
     },
   ];
 }

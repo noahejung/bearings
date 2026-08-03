@@ -8,6 +8,7 @@ import { ApiError, getCellsIndex, getCitywide, getMapGeometry, getReach } from "
 import { buildMapStyle, buildOverlayLayers } from "../lib/mapStyle";
 import type { PinnedPlace } from "../lib/preferences";
 import type { CellsIndexEntry, Citywide, MapGeometry, Reach } from "../types";
+import type { TileHighlightKey } from "./CellReportView";
 import { colorFor } from "./RouteBullet";
 
 // VISUAL.md §5, REVISED 2026-07-15 -- MapLibre GL reading a self-hosted
@@ -89,13 +90,24 @@ function haversineM(a: { lat: number; lng: number }, b: { lat: number; lng: numb
 // visible outline's "selected" emphasis (MapLibre's setFeatureState only
 // renders for a numeric GeoJSON feature id, confirmed live 2026-07-15) --
 // with that outline gone, plain hit-testing needs no id at all.
+// LAYOUT-V3 WAVE 1c (2026-08-03, SPEC-layout-v3.md §8 Wave 1c item 3): each
+// feature now also carries a numeric top-level `id` (index into `entries`,
+// stable within one citywide-grid fetch) -- MapLibre's `setFeatureState`
+// only works against a real numeric GeoJSON feature id, confirmed live
+// 2026-07-15 (see this file's own top comment on the RETIRED selection
+// outline, which needed the same thing for the same reason). This is the
+// one piece of that retired mechanism this wave re-adds, for a new purpose:
+// a real visible hover highlight (Noah, 2026-08-03: "a cursor pointer plus
+// a visible hover state... if not already present" -- the cursor already
+// existed, the visible state did not).
 function citywideCellsGeoJSON(entries: CellsIndexEntry[]): FeatureCollection {
-  const features: Feature[] = entries.map((c) => {
+  const features: Feature[] = entries.map((c, i) => {
     const boundary = h3.cellToBoundary(c.h3) as [number, number][]; // [lat, lng]
     const ring: [number, number][] = boundary.map(([lat, lng]) => [lng, lat]);
     ring.push(ring[0]); // close the polygon ring
     return {
       type: "Feature",
+      id: i,
       properties: { h3: c.h3 },
       geometry: { type: "Polygon", coordinates: [ring] },
     };
@@ -197,6 +209,82 @@ function reachDotsGeoJSON(reach: Reach, activeCategories: Set<string>): FeatureC
 }
 
 const EMPTY_FC: FeatureCollection = { type: "FeatureCollection", features: [] };
+
+// LAYOUT-V3 WAVE 1c (2026-08-03, SPEC-layout-v3.md §8 Wave 1c item 4, Noah:
+// "when these blocks note a place nearby, can it actually help highlight
+// stuff, i.e. where the groceries [are], the ... regioning"). Two real,
+// differently-sourced kinds of "what this tile is talking about" -- never a
+// third, fabricated kind:
+//   - "amenities" -> real named POINTS. The only client-side point data
+//     for named places is `reach.places` (GET /api/reach), which is
+//     fetched ONLY for a real searched address -- a bare grid click has no
+//     address and therefore no `reach`, so this returns empty points for
+//     that case (a real, reportable gap, not a fabricated pin). Even when
+//     `reach` exists, its places are found within the 5/10/15-minute walk
+//     rings around the searched point -- a DIFFERENT radius/method than
+//     `cell.amenities.counts`' own one-cell tally (see CellReportView.tsx's
+//     own top comment on why these two counts can legitimately disagree),
+//     so these pins read as "real nearby places in the categories this
+//     tile counts," not as "exactly the N places in the headline number."
+//   - "crime"/"noise"/"trees"/"building" -> a real AREA. Crime is a
+//     precinct-level percentile (bearings/citywide.py) attributed to this
+//     block, so its honest region is the precinct's own real polygon
+//     (already fetched once, address-independent, via GET /api/citywide,
+//     for the precinct-label layer) -- looked up by the exact precinct
+//     number this cell's own report carries. Noise/trees/building are each
+//     counted over exactly ONE h3 cell (cellprofile.py: no ring, no
+//     radius -- see CellReportView.tsx's own top comment), so their honest
+//     region is that literal cell boundary, computed client-side from its
+//     h3 id (the same h3-js call citywideCellsGeoJSON() already makes per
+//     cell above) -- no extra fetch, no approximation beyond what the
+//     number itself already represents.
+function tileHighlightGeometry(
+  tile: TileHighlightKey | null,
+  ctx: {
+    reach: Reach | null;
+    citywide: Citywide | null;
+    selectedCell: string | null;
+    crimePrecinct: number | null;
+  },
+): { region: FeatureCollection; points: FeatureCollection } {
+  if (tile === "amenities") {
+    if (!ctx.reach) return { region: EMPTY_FC, points: EMPTY_FC };
+    const features: Feature[] = ctx.reach.places.map((p) => ({
+      type: "Feature",
+      properties: { name: p.name, category: p.category },
+      geometry: { type: "Point", coordinates: [p.lng, p.lat] },
+    }));
+    return { region: EMPTY_FC, points: { type: "FeatureCollection", features } };
+  }
+
+  if (tile === "crime") {
+    const found = ctx.crimePrecinct !== null && ctx.citywide
+      ? ctx.citywide.precincts.find((p) => p.precinct === ctx.crimePrecinct)
+      : undefined;
+    if (!found) return { region: EMPTY_FC, points: EMPTY_FC };
+    const feature: Feature = {
+      type: "Feature",
+      properties: { precinct: found.precinct },
+      geometry: found.geometry as unknown as Feature["geometry"],
+    };
+    return { region: { type: "FeatureCollection", features: [feature] }, points: EMPTY_FC };
+  }
+
+  if (tile === "noise" || tile === "trees" || tile === "building") {
+    if (!ctx.selectedCell) return { region: EMPTY_FC, points: EMPTY_FC };
+    const boundary = h3.cellToBoundary(ctx.selectedCell) as [number, number][];
+    const ring: [number, number][] = boundary.map(([lat, lng]) => [lng, lat]);
+    ring.push(ring[0]);
+    const feature: Feature = {
+      type: "Feature",
+      properties: {},
+      geometry: { type: "Polygon", coordinates: [ring] },
+    };
+    return { region: { type: "FeatureCollection", features: [feature] }, points: EMPTY_FC };
+  }
+
+  return { region: EMPTY_FC, points: EMPTY_FC };
+}
 
 function roughDist(a: { lat: number; lng: number }, b: LngLat): number {
   // Not geodesic -- only ever used to rank on-screen labels by proximity
@@ -325,6 +413,8 @@ export function MapView({
   onCellClick,
   activeCategories,
   pins,
+  highlightedTile,
+  crimePrecinct,
 }: {
   // The real searched address, or `null` when the current selection came
   // from a bare grid click (no address) -- drives the local building/
@@ -343,6 +433,18 @@ export function MapView({
   // anywhere -- see lib/preferences.ts's own module docstring).
   activeCategories: Set<string>;
   pins: PinnedPlace[];
+  // LAYOUT-V3 WAVE 1c item 4: which side-panel tile (if any) is currently
+  // hovered/expanded -- CellReportView.tsx owns the hover/expand state
+  // itself and reports just this one key up; see tileHighlightGeometry()
+  // above for how it's turned into real map geometry (or honestly nothing,
+  // for the amenities gap that function's own comment documents).
+  highlightedTile: TileHighlightKey | null;
+  // This cell's own crime precinct number (`cell.safety.precinct`), or
+  // `null` when there's no crime data for this cell -- App.tsx passes it
+  // down so tileHighlightGeometry() can look up that precinct's real
+  // polygon in the already-fetched `citywide` data, without MapView taking
+  // a dependency on the whole CellProfile shape for one field.
+  crimePrecinct: number | null;
 }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<MapLibreMap | null>(null);
@@ -459,9 +561,17 @@ export function MapView({
     map.addSource("reach-rings", { type: "geojson", data: EMPTY_FC });
     map.addSource("reach-dots", { type: "geojson", data: EMPTY_FC });
     // The citywide clickable grid's source (populated once GET /api/cells
-    // resolves) -- hit-testing only (RETIRED 2026-07-29: no visible
-    // outline, no feature-state selection, see this file's own top comment).
+    // resolves) -- hit-testing only, PLUS (LAYOUT-V3 WAVE 1c item 3) a real
+    // numeric feature id per cell so a hover can drive `setFeatureState`
+    // (see citywideCellsGeoJSON()'s own comment).
     map.addSource("citywide-cells", { type: "geojson", data: EMPTY_FC });
+    // LAYOUT-V3 WAVE 1c item 4: two sources for "what the hovered/expanded
+    // side-panel tile is talking about" -- one polygon region (crime's
+    // precinct, or noise/trees/building's own cell), one set of points
+    // (amenities' real nearby places). See tileHighlightGeometry()'s own
+    // comment for why these are the only two real shapes, never a third.
+    map.addSource("tile-highlight-region", { type: "geojson", data: EMPTY_FC });
+    map.addSource("tile-highlight-points", { type: "geojson", data: EMPTY_FC });
 
     // The actual layer definitions (paint/layout/filter) live in
     // mapStyle.ts's buildOverlayLayers(), as a pure/exported function so
@@ -489,18 +599,47 @@ export function MapView({
     const onCitywideCellEnter = () => {
       map.getCanvas().style.cursor = "pointer";
     };
+    // LAYOUT-V3 WAVE 1c item 3 (Noah: "cursor: pointer... plus a visible
+    // hover state on the block under the cursor if not already present" --
+    // the cursor already changed on enter, above; a real ON-MAP highlight
+    // did not). `mousemove` (not `mouseenter`) is what tracks WHICH feature
+    // is hovered: the pointer can move from one polygon straight into an
+    // adjacent one without the fill layer as a whole ever firing another
+    // `mouseenter`/`mouseleave` pair, so only a per-move feature-id diff
+    // catches that. `hoveredFeatureId` is a plain closure variable (not
+    // React state) -- this handler fires on every mouse pixel of movement
+    // over the grid, and mapStyle.ts's own paint expression (feature-state
+    // hover) is what actually repaints, so nothing here needs a React
+    // re-render.
+    let hoveredFeatureId: number | null = null;
+    const onCitywideCellMove = (e: maplibregl.MapLayerMouseEvent) => {
+      const f = e.features?.[0];
+      const id = f?.id as number | undefined;
+      if (id === undefined || id === hoveredFeatureId) return;
+      if (hoveredFeatureId !== null) {
+        map.setFeatureState({ source: "citywide-cells", id: hoveredFeatureId }, { hover: false });
+      }
+      hoveredFeatureId = id;
+      map.setFeatureState({ source: "citywide-cells", id }, { hover: true });
+    };
     const onCitywideCellLeave = () => {
       map.getCanvas().style.cursor = "";
+      if (hoveredFeatureId !== null) {
+        map.setFeatureState({ source: "citywide-cells", id: hoveredFeatureId }, { hover: false });
+        hoveredFeatureId = null;
+      }
     };
 
     map.on("click", "citywide-cells-fill", onCitywideCellClick);
     map.on("mouseenter", "citywide-cells-fill", onCitywideCellEnter);
+    map.on("mousemove", "citywide-cells-fill", onCitywideCellMove);
     map.on("mouseleave", "citywide-cells-fill", onCitywideCellLeave);
     map.on("moveend", onMoveEnd);
 
     return () => {
       map.off("click", "citywide-cells-fill", onCitywideCellClick);
       map.off("mouseenter", "citywide-cells-fill", onCitywideCellEnter);
+      map.off("mousemove", "citywide-cells-fill", onCitywideCellMove);
       map.off("mouseleave", "citywide-cells-fill", onCitywideCellLeave);
       map.off("moveend", onMoveEnd);
     };
@@ -678,6 +817,23 @@ export function MapView({
     );
   }, [reach, activeCategories, mapReady]);
 
+  // ---- 10b. push tile-highlight geometry whenever the hovered/expanded
+  // side-panel tile changes (LAYOUT-V3 WAVE 1c item 4) -- see
+  // tileHighlightGeometry()'s own comment for what each tile resolves to,
+  // including the honest empty case for amenities with no `reach` loaded. ----
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !mapReady) return;
+    const { region, points } = tileHighlightGeometry(highlightedTile, {
+      reach,
+      citywide,
+      selectedCell,
+      crimePrecinct,
+    });
+    (map.getSource("tile-highlight-region") as maplibregl.GeoJSONSource | undefined)?.setData(region);
+    (map.getSource("tile-highlight-points") as maplibregl.GeoJSONSource | undefined)?.setData(points);
+  }, [highlightedTile, reach, citywide, selectedCell, crimePrecinct, mapReady]);
+
   // ---- 11. pinned-place markers (SPEC-lens-report.md §3: "a pinned place
   // is never silently absent" -- always rendered, even outside every real
   // band). Walk-time badge is computed client-side from the subject point
@@ -813,9 +969,20 @@ export function MapView({
     }
   }
 
+  // LAYOUT-V3 WAVE 1c (2026-08-03, SPEC-layout-v3.md §8 Wave 1c item 2,
+  // Noah: interface-narration captions like this one "appear for no clear
+  // reason"): the old leading entry here ("Click anywhere on the map to
+  // see that block's real record") told the user the map was clickable in
+  // WORDS. Item 3/4 of the same wave give the map a real, felt affordance
+  // instead -- a pointer cursor plus a visible highlight fill over
+  // whichever block is under the cursor (see effect 2 below) -- so the
+  // fact is now demonstrated, not narrated, and this caption is redundant
+  // with it. Screen readers still get the equivalent fact: the map
+  // canvas's own `aria-label` below already states "Every real city block
+  // is clickable to load its record," so nothing is lost for anyone who
+  // can't see the cursor change.
   const legend = useMemo(
     () => [
-      { swatch: undefined, label: "Click anywhere on the map to see that block's real record" },
       ...(geo
         ? [
             { swatch: { background: STEEL, opacity: 0.34 }, label: "Buildings" },
@@ -863,9 +1030,33 @@ export function MapView({
   // per-block stat cards from CellReportView), so MapView renders as a
   // single stacked column of its own map chrome (controls, frame, legend,
   // notes) and lets the page-level grid decide what sits beside it.
+  //
+  // LAYOUT-V3 WAVE 1c (2026-08-03, SPEC-layout-v3.md §8 Wave 1c items 1/2):
+  // two changes to this return, together:
+  //   - The decorative "The neighbourhood, navigable" kicker (item 2) is
+  //     gone outright -- it named the map for the user without helping
+  //     them do anything, and nothing in this file's own markup ever
+  //     pointed an `aria-labelledby` at it, so nothing else depended on it
+  //     existing (confirmed by reading the rest of this file/App.tsx
+  //     before removing it, not assumed).
+  //   - `.mapfield__frame` (the actual canvas) now renders FIRST, with the
+  //     lens-view controls moved below it (item 1, "top-align tiles with
+  //     the map CANVAS, not the card"): with the kicker gone too, nothing
+  //     variable-height precedes the frame any more, so `.mapfield`'s own
+  //     fixed top padding is the only remaining gap between the card's
+  //     border and the canvas -- see index.css's own comment on
+  //     `.mapfield`/`.mapfield__frame` for the measured before/after
+  //     numbers this reordering makes possible.
   return (
     <div className="mapfield">
-      <h2 className="field__title">The neighbourhood, navigable</h2>
+      <div className="mapfield__frame">
+        <div
+          ref={containerRef}
+          className="mapfield__map"
+          role="img"
+          aria-label="Navigable map of New York City. Every real city block is clickable to load its record; shows building outlines, streets, subway lines, and walk-time rings for the selected address."
+        />
+      </div>
 
       <div className="mapfield__controls">
         <span>Map view</span>
@@ -879,14 +1070,6 @@ export function MapView({
         </div>
       </div>
 
-      <div className="mapfield__frame">
-        <div
-          ref={containerRef}
-          className="mapfield__map"
-          role="img"
-          aria-label="Navigable map of New York City. Every real city block is clickable to load its record; shows building outlines, streets, subway lines, and walk-time rings for the selected address."
-        />
-      </div>
       <div className="mapfield__legend">
         {legend.map((item, i) => (
           <span key={i}>

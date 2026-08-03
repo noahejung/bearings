@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { ApiError, getCell, getGeocode, postFactcheck } from "./api";
 import { AddressSearch } from "./components/AddressSearch";
-import { CellReportView, GettingAroundField } from "./components/CellReportView";
+import { CellReportView, GettingAroundField, type TileHighlightKey } from "./components/CellReportView";
 import { FactCheckView } from "./components/FactCheckView";
 import { Header } from "./components/Header";
 import { MapView } from "./components/MapView";
@@ -54,6 +54,15 @@ export default function App() {
   const [activeCategories, setActiveCategories] = useState<Set<string>>(new Set());
   const [pins, setPins] = useState<PinnedPlace[]>([]);
 
+  // LAYOUT-V3 WAVE 1c item 4: which side-panel tile (if any) the map should
+  // currently emphasize -- CellReportView owns the hover/expand logic
+  // itself and reports just this one key up via onTileHighlight; MapView
+  // reads it (plus its own reach/citywide/selectedCell state) to decide
+  // what real geometry, if any, to draw. See MapView.tsx's own
+  // tileHighlightGeometry() for why "if any" is load-bearing (a bare cell
+  // click has no located amenity data to highlight).
+  const [highlightedTile, setHighlightedTile] = useState<TileHighlightKey | null>(null);
+
   function toggleCategory(key: string) {
     setActiveCategories((prev) => {
       const next = new Set(prev);
@@ -86,6 +95,12 @@ export default function App() {
     setReportLoading(true);
     setReportError(null);
     resetFactcheck();
+    // A new block is loading -- whatever tile the PREVIOUS block's panel
+    // had hovered/expanded no longer means anything (CellReportView's own
+    // cell-swap effect also clears its own hover/expand state; this clears
+    // the map's copy of that same fact so no highlight can survive one
+    // frame longer than the report it belonged to).
+    setHighlightedTile(null);
     try {
       const report = await getCell(h3);
       setCellReport(report);
@@ -195,13 +210,20 @@ export default function App() {
           onRemovePin={removePin}
         />
 
+        {/* LAYOUT-V3 WAVE 1c (2026-08-03, SPEC-layout-v3.md §8 Wave 1c item
+            2, Noah: the old kicker+title block here "appears for no clear
+            reason" -- replaced with ONE compact line, not a title ceremony
+            (no separate "The record" kicker paragraph, no big display-font
+            headline). Kept ABOVE `.mapgrid` rather than moved inside
+            `.sidepanel` deliberately: item 1 (this same wave) requires the
+            side panel's first TILE to top-align with the map canvas, and
+            putting this line inside `.sidepanel` would push the tiles down
+            by its own height with nothing matching on the map side to
+            compensate -- see MapView.tsx's own item-1 comment. */}
         {cellReport && (
-          <header className="report__head">
-            <p className="report__kicker mono">The record</p>
-            <h2 className="report__title" id="report-heading">
-              {searchedAddress ?? "This block"}
-            </h2>
-          </header>
+          <h2 className="record-line mono" id="report-heading">
+            {searchedAddress ?? "This block"}
+          </h2>
         )}
 
         {/* LAYOUT-V3 WAVE 1 (2026-08-02, SPEC-layout-v3.md §3): the "answer
@@ -220,6 +242,8 @@ export default function App() {
             onCellClick={handleCellClick}
             activeCategories={activeCategories}
             pins={pins}
+            highlightedTile={highlightedTile}
+            crimePrecinct={cellReport?.safety.precinct ?? null}
           />
 
           <aside className="sidepanel" aria-label="This block's record">
@@ -234,7 +258,7 @@ export default function App() {
                 15-minute walk rings plus nearby places you turn on above.
               </p>
             )}
-            {cellReport && <CellReportView cell={cellReport} />}
+            {cellReport && <CellReportView cell={cellReport} onTileHighlight={setHighlightedTile} />}
           </aside>
         </div>
 

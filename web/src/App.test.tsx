@@ -478,8 +478,12 @@ describe("App (full mount)", () => {
     expect(screen.getByText("Bearings")).toBeInTheDocument();
 
     // The map is visible before any search or click -- Task 1/4: it must
-    // not be gated behind a loaded report.
-    expect(screen.getByRole("heading", { name: /the neighbourhood, navigable/i })).toBeInTheDocument();
+    // not be gated behind a loaded report. LAYOUT-V3 WAVE 1c (2026-08-03,
+    // SPEC-layout-v3.md §8 Wave 1c item 2) removed the decorative "The
+    // neighbourhood, navigable" kicker that used to sit above the map --
+    // this aria-label on the canvas itself already carries the equivalent
+    // fact for anyone who can't see the map render, so proof-of-mount now
+    // rests on it alone.
     expect(screen.getByLabelText(/Navigable map of New York City/i)).toBeInTheDocument();
 
     const input = screen.getByPlaceholderText(/5TH AVE/i);

@@ -7,7 +7,13 @@ import type { StyleSpecification } from "maplibre-gl";
 // a `vitest run` instead of shipping silently to prod again.
 import { validateStyleMin } from "@maplibre/maplibre-gl-style-spec";
 import { describe, expect, it } from "vitest";
-import { buildCitywideGridLayers, buildMapStyle, buildOverlayLayers, buildReachLayers } from "./mapStyle";
+import {
+  buildCitywideGridLayers,
+  buildMapStyle,
+  buildOverlayLayers,
+  buildReachLayers,
+  buildTileHighlightLayers,
+} from "./mapStyle";
 
 // FIXED 2026-07-15: streets-line's line-width/line-opacity nested a
 // `["zoom"]` expression inside `*`/`case` instead of using it as the direct
@@ -109,11 +115,30 @@ describe("buildOverlayLayers (MapView's own app layers)", () => {
     expect(layers.find((l) => l.id === "citywide-cells-outline")).toBeUndefined();
   });
 
-  it("the citywide grid's fill is genuinely transparent (hit-testing only), never a visible wash", () => {
+  // LAYOUT-V3 WAVE 1c (2026-08-03): the hit-test fill is no longer a bare
+  // `0` -- it's a feature-state-driven `case` expression (Noah's item 3:
+  // "a visible hover state on the block under the cursor"), transparent AT
+  // REST and only visible for whichever one feature MapView.tsx's own
+  // mousemove handler has marked `hover: true`. This asserts the REST
+  // (false) branch is still 0 -- "genuinely transparent" now means "when
+  // nothing is hovered," not "always," which is the whole point of item 3.
+  it("the citywide grid's fill is transparent at rest, hit-testing (and now hover) only, never a permanent visible wash", () => {
     const fill = buildOverlayLayers().find((l) => l.id === "citywide-cells-fill") as {
-      paint: { "fill-opacity": unknown };
+      paint: { "fill-opacity": unknown[] };
     };
-    expect(fill.paint["fill-opacity"]).toBe(0);
+    const expr = fill.paint["fill-opacity"];
+    expect(expr[0]).toBe("case");
+    expect(expr[expr.length - 1]).toBe(0); // the "no feature-state hover" fallback branch
+  });
+
+  it("the citywide grid's hover fill reads a real feature-state boolean, not a fabricated always-on wash", () => {
+    const fill = buildOverlayLayers().find((l) => l.id === "citywide-cells-fill") as {
+      paint: { "fill-opacity": unknown[] };
+    };
+    const expr = fill.paint["fill-opacity"];
+    const condition = expr[1] as unknown[];
+    expect(condition[0]).toBe("boolean");
+    expect(condition[1]).toEqual(["feature-state", "hover"]);
   });
 
   it("buildCitywideGridLayers() returns exactly the one hit-test layer, sourced from citywide-cells", () => {
@@ -165,5 +190,37 @@ describe("buildReachLayers (5/10/15-minute walk rings + amenity/station dots)", 
       paint: { "circle-color": unknown };
     };
     expect(typeof dots.paint["circle-color"]).toBe("string");
+  });
+});
+
+// LAYOUT-V3 WAVE 1c (2026-08-03, SPEC-layout-v3.md §8 Wave 1c item 4):
+// what a hovered/expanded side-panel tile emphasizes on the map.
+describe("buildTileHighlightLayers (side-panel tile <-> map emphasis, item 4)", () => {
+  function styleWithTileHighlightLayers(): StyleSpecification {
+    return {
+      version: 8,
+      sources: {
+        "tile-highlight-region": { type: "geojson", data: { type: "FeatureCollection", features: [] } },
+        "tile-highlight-points": { type: "geojson", data: { type: "FeatureCollection", features: [] } },
+      },
+      layers: buildTileHighlightLayers(),
+    };
+  }
+
+  it("validates with zero errors against MapLibre's real style validator", () => {
+    expect(validateStyleMin(styleWithTileHighlightLayers())).toEqual([]);
+  });
+
+  it("includes a fill + outline pair for the region, and a circle layer for the points", () => {
+    const ids = buildTileHighlightLayers().map((l) => l.id);
+    expect(ids).toEqual(["tile-highlight-fill", "tile-highlight-outline", "tile-highlight-points"]);
+  });
+
+  it("is included in buildOverlayLayers(), painted after the reach layers", () => {
+    const ids = buildOverlayLayers().map((l) => l.id);
+    const reachIdx = ids.indexOf("reach-dots");
+    const highlightIdx = ids.indexOf("tile-highlight-fill");
+    expect(reachIdx).toBeGreaterThanOrEqual(0);
+    expect(highlightIdx).toBeGreaterThan(reachIdx);
   });
 });

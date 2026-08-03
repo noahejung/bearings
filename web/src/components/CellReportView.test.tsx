@@ -1,5 +1,5 @@
-import { render, screen } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { fireEvent, render, screen, within } from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
 import { CellReportView, GettingAroundField } from "./CellReportView";
 import type { CellProfile } from "../types";
 
@@ -175,5 +175,85 @@ describe("CellReportView -- five non-transit fields", () => {
     expect(screen.getByRole("heading", { name: /living street trees/i })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: /building age & serious hazards/i })).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: /getting around/i })).not.toBeInTheDocument();
+  });
+});
+
+// LAYOUT-V3 WAVE 1c (2026-08-03, SPEC-layout-v3.md §8 Wave 1c item 5): the
+// per-tile <details> that used to distort `.tilegrid`'s row height is gone
+// -- every tile now renders a compact toggle button, and exactly ONE shared
+// `.tiledetail` region below the grid shows whichever tile is expanded.
+describe("CellReportView -- shared detail region (item 5, no per-tile distortion)", () => {
+  it("shows nothing expanded by default, and no shared detail region in the DOM", () => {
+    render(<CellReportView cell={CONTROL_CELL} />);
+    expect(screen.queryByRole("region")).not.toBeInTheDocument();
+  });
+
+  it("expanding one tile's toggle reveals ONLY that tile's content in the one shared region", () => {
+    render(<CellReportView cell={CONTROL_CELL} />);
+    // Document order: amenities, crime, noise, trees, building.
+    fireEvent.click(screen.getAllByRole("button", { name: /\+ details/i })[0]);
+    const region = screen.getByRole("region");
+    // Real amenity category counts moved verbatim into the shared region.
+    expect(within(region).getByText("Grocery")).toBeInTheDocument();
+    expect(within(region).getByText("3")).toBeInTheDocument(); // CONTROL_CELL grocery count
+    // A different tile's own disclosure content must NOT also be showing.
+    expect(within(region).queryByText(/Ranks .* for reported major crime/i)).not.toBeInTheDocument();
+  });
+
+  it("expanding a second tile replaces the shared region's content rather than stacking both", () => {
+    render(<CellReportView cell={CONTROL_CELL} />);
+    const toggles = screen.getAllByRole("button", { name: /\+ details/i });
+    fireEvent.click(toggles[0]); // amenities
+    fireEvent.click(screen.getAllByRole("button", { name: /details/i })[1]); // crime
+    const region = screen.getByRole("region");
+    expect(within(region).getByText(/Ranks .* for reported major crime/i)).toBeInTheDocument();
+    expect(within(region).queryByText("Grocery")).not.toBeInTheDocument();
+    // Exactly one shared region ever exists, never two stacked ones.
+    expect(screen.getAllByRole("region")).toHaveLength(1);
+  });
+
+  it("clicking an already-expanded tile's toggle collapses the shared region", () => {
+    render(<CellReportView cell={CONTROL_CELL} />);
+    const toggle = screen.getAllByRole("button", { name: /\+ details/i })[0];
+    fireEvent.click(toggle);
+    expect(screen.getByRole("region")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /− details/i }));
+    expect(screen.queryByRole("region")).not.toBeInTheDocument();
+  });
+});
+
+// LAYOUT-V3 WAVE 1c (2026-08-03, SPEC-layout-v3.md §8 Wave 1c item 4): the
+// map-highlight callback is driven by real hover/expand state, not fired
+// unconditionally -- these tests only exercise the pure React state logic
+// (no live map involved, matching this file's own established convention
+// of not re-testing MapLibre itself here).
+describe("CellReportView -- onTileHighlight wiring (item 4)", () => {
+  it("calls onTileHighlight with the tile key on hover, and null on mouse-leave", () => {
+    const onTileHighlight = vi.fn();
+    render(<CellReportView cell={CONTROL_CELL} onTileHighlight={onTileHighlight} />);
+    const amenitiesTile = screen.getByRole("heading", { name: /grocery & everyday places/i }).closest("article")!;
+    fireEvent.mouseEnter(amenitiesTile);
+    expect(onTileHighlight).toHaveBeenLastCalledWith("amenities");
+    fireEvent.mouseLeave(amenitiesTile);
+    expect(onTileHighlight).toHaveBeenLastCalledWith(null);
+  });
+
+  it("keeps the map highlight on an expanded tile after the mouse leaves (the touch-equivalent path)", () => {
+    const onTileHighlight = vi.fn();
+    render(<CellReportView cell={CONTROL_CELL} onTileHighlight={onTileHighlight} />);
+    const toggle = screen.getAllByRole("button", { name: /\+ details/i })[0];
+    fireEvent.click(toggle); // expand, no hover involved (the touch path)
+    expect(onTileHighlight).toHaveBeenLastCalledWith("amenities");
+  });
+
+  it("clears hover/expand state (and tells the map to drop the highlight) when the cell itself changes", () => {
+    const onTileHighlight = vi.fn();
+    const { rerender } = render(<CellReportView cell={CONTROL_CELL} onTileHighlight={onTileHighlight} />);
+    fireEvent.click(screen.getAllByRole("button", { name: /\+ details/i })[0]);
+    expect(onTileHighlight).toHaveBeenLastCalledWith("amenities");
+
+    rerender(<CellReportView cell={SIR_CELL} onTileHighlight={onTileHighlight} />);
+    expect(onTileHighlight).toHaveBeenLastCalledWith(null);
+    expect(screen.queryByRole("region")).not.toBeInTheDocument();
   });
 });
