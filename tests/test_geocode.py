@@ -121,6 +121,23 @@ def test_engine_counts_are_observable():
     assert total_after == total_before + 1
 
 
+def test_autocomplete_returns_real_candidates_for_a_partial_address():
+    results = geocode.autocomplete("350 5th")
+    assert len(results) > 0
+    assert any("5" in r.label for r in results)
+    for r in results:
+        assert 40.47 <= r.lat <= 40.93
+        assert -74.30 <= r.lng <= -73.70
+
+
+def test_autocomplete_returns_empty_list_for_too_short_a_query():
+    """Never an error -- a typeahead with nothing usable yet is not a
+    failure, matching AddressSearch.tsx's own >= 3 char debounce gate."""
+    assert geocode.autocomplete("") == []
+    assert geocode.autocomplete("3") == []
+    assert geocode.autocomplete("35") == []
+
+
 @requires_geosupport_engine
 def test_geocode_rejects_the_regression_case_via_geosupport_without_falling_back():
     """The direct, public-API-level assertion of requirement 3's hardest

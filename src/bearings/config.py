@@ -28,6 +28,13 @@ ANCHORS = {
 # --- external sources ---
 # VERIFY each of these before first use; see the task that consumes it.
 GEOSEARCH_URL = "https://geosearch.planninglabs.nyc/v2/search"
+# NYC Planning Labs GeoSearch's own typeahead endpoint -- a real, separate
+# route, not GEOSEARCH_URL with different params (confirmed live 2026-08-03:
+# `/v2/autocomplete?text=...` returns the same Pelias FeatureCollection
+# shape as `/v2/search`, just tuned for partial input -- median ~400-900ms
+# once the connection is warm, vs. GEOSEARCH_URL's own ~3s median for a full
+# `/v2/search` geocode). LAYOUT-V3 WAVE 1d item 11.
+GEOSEARCH_AUTOCOMPLETE_URL = "https://geosearch.planninglabs.nyc/v2/autocomplete"
 MTA_GTFS_URL = "http://web.mta.info/developers/data/nyct/subway/google_transit.zip"
 
 # PATH (Port Authority Trans-Hudson) serves Jersey City/Newark/Hoboken --

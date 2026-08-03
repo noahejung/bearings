@@ -420,6 +420,23 @@ def test_geocode_bad_address_is_422_not_500(client):
     assert "detail" in resp.json()
 
 
+def test_geocode_autocomplete_returns_real_candidates(client):
+    resp = client.get("/api/geocode/autocomplete", params={"text": "350 5th"})
+    assert resp.status_code == 200
+    body = resp.json()
+    assert "results" in body
+    assert len(body["results"]) > 0
+    for r in body["results"]:
+        assert set(r) == {"label", "lat", "lng"}
+        assert 40.47 <= r["lat"] <= 40.93
+
+
+def test_geocode_autocomplete_empty_list_for_short_query_not_an_error(client):
+    resp = client.get("/api/geocode/autocomplete", params={"text": "3"})
+    assert resp.status_code == 200
+    assert resp.json() == {"results": []}
+
+
 def test_cells_returns_every_real_cell_as_a_flat_citywide_index(client):
     resp = client.get("/api/cells")
     assert resp.status_code == 200

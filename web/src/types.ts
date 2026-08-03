@@ -277,6 +277,17 @@ export interface GeocodeResult {
   cell: string;
 }
 
+// Mirrors GET /api/geocode/autocomplete exactly (bearings/api.py's
+// get_geocode_autocomplete()) -- LAYOUT-V3 WAVE 1d item 11. No `bbl`/`cell`
+// (unlike GeocodeResult): a typeahead candidate is a label + point only, a
+// real cell lookup happens after the user picks one, via the same
+// getGeocode()/getCell() path an address search always used.
+export interface AutocompleteResult {
+  label: string;
+  lat: number;
+  lng: number;
+}
+
 // Mirrors GET /api/cells exactly (bearings/cellprofile.py's cells_index())
 // -- every real H3 res-9 cell citywide, flattened to just what the map
 // grid needs: an id, a centroid (so a click/hover can report a real
@@ -312,8 +323,22 @@ export interface CellsIndex {
 // count) -- inventing those fields to fit the building-level `Profile`
 // shape would fabricate a precision this data doesn't have. See
 // CellReportView.tsx for how each block below is actually rendered.
+// LAYOUT-V3 WAVE 1d item 15 (2026-08-03): `percentile`/`caveat` mirror
+// `bearings/cellprofile.py`'s `_bake_all()` -- `noise.percentile` (0-100,
+// `citywide.percentile_rank()` against every real cell's raw
+// `complaints_12mo`, no smoothing) and `noise.caveat`
+// (`cellprofile.NOISE_PERCENTILE_CAVEAT`) both shipped in the 2026-08-02
+// block-crime/noise-percentile bake (commit `0c39c5d`) but were never
+// rendered until now -- confirmed live against a real baked shard before
+// wiring (`{"complaints_12mo": 0, "percentile": 7.10, "caveat": "Ranks
+// this block's 311 noise complaints against every block citywide..."}`).
+// Both fields are always real numbers/strings for every real cell, never
+// optional -- `_bake_all()` computes them unconditionally alongside the
+// count.
 export interface CellNoise {
   complaints_12mo: number;
+  percentile: number;
+  caveat: string;
   source: Source;
 }
 

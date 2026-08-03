@@ -1,4 +1,5 @@
 import type {
+  AutocompleteResult,
   CellProfile,
   CellsIndex,
   Citywide,
@@ -86,6 +87,17 @@ export function getCitywide(): Promise<Citywide> {
 // below. See bearings/api.py's get_geocode() docstring.
 export function getGeocode(address: string): Promise<GeocodeResult> {
   return request<GeocodeResult>(`/api/geocode?address=${encodeURIComponent(address)}`);
+}
+
+// The consolidated search bar's debounced typeahead (LAYOUT-V3 WAVE 1d item
+// 11, SPEC-layout-v3.md §8) -- proxies NYC Planning Labs GeoSearch's own
+// `/v2/autocomplete` (bearings/geocode.py's `autocomplete()`), median
+// ~400-900ms once warm, not sub-100ms -- AddressSearch.tsx debounces the
+// call and never blocks typing on it.
+export function getAutocomplete(text: string): Promise<{ results: AutocompleteResult[] }> {
+  return request<{ results: AutocompleteResult[] }>(
+    `/api/geocode/autocomplete?text=${encodeURIComponent(text)}`,
+  );
 }
 
 // A precomputed block-level report for one real H3 res-9 cell -- a flat

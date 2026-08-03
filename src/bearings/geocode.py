@@ -68,6 +68,13 @@ class GeocodeResult:
     bbl: str | None
 
 
+@dataclass(frozen=True)
+class AutocompleteResult:
+    label: str
+    lat: float
+    lng: float
+
+
 # ---------------------------------------------------------------------------
 # Engine-selection observability (dispatch requirement: "make the fallback
 # observable" -- a silent fallback that fires on most queries would mean
@@ -227,3 +234,55 @@ def _geocode_via_geosearch(address: str) -> GeocodeResult:
         lng=lng,
         bbl=bbl,
     )
+
+
+# ---------------------------------------------------------------------------
+# Autocomplete (LAYOUT-V3 WAVE 1d item 11, 2026-08-03) -- a debounced
+# typeahead for the single consolidated search bar. NYC Planning Labs
+# GeoSearch's own `/v2/autocomplete` endpoint (config.GEOSEARCH_AUTOCOMPLETE_
+# URL) is a REAL, separate route, not `/v2/search` with different params --
+# confirmed live 2026-08-03 by probing both: same Pelias FeatureCollection
+# response shape, tuned for partial input. Geosupport has no autocomplete
+# capability at all (it only resolves a complete, parsed house-number/
+# street/borough triple -- see this module's own docstring), so there is no
+# fast-path/fallback split here the way geocode() has; every autocomplete
+# call goes straight to GeoSearch.
+#
+# Latency, measured live 2026-08-03 (5 real queries, warm connection):
+# 237ms-1.2s, median ~400-500ms once the TCP/TLS connection to GeoSearch is
+# already warm (the first call in a cold process pays a ~1.5-2s connection-
+# setup tax, same as geocode()'s own fallback path). This is materially
+# faster than a full geocode() call (~3s median) but NOT sub-100ms -- the
+# frontend (AddressSearch.tsx) debounces and shows a loading state rather
+# than pretending this is instant.
+def autocomplete(text: str) -> list[AutocompleteResult]:
+    """Up to a handful of real NYC address candidates for partial input
+    `text` -- empty list for a too-short or empty query (never an error;
+    a typeahead with nothing to show yet is not a failure). Every result is
+    a real GeoSearch match already filtered to inside NYC (`cells.in_nyc()`,
+    the same guard geocode()'s own GeoSearch path uses) -- GeoSearch's index
+    is NYC-only so an out-of-NYC candidate would already be rare, but this
+    keeps the same honest boundary geocode() enforces rather than assuming
+    the upstream index alone is enough.
+    """
+    normalized = text.strip()
+    if len(normalized) < 3:
+        return []
+
+    resp = httpx.get(
+        config.GEOSEARCH_AUTOCOMPLETE_URL,
+        params={"text": normalized},
+        timeout=10.0,
+    )
+    resp.raise_for_status()
+    body = resp.json()
+    features = body.get("features", [])
+
+    results: list[AutocompleteResult] = []
+    for feat in features:
+        lng, lat = feat["geometry"]["coordinates"]
+        if not cells.in_nyc(lat, lng):
+            continue
+        props = feat.get("properties", {})
+        results.append(AutocompleteResult(label=props.get("label", normalized), lat=lat, lng=lng))
+    return results

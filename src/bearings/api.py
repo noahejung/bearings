@@ -19,6 +19,7 @@ import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 
+import httpx
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -249,6 +250,24 @@ def get_geocode(address: str = Query(..., min_length=1)) -> dict:
         "bbl": loc.bbl,
         "cell": cells.cell_for(loc.lat, loc.lng),
     }
+
+
+@app.get("/api/geocode/autocomplete")
+def get_geocode_autocomplete(text: str = Query(..., min_length=0)) -> dict:
+    """A debounced typeahead's real candidate list -- see geocode.py's own
+    `autocomplete()` docstring for the endpoint choice and measured latency
+    (LAYOUT-V3 WAVE 1d item 11). Never raises for a short/empty query (an
+    empty result list is the honest answer, not an error); a genuinely
+    upstream-failed GeoSearch call still 502s rather than silently returning
+    an empty list dressed up as "no matches", so the frontend can tell "no
+    real match yet" from "the service is down" -- matches this project's own
+    None-vs-0 discipline applied to a list instead of a number."""
+    try:
+        results = geocode.autocomplete(text)
+    except httpx.HTTPError as e:
+        logger.info("autocomplete upstream failure: %s", e)
+        raise HTTPException(status_code=502, detail="Address lookup is temporarily unavailable.") from e
+    return {"results": [{"label": r.label, "lat": r.lat, "lng": r.lng} for r in results]}
 
 
 @app.get("/api/cells")
