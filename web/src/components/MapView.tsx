@@ -5,7 +5,7 @@ import "maplibre-gl/dist/maplibre-gl.css";
 import { Protocol } from "pmtiles";
 import { useEffect, useRef, useState } from "react";
 import { ApiError, getCellsIndex, getCitywide, getMapGeometry, getReach } from "../api";
-import { buildMapStyle, buildOverlayLayers } from "../lib/mapStyle";
+import { buildMapStyle, buildOverlayLayers, DESTINATION_ENTER_MS, DESTINATION_EXIT_MS } from "../lib/mapStyle";
 import type { PinnedPlace } from "../lib/preferences";
 import type { CellsIndexEntry, Citywide, Era, MapGeometry, Reach, Source } from "../types";
 import type { TileHighlightKey } from "./CellReportView";
@@ -223,6 +223,47 @@ function reachDotsGeoJSON(reach: Reach, activeCategories: Set<string>): FeatureC
 }
 
 const EMPTY_FC: FeatureCollection = { type: "FeatureCollection", features: [] };
+
+// MOTION WAVE (2026-08-03, SPEC "data-viz animations wave" item 3): "map
+// layers... ease opacity rather than snapping" -- for MapLibre's own native
+// paint-property `-transition` to actually animate anything (mapStyle.ts's
+// own comment on citywide-cells-fill/tile-highlight-* for why), the SAME
+// feature has to persist across the change; a genuinely NEW feature
+// appearing via `setData()` (which is what a bare EMPTY_FC <-> populated
+// toggle produces every time a hover starts/ends) has no prior rendered
+// frame for the renderer to interpolate FROM. Several sources on this map
+// (tile-highlight-region/points, destination-rings/point) legitimately go
+// empty whenever nothing is currently hovered -- this helper is the fix:
+// instead of collapsing back to EMPTY_FC, it re-emits the LAST real
+// geometry this source ever held, tagged `visible: false`, so the shape
+// that's disappearing is the SAME feature fading its opacity down (a real,
+// GPU-side transition) rather than abruptly vanishing. The very first-ever
+// hover of a session has no "last known" geometry to fall back to yet, so
+// that one specific case still pops in without a fade -- a deliberate,
+// documented limitation (see this wave's own report), not an oversight.
+// mapStyle.ts's paint expressions read this same `visible` property
+// (defaulting `true` when absent, so any OTHER, non-faded source on this
+// map that never sets it is unaffected).
+function withFadeFallback(
+  current: FeatureCollection,
+  lastRef: { current: FeatureCollection | null },
+): FeatureCollection {
+  if (current.features.length > 0) {
+    const tagged: FeatureCollection = {
+      type: "FeatureCollection",
+      features: current.features.map((f) => ({ ...f, properties: { ...f.properties, visible: true } })),
+    };
+    lastRef.current = tagged;
+    return tagged;
+  }
+  if (lastRef.current) {
+    return {
+      type: "FeatureCollection",
+      features: lastRef.current.features.map((f) => ({ ...f, properties: { ...f.properties, visible: false } })),
+    };
+  }
+  return EMPTY_FC;
+}
 
 // LAYOUT-V3 WAVE 3 (SPEC-layout-v3.md §5.3 "Zone preview") -- hovering or
 // selecting any getting-around bar (a default ANCHOR or a custom
@@ -808,6 +849,31 @@ export function MapView({
       map.addLayer(layer);
     }
 
+    // MOTION WAVE (2026-08-03, SPEC "data-viz animations wave" item 3):
+    // real GPU-side paint-property transitions for every layer whose
+    // opacity/radius can now change without a hard pop -- set here, once,
+    // via `setPaintProperty` rather than inline in mapStyle.ts's static
+    // layer literals (see that file's own citywide-cells-fill comment for
+    // why the inline form doesn't type-check against this installed
+    // @maplibre/maplibre-gl-style-spec version). citywide-cells-fill and
+    // buildings-residential-hover are persisting-feature, feature-state-
+    // driven hovers (the textbook transition case); the tile-highlight and
+    // destination-preview trio use the SAME mechanism but rely on
+    // withFadeFallback()'s persisting-feature trick (this file's own
+    // comment) to have anything to transition FROM in the first place.
+    // destination-* layers' own duration gets overwritten per-direction by
+    // effect 10c below (entering vs. exiting) -- DESTINATION_ENTER_MS here
+    // is just the sane starting default before that effect has ever run.
+    map.setPaintProperty("citywide-cells-fill", "fill-opacity-transition", { duration: 160 });
+    map.setPaintProperty("buildings-residential-hover", "fill-opacity-transition", { duration: 160 });
+    map.setPaintProperty("tile-highlight-fill", "fill-opacity-transition", { duration: 200 });
+    map.setPaintProperty("tile-highlight-outline", "line-opacity-transition", { duration: 200 });
+    map.setPaintProperty("tile-highlight-points", "circle-opacity-transition", { duration: 200 });
+    map.setPaintProperty("destination-rings-fill", "fill-opacity-transition", { duration: DESTINATION_ENTER_MS });
+    map.setPaintProperty("destination-rings-outline", "line-opacity-transition", { duration: DESTINATION_ENTER_MS });
+    map.setPaintProperty("destination-point", "circle-opacity-transition", { duration: DESTINATION_ENTER_MS });
+    map.setPaintProperty("destination-point", "circle-radius-transition", { duration: DESTINATION_ENTER_MS });
+
     const onMoveEnd = () => updateLabelMarkers();
 
     // LAYOUT-V3 WAVE 1e: shows/replaces/clears the one per-building info
@@ -1170,10 +1236,37 @@ export function MapView({
     );
   }, [reach, activeCategories, mapReady]);
 
+  // Last-real-geometry refs for the fade-rather-than-pop treatment
+  // (withFadeFallback()'s own comment) -- one pair per faded source, since
+  // each source's "last real shape" is independent of the others.
+  const lastTileRegionRef = useRef<FeatureCollection | null>(null);
+  const lastTilePointsRef = useRef<FeatureCollection | null>(null);
+  const lastDestRingsRef = useRef<FeatureCollection | null>(null);
+  const lastDestPointRef = useRef<FeatureCollection | null>(null);
+  // Whether the destination preview was visible on the PREVIOUS run of
+  // effect 10c -- lets that effect tell "just started showing" (enter, the
+  // slower ~200ms ramp) apart from "just stopped showing" (exit, faster --
+  // see that effect's own comment for the asymmetric-timing reasoning) so
+  // it can set the map layers' own transition duration accordingly before
+  // pushing the new (possibly now-faded) data.
+  const destPreviewWasVisibleRef = useRef(false);
+
   // ---- 10b. push tile-highlight geometry whenever the hovered/expanded
   // side-panel tile changes (LAYOUT-V3 WAVE 1c item 4) -- see
   // tileHighlightGeometry()'s own comment for what each tile resolves to,
-  // including the honest empty case for amenities with no `reach` loaded. ----
+  // including the honest empty case for amenities with no `reach` loaded.
+  //
+  // MOTION WAVE (2026-08-03, item 3, "tile-highlight region... ease opacity
+  // rather than snapping"): both sources are now wrapped in
+  // withFadeFallback() so switching tiles (or losing hover entirely) fades
+  // the PREVIOUS tile's real geometry out instead of it vanishing the
+  // instant a different (or no) tile is hovered. Switching directly between
+  // two DIFFERENT tiles that both have real geometry (e.g. crime's precinct
+  // polygon -> noise's cell polygon) still repositions instantly, by
+  // design -- see this wave's own report for why animating a distance-
+  // bearing shape's POSITION is explicitly out of scope here (mapStyle.ts's
+  // paint-property transitions only ever ease a persisting feature's
+  // OPACITY, never interpolate its coordinates). ----
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !mapReady) return;
@@ -1183,8 +1276,12 @@ export function MapView({
       selectedCell,
       crimePrecinct,
     });
-    (map.getSource("tile-highlight-region") as maplibregl.GeoJSONSource | undefined)?.setData(region);
-    (map.getSource("tile-highlight-points") as maplibregl.GeoJSONSource | undefined)?.setData(points);
+    (map.getSource("tile-highlight-region") as maplibregl.GeoJSONSource | undefined)?.setData(
+      withFadeFallback(region, lastTileRegionRef),
+    );
+    (map.getSource("tile-highlight-points") as maplibregl.GeoJSONSource | undefined)?.setData(
+      withFadeFallback(points, lastTilePointsRef),
+    );
   }, [highlightedTile, reach, citywide, selectedCell, crimePrecinct, mapReady]);
 
   // ---- 10c. push the getting-around region's zone preview whenever the
@@ -1229,15 +1326,42 @@ export function MapView({
   // painted in INK, not RED (see buildReachLayers()'s own comment), so it
   // never competes with the red palette these two systems share in the
   // first place. ----
+  //
+  // MOTION WAVE (2026-08-03, item 3, "zone-preview fades/scales in (~200ms)
+  // and out faster"): both sources go through withFadeFallback() (this
+  // wave's fade-rather-than-pop mechanism -- see that function's own
+  // comment) instead of collapsing straight to EMPTY_FC, and the map
+  // layers' own `-transition` duration is set to a faster value right
+  // before a genuinely EXITING data push (destinationHighlight just went
+  // non-null -> null) than an ENTERING one -- MapLibre has no built-in
+  // "different duration each direction" concept for a single `-transition`
+  // config, so this is done by hand via setPaintProperty() immediately
+  // before the setData() calls that trigger the transition, mirroring the
+  // same asymmetry index.css's --motion-fast/--motion-base already give
+  // the DOM-side anchor rows (GettingAroundField.tsx). Switching directly
+  // between two DIFFERENT non-null destinations still repositions instantly
+  // (same reasoning as effect 10b's own comment: no shape/position
+  // interpolation, opacity-only).
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !mapReady) return;
     const dimmed = highlightedTile !== null;
+    const visible = destinationHighlight !== null;
+
+    if (visible !== destPreviewWasVisibleRef.current) {
+      const duration = visible ? DESTINATION_ENTER_MS : DESTINATION_EXIT_MS;
+      map.setPaintProperty("destination-rings-fill", "fill-opacity-transition", { duration });
+      map.setPaintProperty("destination-rings-outline", "line-opacity-transition", { duration });
+      map.setPaintProperty("destination-point", "circle-opacity-transition", { duration });
+      map.setPaintProperty("destination-point", "circle-radius-transition", { duration });
+      destPreviewWasVisibleRef.current = visible;
+    }
+
     (map.getSource("destination-rings") as maplibregl.GeoJSONSource | undefined)?.setData(
-      destinationRingsGeoJSON(destinationHighlight, dimmed),
+      withFadeFallback(destinationRingsGeoJSON(destinationHighlight, dimmed), lastDestRingsRef),
     );
     (map.getSource("destination-point") as maplibregl.GeoJSONSource | undefined)?.setData(
-      destinationPointGeoJSON(destinationHighlight, dimmed),
+      withFadeFallback(destinationPointGeoJSON(destinationHighlight, dimmed), lastDestPointRef),
     );
   }, [destinationHighlight, highlightedTile, mapReady]);
 
@@ -1470,7 +1594,40 @@ export function MapView({
 
       {geo && <p className="mapfield__note mono">{geo.basemap_note}</p>}
       {reach && <p className="mapfield__note mono">{reach.method_note}</p>}
-      {destinationHighlight && <p className="mapfield__note mono">{DESTINATION_PREVIEW_NOTE}</p>}
+      {/* MOTION WAVE (2026-08-03) -- REAL BUG FOUND LIVE, not guessed: this
+          note used to mount/unmount on every hover-start/hover-end (the
+          same rapid cadence GettingAroundField's hover handlers already
+          drive), and each mount/unmount changes THIS component's own total
+          height. Because `.mapfield` sits ABOVE the separate "Getting
+          around" section in normal document flow (App.tsx's own JSX
+          order), that height change shifts the very row the cursor is
+          hovering OUT from under it -- which fires a native mouseleave,
+          clears `destinationHighlight`, unmounts this note, shifts the row
+          BACK under the cursor, fires mouseenter again... a genuine, self-
+          sustaining layout-shift oscillation loop, confirmed live via a
+          Playwright script instrumenting real mouseenter/mouseleave
+          timestamps on a STATIONARY simulated cursor (repeating every
+          ~15-100ms, never settling) -- not a testing artifact (ruled out
+          by pre-scrolling the target fully into view and letting the page's
+          own `scroll-behavior: smooth` settle first; the oscillation
+          persisted regardless). Pre-existing since Wave 3 (2026-08-03,
+          commit `2e50b80`, which already hovers-not-just-clicks to preview
+          a destination) -- this wave's own live-hover verification is what
+          finally exercised it. Fixed the same way any CLS-prevention
+          reserves space for a will-eventually-load element: ALWAYS
+          rendered once a report can exist (`selectedCell` is set), with
+          `mapfield__note--reserved` (index.css: `visibility: hidden`, not
+          `display: none`) hiding it visually without collapsing its box --
+          the paragraph's own height is now CONSTANT across every hover
+          start/end, so nothing below it in the page ever moves. */}
+      {selectedCell && (
+        <p
+          className={`mapfield__note mono${destinationHighlight ? "" : " mapfield__note--reserved"}`}
+          aria-hidden={!destinationHighlight}
+        >
+          {DESTINATION_PREVIEW_NOTE}
+        </p>
+      )}
     </div>
   );
 }

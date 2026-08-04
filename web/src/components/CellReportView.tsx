@@ -2,9 +2,11 @@ import { useEffect, useId, useRef, useState, type FormEvent, type KeyboardEvent 
 import { ApiError, getCommute } from "../api";
 import { ANCHOR_COORDS } from "../lib/anchors";
 import { crimeRelativeLabel, formatPercentile, ordinalSuffix } from "../lib/crime";
+import { motionDelay, MOTION_FAST_MS } from "../lib/motion";
 import { unreachableReasonSentence, unreachableReasonShortLabel } from "../lib/transit";
 import { useAutocomplete } from "../lib/useAutocomplete";
 import type { AutocompleteResult, CellProfile, UnreachableReason } from "../types";
+import { Settle } from "./Settle";
 import { SourceTag } from "./SourceTag";
 import { Stamp } from "./Stamp";
 import { Stat } from "./Stat";
@@ -226,6 +228,26 @@ export function GettingAroundField({
   const [hoveredKey, setHoveredKey] = useState<string | null>(null);
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
 
+  // Motion wave item 1 ("deleted rows exit fast, ~150ms") -- a row marked
+  // here is STILL a real member of `visibleAnchorEntries`/`customDestinations`
+  // (it renders exactly as before, plus a `.anchor--exiting` class), so it
+  // stays on screen fading out for MOTION_FAST_MS before hideAnchor()/
+  // removeDestination() (below) actually mutate `hiddenAnchors`/
+  // `customDestinations`. `pendingRemovalsRef` tracks every scheduled
+  // setTimeout id so unmounting this component (a cell swap doesn't unmount
+  // it, but the whole side panel disappearing -- no report loaded -- does)
+  // clears them rather than calling setState on a gone component.
+  const [removingAnchors, setRemovingAnchors] = useState<Set<AnchorKey>>(new Set());
+  const [removingDestinationIds, setRemovingDestinationIds] = useState<Set<string>>(new Set());
+  const pendingRemovalsRef = useRef<number[]>([]);
+
+  useEffect(() => {
+    return () => {
+      pendingRemovalsRef.current.forEach((id) => window.clearTimeout(id));
+      pendingRemovalsRef.current = [];
+    };
+  }, []);
+
   // Always-current ref -- the recompute effect below fires on `cell.h3`
   // alone (never `customDestinations`, or adding a destination on the SAME
   // cell would immediately re-trigger it in a loop); it needs whichever
@@ -350,15 +372,36 @@ export function GettingAroundField({
   }
 
   function removeDestination(id: string) {
-    setCustomDestinations((prev) => prev.filter((d) => d.id !== id));
+    // Un-highlight/deselect IMMEDIATELY (the row is visibly leaving; a stale
+    // map preview for a row that's mid-exit would be its own small honesty
+    // gap), but the actual array mutation waits for the exit transition.
     setHoveredKey((prev) => (prev === id ? null : prev));
     setSelectedKey((prev) => (prev === id ? null : prev));
+    setRemovingDestinationIds((prev) => new Set(prev).add(id));
+    const timeoutId = window.setTimeout(() => {
+      setCustomDestinations((prev) => prev.filter((d) => d.id !== id));
+      setRemovingDestinationIds((prev) => {
+        const next = new Set(prev);
+        next.delete(id);
+        return next;
+      });
+    }, motionDelay(MOTION_FAST_MS));
+    pendingRemovalsRef.current.push(timeoutId);
   }
 
   function hideAnchor(key: AnchorKey) {
-    setHiddenAnchors((prev) => new Set(prev).add(key));
     setHoveredKey((prev) => (prev === key ? null : prev));
     setSelectedKey((prev) => (prev === key ? null : prev));
+    setRemovingAnchors((prev) => new Set(prev).add(key));
+    const timeoutId = window.setTimeout(() => {
+      setHiddenAnchors((prev) => new Set(prev).add(key));
+      setRemovingAnchors((prev) => {
+        const next = new Set(prev);
+        next.delete(key);
+        return next;
+      });
+    }, motionDelay(MOTION_FAST_MS));
+    pendingRemovalsRef.current.push(timeoutId);
   }
 
   // LAYOUT-V3 WAVE 3 (SPEC-layout-v3.md §5.3): reports the currently
@@ -437,9 +480,10 @@ export function GettingAroundField({
             const pct = reachable ? Math.min(100, (minutes / BAR_SCALE_MAX_MIN) * 100) : 0;
             const reason = cell.transit.unreachable_reason[key];
             const selected = selectedKey === key;
+            const exiting = removingAnchors.has(key);
             return (
               <div
-                className={`anchor${selected ? " anchor--selected" : ""}`}
+                className={`anchor${selected ? " anchor--selected" : ""}${exiting ? " anchor--exiting" : ""}`}
                 key={key}
                 role="button"
                 tabIndex={0}
@@ -448,7 +492,11 @@ export function GettingAroundField({
               >
                 <span className="anchor__label">{ANCHOR_LABELS[key]}</span>
                 <span className="anchor__track">
-                  {reachable ? <span className="anchor__fill" style={{ width: `${pct}%` }} /> : null}
+                  {/* Motion wave item 1: always rendered (never conditionally
+                      omitted) so a mount-to-mount TRANSFORM change is what
+                      animates the bar, not a mount/unmount pop -- see
+                      index.css's own .anchor__fill comment. */}
+                  <span className="anchor__fill" style={{ transform: `scaleX(${pct / 100})` }} />
                 </span>
                 <span className={`anchor__value${reachable ? "" : " anchor__value--nodata"}`}>
                   {reachable ? `${minutes} min` : unreachableReasonShortLabel(reason as UnreachableReason)}
@@ -472,9 +520,10 @@ export function GettingAroundField({
             const reachable = d.minutes !== null && d.minutes >= 0;
             const pct = reachable ? Math.min(100, ((d.minutes as number) / BAR_SCALE_MAX_MIN) * 100) : 0;
             const selected = selectedKey === d.id;
+            const exiting = removingDestinationIds.has(d.id);
             return (
               <div
-                className={`anchor anchor--custom${selected ? " anchor--selected" : ""}`}
+                className={`anchor anchor--custom${selected ? " anchor--selected" : ""}${exiting ? " anchor--exiting" : ""}`}
                 key={d.id}
                 role="button"
                 tabIndex={0}
@@ -483,7 +532,7 @@ export function GettingAroundField({
               >
                 <span className="anchor__label">{d.label}</span>
                 <span className="anchor__track">
-                  {reachable ? <span className="anchor__fill" style={{ width: `${pct}%` }} /> : null}
+                  <span className="anchor__fill" style={{ transform: `scaleX(${pct / 100})` }} />
                 </span>
                 <span className={`anchor__value${reachable ? "" : " anchor__value--nodata"}`}>
                   {d.loading
@@ -708,7 +757,9 @@ export function CellReportView({
             </h2>
           </header>
           <p className="tile__value">
-            <Stat value={totalAmenities} />
+            <Settle settleKey={totalAmenities}>
+              <Stat value={totalAmenities} />
+            </Settle>
           </p>
           <p className="tile__sub">place{totalAmenities === 1 ? "" : "s"} counted nearby</p>
           {disclosureToggle("amenities")}
@@ -746,8 +797,10 @@ export function CellReportView({
                   (VISUAL.md §5) is unchanged; only WHICH already-real number
                   leads is different. */}
               <p className="tile__value">
-                {Math.round(crime.crime_percentile)}
-                <span className="tile__value-ordinal">{ordinalSuffix(Math.round(crime.crime_percentile))}</span>
+                <Settle settleKey={Math.round(crime.crime_percentile)}>
+                  {Math.round(crime.crime_percentile)}
+                  <span className="tile__value-ordinal">{ordinalSuffix(Math.round(crime.crime_percentile))}</span>
+                </Settle>
               </p>
               <p className="tile__sub">{crimeRelativeLabel(crime.crime_percentile)}</p>
               {disclosureToggle("crime")}
@@ -762,7 +815,9 @@ export function CellReportView({
             </h2>
           </header>
           <p className="tile__value">
-            <Stat value={cell.noise.complaints_12mo} />
+            <Settle settleKey={cell.noise.complaints_12mo}>
+              <Stat value={cell.noise.complaints_12mo} />
+            </Settle>
           </p>
           {/* LAYOUT-V3 WAVE 1d item 15 (Noah: "can we also get the
               relativity on noise soon") -- the raw count above stays the
@@ -772,9 +827,15 @@ export function CellReportView({
               not buried behind "+ details", so both truths are visible
               without an extra tap. `cell.noise.percentile` is real,
               already baked (cellprofile.py's `_bake_all()`, commit
-              `0c39c5d`) -- this wave is the first to render it. */}
+              `0c39c5d`) -- this wave is the first to render it.
+              MOTION WAVE item 4 ("percentile/noise displays: same settle
+              idiom as tile values") -- only the percentile PHRASE settles,
+              not the whole sentence around it, matching the "headline
+              numeral" scope items 2/4 both describe, scaled down to a
+              sub-value. */}
           <p className="tile__sub">
-            reports, trailing 12mo · {formatPercentile(cell.noise.percentile)} citywide
+            reports, trailing 12mo ·{" "}
+            <Settle settleKey={cell.noise.percentile}>{formatPercentile(cell.noise.percentile)}</Settle> citywide
           </p>
           {disclosureToggle("noise")}
         </article>
@@ -786,7 +847,9 @@ export function CellReportView({
             </h2>
           </header>
           <p className="tile__value">
-            <Stat value={cell.trees.street_trees} />
+            <Settle settleKey={cell.trees.street_trees}>
+              <Stat value={cell.trees.street_trees} />
+            </Settle>
           </p>
           <p className="tile__sub">counted in 2015</p>
           {disclosureToggle("trees")}

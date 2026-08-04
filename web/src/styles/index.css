@@ -78,6 +78,31 @@ table {
 
   --font-display: "Bahnschrift", "DIN Alternate", "Archivo", sans-serif;
   --font-mono: "Cascadia Mono", "Consolas", ui-monospace, "SFMono-Regular", monospace;
+
+  /* ---------- motion tokens (data-viz animations wave, 2026-08-03) ----------
+     Defined ONCE; every transition/animation this wave adds (and future ones
+     should add) reads these instead of a fresh literal duration/curve --
+     "the next wave shouldn't create drift" (this wave's own item 5). Mirrored
+     in lib/motion.ts's MOTION_*_MS constants for the few places plain JS (not
+     CSS) needs the identical number -- see that module's own comment. */
+  --motion-fast: 150ms; /* exits/deletions -- slow entry is forgiven, slow exit isn't (emil-design-eng skill) */
+  --motion-base: 200ms; /* settle: tile/percentile value crossfade, row entrance */
+  --motion-bar: 250ms; /* getting-around bar width/scale transitions */
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1); /* strong ease-out (emil-design-eng skill) -- entrances/settles */
+  --ease: ease; /* hover/colour changes only (emil-design-eng skill's easing table) */
+}
+
+/* `prefers-reduced-motion: reduce` collapses every duration token to 0ms in
+   ONE place -- every rule below that reads --motion-fast/--motion-base/
+   --motion-bar snaps to its end state instantly, with no per-rule reduced-
+   motion override needed. Easing curves are left alone deliberately: a
+   0ms transition/animation has no perceptible easing regardless of curve. */
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --motion-fast: 0ms;
+    --motion-base: 0ms;
+    --motion-bar: 0ms;
+  }
 }
 
 /* Route bullets (RouteBullet.tsx) are the one stated exception to the
@@ -655,11 +680,55 @@ button.search__pin:disabled {
   border: 1px solid transparent;
   padding: 0.15rem 0.3rem;
   margin: -0.15rem -0.3rem;
+  /* Motion wave item 1: a deleted row (`.anchor--exiting`, below) eases
+     out on these two GPU-composited properties only -- never `height`/
+     `margin` (would reflow every row below it mid-transition, the exact
+     "never animate" list the emil-design-eng skill names). */
+  opacity: 1;
+  transform: none;
+  transition: opacity var(--motion-fast) var(--ease-out), transform var(--motion-fast) var(--ease-out);
 }
 
 .anchor:hover,
 .anchor:focus-visible {
   background: rgba(138, 141, 143, 0.1);
+}
+
+/* Motion wave item 1 ("deleted rows exit fast, ~150ms"): the row this class
+   is on is still mounted -- CellReportView.tsx delays the actual removal
+   (hideAnchor()/removeDestination()) by var(--motion-fast)'s own JS mirror
+   (lib/motion.ts's MOTION_FAST_MS) so this transition has time to finish
+   before the row is really gone, matching the "release/completion: always
+   snappy" asymmetric-timing guidance (emil-design-eng skill) -- this is the
+   snappy release half. */
+.anchor--exiting {
+  opacity: 0;
+  transform: translateX(6px);
+}
+
+/* Motion wave item 1 ("new rows enter with a short fade+settle"): only
+   CUSTOM destinations ever "enter" after first mount -- the 4 baked
+   ANCHOR_LABELS rows have no "unhide" affordance (GettingAroundField.tsx's
+   own comment), so this animation is scoped to `.anchor--custom`
+   specifically, never the bare `.anchor` base rule -- a default anchor row
+   never replays a mount animation on a cell swap (same DOM node, same
+   React key, no remount) or on first page load (explicitly out of this
+   wave's scope -- "page-load orchestration/staggered entrances"). A real
+   NEW destination row, by contrast, IS a genuinely new DOM node (a fresh
+   `key={d.id}`), so this plays automatically on that one mount, once. */
+.anchor--custom {
+  animation: anchor-enter var(--motion-base) var(--ease-out);
+}
+
+@keyframes anchor-enter {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 /* A click/Enter/Space "pins" the zone preview (SPEC-layout-v3.md §5.3) --
@@ -685,10 +754,29 @@ button.search__pin:disabled {
   overflow: hidden;
 }
 
+/* Motion wave item 1 ("bars transition width from previous to new value...
+   the 'computing' state's resolution into a real value settles rather than
+   pops"). Always full CSS `width` -- CellReportView.tsx now always renders
+   this span (never conditionally omits it), and drives the actual bar
+   length with an inline `transform: scaleX(...)` instead of an inline
+   `width: ...%`. This is the compositor-only rewrite of what used to be a
+   layout-triggering width animation (the emil-design-eng skill's own
+   performance rule: "Only animate transform and opacity... Never animate...
+   width") -- doubly load-bearing here since a cell swap can move EVERY
+   visible bar at once, and animating `width` on all of them together would
+   be a real layout-thrash cost, not just a style violation. Because the
+   span is always mounted (0-width states render `scaleX(0)`, never `null`),
+   this one `transition` rule covers every case this wave asks for: a
+   value-to-value change, AND a first-ever resolution from "computing" (no
+   prior rendered scale) into a real value, both animate through the exact
+   same property. */
 .anchor__fill {
   display: block;
+  width: 100%;
   height: 100%;
   background: var(--ink);
+  transform-origin: left center;
+  transition: transform var(--motion-bar) var(--ease-out);
 }
 
 .anchor__value {
@@ -714,7 +802,12 @@ button.search__pin:disabled {
   color: var(--steel);
   font-size: 1rem;
   line-height: 1;
-  transition: color 0.12s ease, border-color 0.12s ease;
+  /* Retrofitted onto the shared motion tokens (data-viz animations wave,
+     2026-08-03) -- was a literal 0.12s/ease pair, exactly the "scattered
+     magic number" item 5 warns the next wave against; --motion-fast (150ms)
+     is close enough to the original 120ms that this hover micro-transition
+     reads identically, now sourced from the one shared token instead. */
+  transition: color var(--motion-fast) var(--ease), border-color var(--motion-fast) var(--ease);
 }
 
 .anchor__delete:hover {
@@ -962,6 +1055,30 @@ button.search__pin:disabled {
 .stat {
   font-family: var(--font-mono);
   font-weight: 700;
+}
+
+/* ---------- settle (Settle.tsx) ---------- */
+/* A keyed remount + a mount-triggered CSS `animation` -- see Settle.tsx's
+   own module comment for why this beats a two-layer crossfade here (single
+   DOM node at all times, correct value always immediately present, safe
+   under this project's own test-query discipline). `inline-block` is
+   required for `transform` to have any effect at all -- CSS transforms do
+   not apply to non-replaced inline boxes, a real spec footgun, not an
+   oversight if left off. */
+.settle {
+  display: inline-block;
+  animation: settle-in var(--motion-base) var(--ease-out);
+}
+
+@keyframes settle-in {
+  from {
+    opacity: 0.35;
+    transform: translateY(2px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 .stat--nodata {
@@ -1395,6 +1512,18 @@ button.search__pin:disabled {
   line-height: 1.55;
   color: var(--steel);
   max-width: 74ch;
+}
+
+/* MOTION WAVE (2026-08-03) -- see MapView.tsx's own comment on the
+   destination-preview note for the real, live-diagnosed layout-shift
+   oscillation this fixes. `visibility: hidden` (not `display: none`)
+   removes the box from PAINT (no border, no text, no colour -- fully
+   invisible) while leaving it fully present for LAYOUT (its height still
+   counts), which is the whole point: the note's box is always exactly this
+   same height whether a destination is currently hovered or not, so toggling
+   `destinationHighlight` on/off never changes anything below it on the page. */
+.mapfield__note--reserved {
+  visibility: hidden;
 }
 
 /* LAYOUT-V3 WAVE 1d item 4 (2026-08-03, SPEC-layout-v3.md §8): the

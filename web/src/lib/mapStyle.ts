@@ -28,6 +28,20 @@ const INK = "#111111";
 const STEEL = "#8A8D8F";
 const RED = "#D7263D";
 
+// MOTION WAVE (2026-08-03, SPEC "data-viz animations wave" item 3, "zone-
+// preview fades/scales in (~200ms) and out faster"). Exported (not a
+// private literal) so MapView.tsx's effect 10c reads the exact same number
+// when it hand-sets each destination-preview layer's `-transition` duration
+// per direction (see that effect's own comment for why this can't be a
+// single static config) -- one shared source, never a second independently-
+// guessed literal. Mirrors lib/motion.ts's MOTION_BASE_MS/MOTION_FAST_MS
+// values -- kept as its own constant rather than importing those directly
+// because this wave's map-specific asymmetric split (200/130) is tuned
+// slightly differently from the DOM-side anchor-row split (200/150); see
+// this wave's own report for that specific tuning call.
+export const DESTINATION_ENTER_MS = 200;
+export const DESTINATION_EXIT_MS = 130;
+
 // LAYOUT-V3 WAVE 1d item 12 (2026-08-03, SPEC-layout-v3.md §8, Noah:
 // "navigable or trimmed" for the slice of New Jersey inside NYC_BBOX --
 // "default: trim/dim"). config.NYC_BBOX's west edge (-74.30) reaches past
@@ -302,6 +316,15 @@ export function buildOverlayLayers(): StyleSpecification["layers"] {
       filter: ["==", ["coalesce", ["get", "residential"], false], true],
       paint: {
         "fill-color": RED,
+        // MOTION WAVE (2026-08-03, item 3, "building hover-highlight ease
+        // opacity rather than snapping") -- set via
+        // `map.setPaintProperty("buildings-residential-hover",
+        // "fill-opacity-transition", ...)` in MapView.tsx's effect 2, not
+        // inline here -- see citywide-cells-fill's own comment above for
+        // why. Same textbook feature-state-transition case (the SAME
+        // building footprint persists continuously; only its hover feature-
+        // state toggles), so this genuinely animates, unlike a source that
+        // goes empty<->populated.
         "fill-opacity": ["case", ["boolean", ["feature-state", "hover"], false], 0.3, 0],
       },
     },
@@ -389,6 +412,24 @@ export function buildCitywideGridLayers(): StyleSpecification["layers"] {
       source: "citywide-cells",
       paint: {
         "fill-color": RED,
+        // MOTION WAVE (2026-08-03, SPEC "data-viz animations wave" item 3):
+        // this hover fill now animates -- see MapView.tsx's effect 2, where
+        // `map.setPaintProperty("citywide-cells-fill", "fill-opacity-
+        // transition", ...)` sets the GPU-side transition config for this
+        // property. NOT set inline here as a `"fill-opacity-transition"` key
+        // on this paint object: this installed version of
+        // @maplibre/maplibre-gl-style-spec's TS types model `-transition`
+        // ONLY as a single style-wide `StyleSpecification.transition`
+        // default, not as a per-property sibling key on a static layer's
+        // `paint` object -- confirmed by reading that package's own
+        // index.d.ts before assuming the inline form would even compile.
+        // `Map.setPaintProperty()`'s signature (`name: string, value: any`)
+        // has no such restriction, which is why it's set there instead. This
+        // IS the exact textbook use case for the mechanism either way: the
+        // SAME feature persists continuously (a real citywide cell polygon,
+        // never removed/re-added), only its evaluated `feature-state` hover
+        // value changes -- MapLibre's own official "Create a hover effect"
+        // example uses this identical property.
         "fill-opacity": ["case", ["boolean", ["feature-state", "hover"], false], 0.16, 0],
       },
     },
@@ -405,19 +446,38 @@ export function buildCitywideGridLayers(): StyleSpecification["layers"] {
 // A bolder opacity than the bare hover fill above (0.16) -- this is a
 // stronger, more deliberate signal ("the side panel is talking about
 // THIS"), not a passive cursor hint.
+// MOTION WAVE (2026-08-03, SPEC "data-viz animations wave" item 3): "tile-
+// highlight region... ease opacity rather than snapping." `visible` is
+// MapView.tsx's withFadeFallback() flag -- gates the real opacity to 0
+// while a source is holding the LAST tile's now-stale region/points
+// (re-emitted, not emptied, specifically so this property change is a
+// persisting-feature opacity change a transition CAN animate -- see that
+// function's own comment). The actual GPU-side transition config for all
+// three layers below is set via `map.setPaintProperty(..., "<prop>-
+// transition", { duration: 200 })` in MapView.tsx's effect 2, not inline
+// here -- see citywide-cells-fill's own comment (above, this file) for why
+// an inline `-transition` key doesn't type-check against this installed
+// version of @maplibre/maplibre-gl-style-spec's paint object types.
 export function buildTileHighlightLayers(): StyleSpecification["layers"] {
   return [
     {
       id: "tile-highlight-fill",
       type: "fill",
       source: "tile-highlight-region",
-      paint: { "fill-color": RED, "fill-opacity": 0.26 },
+      paint: {
+        "fill-color": RED,
+        "fill-opacity": ["case", ["boolean", ["get", "visible"], true], 0.26, 0],
+      },
     },
     {
       id: "tile-highlight-outline",
       type: "line",
       source: "tile-highlight-region",
-      paint: { "line-color": RED, "line-width": 2, "line-opacity": 0.9 },
+      paint: {
+        "line-color": RED,
+        "line-width": 2,
+        "line-opacity": ["case", ["boolean", ["get", "visible"], true], 0.9, 0],
+      },
     },
     {
       id: "tile-highlight-points",
@@ -426,7 +486,7 @@ export function buildTileHighlightLayers(): StyleSpecification["layers"] {
       paint: {
         "circle-radius": 6,
         "circle-color": RED,
-        "circle-opacity": 0.92,
+        "circle-opacity": ["case", ["boolean", ["get", "visible"], true], 0.92, 0],
         "circle-stroke-width": 1.5,
         "circle-stroke-color": INK,
       },
@@ -507,6 +567,31 @@ export function buildReachLayers(): StyleSpecification["layers"] {
 // priority (Wave 3's own "never silently absent" rule for a pinned place),
 // it just recedes well below the newer, more specific tile highlight instead
 // of visually fighting it for the same red ink.
+//
+// MOTION WAVE (2026-08-03, item 3, "zone-preview fades/scales in (~200ms)
+// and out faster; ... the highlight-priority dimmed state transitions
+// smoothly instead of jumping"). Every paint value below is now wrapped in
+// an OUTER `["case", ["boolean", ["get","visible"], true], <the dimmed-
+// aware expression above>, 0]` -- `visible` is the fade-rather-than-pop
+// flag MapView.tsx's withFadeFallback() sets (see that function's own
+// comment: it re-emits the last real ring/point geometry at `visible:false`
+// instead of collapsing the source to nothing). The actual GPU-side
+// transition config for these three layers is set via
+// `map.setPaintProperty(..., "<prop>-transition", { duration })` in
+// MapView.tsx's effect 10c -- NOT inline here (see citywide-cells-fill's
+// own comment for why an inline `-transition` key doesn't type-check) --
+// and set PER DIRECTION there (DESTINATION_ENTER_MS entering,
+// DESTINATION_EXIT_MS exiting, both exported from this file), which is also
+// why it has to be a runtime call rather than a single static value: this
+// wave's own "fades... in and out faster" asymmetry has no single number
+// that would satisfy both directions. `circle-radius` also gates on
+// `visible` (5 -> 0) for a real "scale in/out" on the destination's own
+// point -- deliberately NOT applied to the rings themselves: a ring's
+// radius is real walking-distance geometry (5/10/15-minute bands), so
+// animating IT would show a transiently WRONG (too-small) distance
+// mid-transition, which this project's own rules forbid even as a
+// decorative side effect. The point marker carries no distance claim, so
+// scaling it is honest.
 export function buildDestinationPreviewLayers(): StyleSpecification["layers"] {
   return [
     {
@@ -517,9 +602,14 @@ export function buildDestinationPreviewLayers(): StyleSpecification["layers"] {
         "fill-color": RED,
         "fill-opacity": [
           "case",
-          ["boolean", ["get", "dimmed"], false],
-          0.05,
-          ["match", ["get", "minutes"], 5, 0.26, 10, 0.17, 15, 0.1, 0.1],
+          ["boolean", ["get", "visible"], true],
+          [
+            "case",
+            ["boolean", ["get", "dimmed"], false],
+            0.05,
+            ["match", ["get", "minutes"], 5, 0.26, 10, 0.17, 15, 0.1, 0.1],
+          ],
+          0,
         ],
       },
     },
@@ -532,9 +622,14 @@ export function buildDestinationPreviewLayers(): StyleSpecification["layers"] {
         "line-width": 1,
         "line-opacity": [
           "case",
-          ["boolean", ["get", "dimmed"], false],
-          0.15,
-          ["match", ["get", "minutes"], 5, 0.55, 10, 0.4, 15, 0.28, 0.28],
+          ["boolean", ["get", "visible"], true],
+          [
+            "case",
+            ["boolean", ["get", "dimmed"], false],
+            0.15,
+            ["match", ["get", "minutes"], 5, 0.55, 10, 0.4, 15, 0.28, 0.28],
+          ],
+          0,
         ],
       },
     },
@@ -546,9 +641,14 @@ export function buildDestinationPreviewLayers(): StyleSpecification["layers"] {
       type: "circle",
       source: "destination-point",
       paint: {
-        "circle-radius": 5,
+        "circle-radius": ["case", ["boolean", ["get", "visible"], true], 5, 0],
         "circle-color": RED,
-        "circle-opacity": ["case", ["boolean", ["get", "dimmed"], false], 0.35, 0.92],
+        "circle-opacity": [
+          "case",
+          ["boolean", ["get", "visible"], true],
+          ["case", ["boolean", ["get", "dimmed"], false], 0.35, 0.92],
+          0,
+        ],
         "circle-stroke-width": 1.5,
         "circle-stroke-color": INK,
       },

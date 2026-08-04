@@ -6,7 +6,15 @@ import type { CellProfile } from "./types";
 
 // The mocked default export's test-only escape hatch -- see the vi.mock()
 // factory below for why this can't just be a module-scope variable.
-const getLastMap = () => (maplibregl as unknown as { __getLastMap: () => { _handlers: Map<string, (...a: never[]) => void> } | null }).__getLastMap();
+const getLastMap = () =>
+  (
+    maplibregl as unknown as {
+      __getLastMap: () => {
+        _handlers: Map<string, (...a: never[]) => void>;
+        _paintProps: Map<string, unknown>;
+      } | null;
+    }
+  ).__getLastMap();
 
 // A real integration test, not just a compile check: mounts the whole app,
 // drives a real address submission through the real fetch call sites, and
@@ -44,6 +52,12 @@ vi.mock("maplibre-gl", () => {
     _container: HTMLElement | null;
     _sources = new Map<string, { data: unknown; setData(d: unknown): void }>();
     _handlers = new Map<string, (...args: never[]) => void>();
+    // MOTION WAVE (2026-08-03): records every real setPaintProperty() call
+    // MapView.tsx makes -- lets tests below assert the actual transition
+    // config landed on the actual layer, not just that the call didn't
+    // throw (this file's own established bar: `getLastMap()` exists
+    // specifically so this fake exercises MapView's real effect logic).
+    _paintProps = new Map<string, unknown>();
     constructor(opts: { container: HTMLElement }) {
       this._container = opts.container;
       lastMapInstance = this;
@@ -88,7 +102,8 @@ vi.mock("maplibre-gl", () => {
     setLayoutProperty() {
       return this;
     }
-    setPaintProperty() {
+    setPaintProperty(layerId: string, name: string, value: unknown) {
+      this._paintProps.set(`${layerId}:${name}`, value);
       return this;
     }
     setFeatureState() {
@@ -558,6 +573,50 @@ describe("App (full mount)", () => {
     expect(screen.queryByText(/Peoples Bureau/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/BRG—/)).not.toBeInTheDocument();
     expect(screen.queryByText(/NO LISTINGS/i)).not.toBeInTheDocument();
+  });
+
+  // MOTION WAVE (2026-08-03, SPEC "data-viz animations wave" item 3): proves
+  // the map's real paint-property transitions actually land on the actual
+  // layers, and that the destination-preview trio's transition DURATION
+  // really does flip per direction (entering vs. exiting) -- the load-
+  // bearing, easiest-to-get-wrong half of this wave's map work, per
+  // MapView.tsx's own effect 10c comment. Not just "doesn't throw."
+  it("sets real GPU-side paint-property transitions on mount, and flips the destination-preview duration on hover enter/exit", async () => {
+    render(<App />);
+    await waitFor(() => expect(getLastMap()).not.toBeNull());
+    const map = getLastMap()!;
+
+    // Static, persisting-feature hover transitions -- set once, at layer-add
+    // time, and never change again.
+    expect(map._paintProps.get("citywide-cells-fill:fill-opacity-transition")).toEqual({ duration: 160 });
+    expect(map._paintProps.get("buildings-residential-hover:fill-opacity-transition")).toEqual({ duration: 160 });
+    expect(map._paintProps.get("tile-highlight-fill:fill-opacity-transition")).toEqual({ duration: 200 });
+    expect(map._paintProps.get("tile-highlight-outline:fill-opacity-transition")).toBeUndefined(); // wrong prop name -- outline is a line layer
+    expect(map._paintProps.get("tile-highlight-outline:line-opacity-transition")).toEqual({ duration: 200 });
+    expect(map._paintProps.get("tile-highlight-points:circle-opacity-transition")).toEqual({ duration: 200 });
+
+    // Destination-preview defaults to the ENTER duration before any hover
+    // has ever happened (MapView.tsx effect 2's own comment: "the sane
+    // starting default").
+    expect(map._paintProps.get("destination-rings-fill:fill-opacity-transition")).toEqual({ duration: 200 });
+
+    fireEvent.change(screen.getByPlaceholderText(/5TH AVE/i), { target: { value: ADDRESS } });
+    fireEvent.click(screen.getByRole("button", { name: /pull the record/i }));
+    await waitFor(() => expect(screen.getByText("Midtown")).toBeInTheDocument());
+
+    const row = screen.getByText("Midtown").closest('[role="button"]') as HTMLElement;
+    fireEvent.mouseEnter(row);
+    await waitFor(() =>
+      expect(map._paintProps.get("destination-rings-fill:fill-opacity-transition")).toEqual({ duration: 200 }),
+    );
+    expect(map._paintProps.get("destination-point:circle-radius-transition")).toEqual({ duration: 200 });
+
+    fireEvent.mouseLeave(row);
+    await waitFor(() =>
+      expect(map._paintProps.get("destination-rings-fill:fill-opacity-transition")).toEqual({ duration: 130 }),
+    );
+    expect(map._paintProps.get("destination-rings-outline:line-opacity-transition")).toEqual({ duration: 130 });
+    expect(map._paintProps.get("destination-point:circle-opacity-transition")).toEqual({ duration: 130 });
   });
 
   it("renders a real 'no data' state for a block with no precinct match, never a fabricated number", async () => {

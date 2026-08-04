@@ -346,11 +346,20 @@ describe("GettingAroundField -- Wave 3 editable destinations", () => {
     vi.unstubAllGlobals();
   });
 
-  it("deleting a default anchor removes it from view, others stay, and the baked minute values are untouched", () => {
+  // MOTION WAVE (2026-08-03, item 1, "deleted rows exit fast, ~150ms"):
+  // deleting a row no longer removes it from the DOM synchronously -- it
+  // exits (a real `.anchor--exiting` class this test asserts, not just
+  // trusted) for MOTION_FAST_MS first, matching the actual shipped
+  // behaviour rather than the pre-animation instant-removal this test used
+  // to assert.
+  it("deleting a default anchor exits (not pops), then removes it from view; others stay, and the baked minute values are untouched", async () => {
     render(<GettingAroundField cell={CONTROL_CELL} />);
     expect(screen.getByText("Newport, NJ (PATH)")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /remove newport, nj \(path\) from this list/i }));
-    expect(screen.queryByText("Newport, NJ (PATH)")).not.toBeInTheDocument();
+    // Still present, mid-exit, with the real exiting class -- not gone yet.
+    const row = screen.getByText("Newport, NJ (PATH)").closest(".anchor") as HTMLElement;
+    expect(row).toHaveClass("anchor--exiting");
+    await waitFor(() => expect(screen.queryByText("Newport, NJ (PATH)")).not.toBeInTheDocument());
     expect(screen.getByText("Midtown")).toBeInTheDocument();
     expect(screen.getByText("10 min")).toBeInTheDocument(); // midtown's own baked value, unaffected
   });
@@ -407,7 +416,7 @@ describe("GettingAroundField -- Wave 3 editable destinations", () => {
     expect(await screen.findByText("We couldn't find that address in New York City.")).toBeInTheDocument();
   });
 
-  it("deleting a custom destination removes it from view", async () => {
+  it("deleting a custom destination exits (not pops), then removes it from view", async () => {
     stubCommuteFetch();
     render(<GettingAroundField cell={CONTROL_CELL} />);
     addViaField("60 West 36 St, Manhattan");
@@ -415,7 +424,9 @@ describe("GettingAroundField -- Wave 3 editable destinations", () => {
     fireEvent.click(
       screen.getByRole("button", { name: new RegExp(`remove ${COMMUTE_RESULT.destination.label}`, "i") }),
     );
-    expect(screen.queryByText("7 min")).not.toBeInTheDocument();
+    const row = screen.getByText("7 min").closest(".anchor") as HTMLElement;
+    expect(row).toHaveClass("anchor--exiting");
+    await waitFor(() => expect(screen.queryByText("7 min")).not.toBeInTheDocument());
   });
 
   it("hovering/selecting a custom destination reports its real resolved point, not the query text", async () => {
