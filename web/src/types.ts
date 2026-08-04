@@ -439,6 +439,26 @@ export interface Reach {
   sources: { places: Source; stations: Source };
 }
 
+// Mirrors GET /api/commute exactly (bearings/api.py's get_commute()) --
+// LAYOUT-V3 WAVE 3's editable getting-around row (SPEC-layout-v3.md §5.2
+// Option A): a live single-destination commute computed via the exact same
+// profile._anchor_result() machinery the 4 baked ANCHORS already use, for a
+// destination the citywide bake never covers. `minutes` is -1 exactly when
+// `reason` is non-null -- the identical invariant ToAnchors/
+// UnreachableReasons already carry for the 4 defaults (see profile.py's
+// _anchor_result() docstring).
+export interface CommuteDestination {
+  label: string;
+  lat: number;
+  lng: number;
+}
+
+export interface CommuteResult {
+  destination: CommuteDestination;
+  minutes: number;
+  reason: UnreachableReason | null;
+}
+
 export interface CellProfile {
   h3: string;
   shard: string;

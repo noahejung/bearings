@@ -10,7 +10,7 @@ import time
 import pytest
 from fastapi.testclient import TestClient
 
-from bearings import cells, geocode
+from bearings import cells, geocode, profile
 from bearings.api import app
 
 EMPIRE_STATE = "350 5th Ave, Manhattan"
@@ -395,6 +395,159 @@ def test_cell_unknown_h3_is_404_not_500(client):
 def test_cell_garbage_h3_string_is_404_not_500(client):
     resp = client.get("/api/cell/not-a-real-h3-index")
     assert resp.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# LAYOUT-V3 WAVE 3 (SPEC-layout-v3.md §5.2 Option A+C): GET /api/commute --
+# a live single-destination commute for the editable getting-around region.
+# The 4-anchor bake (GET /api/cell/{h3}) is untouched; see
+# test_cell_is_fast_a_pure_lookup_not_a_live_compute above for that
+# endpoint's own unaffected latency guard.
+# ---------------------------------------------------------------------------
+
+
+def test_commute_returns_a_real_reachable_minute_value(client):
+    loc = geocode.geocode(EMPIRE_STATE)
+    h3 = cells.cell_for(loc.lat, loc.lng)
+    resp = client.get(
+        "/api/commute", params={"cell": h3, "destination": "60 West 36 St, Manhattan"}
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert set(body) == {"destination", "minutes", "reason"}
+    assert set(body["destination"]) == {"label", "lat", "lng"}
+    assert body["reason"] is None
+    assert 0 <= body["minutes"] < 15
+
+
+def test_commute_wtc_area_destination_is_close_to_the_baked_wtc_anchor(client):
+    # The load-bearing "this is the same machinery, not new routing logic"
+    # claim is proven EXACTLY, at the Python level, by test_profile.py's
+    # own test_commute_to_point_matches_the_baked_anchor_for_the_same_cell
+    # (which calls commute_to_point() with config.ANCHORS' own coordinates
+    # directly, no geocoder involved). This HTTP-level test instead checks
+    # a real, independently-geocoded WTC-area address -- necessarily a few
+    # dozen metres from the anchor's own point (confirmed live 2026-08-03:
+    # "185 Greenwich St, Manhattan" snaps to a different real station,
+    # WTC Cortlandt, than the anchor's own nearest station, WTC E01) -- so
+    # this asserts a close real value, not a bit-for-bit match, which would
+    # be a false precision claim about two genuinely different points.
+    from bearings import cellprofile
+
+    loc = geocode.geocode(EMPIRE_STATE)
+    h3 = cells.cell_for(loc.lat, loc.lng)
+    baked = cellprofile.profile_for(h3)
+    assert baked is not None
+    resp = client.get(
+        "/api/commute",
+        params={"cell": h3, "destination": "185 Greenwich St, Manhattan"},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["reason"] is None
+    assert abs(body["minutes"] - baked["transit"]["to_anchors"]["wtc"]) <= 3
+
+
+def test_commute_no_rail_connection_when_destination_is_sir_only(client):
+    loc = geocode.geocode(EMPIRE_STATE)
+    h3 = cells.cell_for(loc.lat, loc.lng)
+    resp = client.get(
+        "/api/commute",
+        params={"cell": h3, "destination": "43 Foster Rd, Staten Island"},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["minutes"] == -1
+    assert body["reason"] == "no_rail_connection"
+
+
+def test_commute_no_station_in_range_when_destination_is_far_from_transit(client):
+    loc = geocode.geocode(EMPIRE_STATE)
+    h3 = cells.cell_for(loc.lat, loc.lng)
+    resp = client.get(
+        "/api/commute",
+        params={"cell": h3, "destination": "131 Huguenot Ave, Staten Island"},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["minutes"] == -1
+    assert body["reason"] == "no_station_in_range"
+
+
+def test_commute_unknown_cell_is_404_not_500(client):
+    ocean_cell = cells.cell_for(40.40, -73.75)
+    resp = client.get(
+        "/api/commute", params={"cell": ocean_cell, "destination": "60 West 36 St, Manhattan"}
+    )
+    assert resp.status_code == 404
+
+
+def test_commute_bad_destination_is_422_not_500(client):
+    loc = geocode.geocode(EMPIRE_STATE)
+    h3 = cells.cell_for(loc.lat, loc.lng)
+    resp = client.get(
+        "/api/commute",
+        params={"cell": h3, "destination": "qqqqqqqqzzzzzzz not a real place"},
+    )
+    assert resp.status_code == 422
+    assert "detail" in resp.json()
+
+
+def test_commute_live_compute_is_fast_once_geocode_and_graph_are_warm(client):
+    # Isolates the LIVE-COMPUTE cost this endpoint actually adds (the thing
+    # SPEC-layout-v3.md Wave 3 asks to measure) from the unrelated, already-
+    # tolerated cost of geocoding a brand-new address (test_geocode_returns_
+    # a_fast_real_point above already gives that its own generous ~5s
+    # ceiling, and this endpoint reuses the exact same geocode.geocode()).
+    # Pre-warming the destination's geocode here (outside the timer) mirrors
+    # what re-selecting an ALREADY-PICKED autocomplete suggestion looks like
+    # in the real UI -- the frontend already has the resolved point from
+    # GET /api/geocode/autocomplete before it ever calls this endpoint. The
+    # process is already warm by the time TestClient's lifespan startup
+    # finished (profile.warm_caches() now eagerly builds transit.graph() --
+    # see that function's own comment), so this should land in low tens of
+    # milliseconds, matching the live measurement in this project's own
+    # Wave 3 report (0-16ms once warm); a generous 2s ceiling still catches
+    # a real regression without being flaky on slow CI/dev hardware.
+    loc = geocode.geocode(EMPIRE_STATE)
+    h3 = cells.cell_for(loc.lat, loc.lng)
+    destination = "1040B East 217 St, Bronx"
+    geocode.geocode(destination)  # warm, outside the timer
+
+    start = time.monotonic()
+    resp = client.get("/api/commute", params={"cell": h3, "destination": destination})
+    elapsed = time.monotonic() - start
+    assert resp.status_code == 200
+    assert elapsed < 2.0
+
+    # And GET /api/cell/{h3}'s own bake-only path must still be fast -- a
+    # direct regression guard that this new live-compute endpoint hasn't
+    # slowed the untouched fast path down.
+    start2 = time.monotonic()
+    resp2 = client.get(f"/api/cell/{h3}")
+    elapsed2 = time.monotonic() - start2
+    assert resp2.status_code == 200
+    assert elapsed2 < 2.0
+
+
+def test_commute_session_cache_hit_on_a_repeated_destination(client):
+    # SPEC-layout-v3.md §5.2 Option C, exercised through the real HTTP
+    # endpoint: re-requesting the identical (cell, destination) pair must
+    # not run a second Dijkstra -- a direct cache_info() check on the
+    # underlying function (deterministic, not timing-based).
+    loc = geocode.geocode(EMPIRE_STATE)
+    h3 = cells.cell_for(loc.lat, loc.lng)
+    destination = "346 East 4 St, Manhattan"
+    profile.commute_to_point.cache_clear()
+
+    resp1 = client.get("/api/commute", params={"cell": h3, "destination": destination})
+    hits_after_first = profile.commute_to_point.cache_info().hits
+    resp2 = client.get("/api/commute", params={"cell": h3, "destination": destination})
+    hits_after_second = profile.commute_to_point.cache_info().hits
+
+    assert resp1.status_code == resp2.status_code == 200
+    assert resp1.json()["minutes"] == resp2.json()["minutes"]
+    assert hits_after_second == hits_after_first + 1
 
 
 def test_geocode_returns_a_fast_real_point(client):

@@ -5,6 +5,7 @@ you how long it takes to get where you're actually going. The MTA publishes
 the timetable; this module reads it."""
 
 import math
+from functools import lru_cache
 
 import networkx as nx
 import pandas as pd
@@ -151,3 +152,78 @@ def times_from_anchors() -> dict[str, dict[str, int]]:
         out[name] = {stop: int(round(sec)) for stop, sec in lengths.items()}
 
     return out
+
+
+# ---------------------------------------------------------------------------
+# LAYOUT-V3 WAVE 3 (SPEC-layout-v3.md §5.2 Option A): live commute compute
+# for a user-typed destination the 4 curated ANCHORS above don't cover.
+# times_from_anchors() itself is untouched -- that bake stays the fast path
+# for the 4 defaults, unchanged. destination_times() below is the same
+# "snap to nearest station, reverse-Dijkstra from it" method applied to one
+# arbitrary point instead, at request time.
+# ---------------------------------------------------------------------------
+
+
+@lru_cache(maxsize=1)
+def graph() -> nx.DiGraph:
+    """The live routable graph, built once per process and memoised in
+    memory -- NOT persisted to disk the way times_from_anchors()'s own
+    anchor_times.json is (a nx.DiGraph isn't JSON-serialisable and this
+    codebase has no pickle-cache convention). Backs destination_times()
+    below. Real cost, measured live 2026-08-03 on this dev machine: ~3.3s
+    (parsing both feeds' GTFS zips, mostly stop_times.txt), paid once --
+    profile.warm_caches() calls this eagerly at process boot (api.py's
+    lifespan startup handler already blocks on warm_caches() before the
+    server opens its listening socket), so this cost lands at boot, never
+    inside a live request, matching this codebase's own established
+    "nothing pays the cold-boot cost at request time" rule for every other
+    warm_caches() cache (_pois(), _anchor_times(), etc.)."""
+    return build_graph()
+
+
+@lru_cache(maxsize=1)
+def _reverse_graph() -> nx.DiGraph:
+    """graph().reverse(copy=True), memoised the same way graph() is --
+    cheap on its own (~1,300 edges, well under a millisecond), but the
+    topology never changes within a process's lifetime, so there's no
+    reason to redo even that trivial work on every destination_times()
+    call."""
+    return graph().reverse(copy=True)
+
+
+def destination_times(lat: float, lng: float, max_snap_m: float) -> dict[str, int] | None:
+    """Real ride time from every station the live graph can reach `(lat,
+    lng)` from -- the destination-side mirror of times_from_anchors(),
+    computed live for one arbitrary point instead of the 4 curated
+    ANCHORS.
+
+    Snaps `(lat, lng)` to its single nearest real station, exactly like
+    times_from_anchors() does for each anchor -- but returns `None`
+    (never raises) when that snap exceeds `max_snap_m`, instead of
+    AnchorSnapTooFar. That exception exists to catch a DATA BUG in one of
+    the 4 curated, supposedly-well-served ANCHORS (see its own docstring);
+    a user-typed destination carries no such guarantee, so "genuinely far
+    from any station" is an honest, expected outcome here -- the caller
+    (profile.commute_to_point()) turns a `None` into the same
+    NO_STATION_IN_RANGE reason code the origin side already uses for the
+    identical fact ("no station within range").
+
+    Live-confirmed 2026-08-03 that this is safe to feed straight into
+    profile._anchor_result()'s existing NO_RAIL_CONNECTION/
+    _disconnected_stop_ids() validation with no changes there: every
+    non-SIR (Staten Island Railway) station's own reverse-Dijkstra
+    reachable set is IDENTICAL to the union of all 4 real ANCHORS' own
+    reachable sets (checked against 12 random real stations spanning every
+    borough plus PATH -- same 488-station set every time), because the
+    non-SIR half of this graph is one strongly connected component. So a
+    destination snapped to any real, connected station reproduces exactly
+    the same reachability profile._anchor_result() already trusts, with
+    no risk of a spurious UnexplainedDisconnectedStation."""
+    stop_id = _nearest_station(graph(), lat, lng)
+    d = _haversine_m(
+        (graph().nodes[stop_id]["lat"], graph().nodes[stop_id]["lng"]), (lat, lng)
+    )
+    if d > max_snap_m:
+        return None
+    lengths = nx.single_source_dijkstra_path_length(_reverse_graph(), stop_id, weight="weight")
+    return {stop: int(round(sec)) for stop, sec in lengths.items()}

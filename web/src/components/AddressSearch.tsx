@@ -1,5 +1,5 @@
-import { useEffect, useId, useRef, useState, type FormEvent } from "react";
-import { getAutocomplete } from "../api";
+import { useId, type FormEvent } from "react";
+import { useAutocomplete } from "../lib/useAutocomplete";
 import type { AutocompleteResult } from "../types";
 
 // LAYOUT-V3 WAVE 1d items 5 + 11 (2026-08-03, SPEC-layout-v3.md §8): the
@@ -14,8 +14,13 @@ import type { AutocompleteResult } from "../types";
 // form loads it as the main record; the pin button pins whatever address is
 // currently typed/selected instead, reusing the exact geocode this bar
 // already ran to show suggestions rather than a second round-trip.
-const AUTOCOMPLETE_MIN_CHARS = 3;
-const AUTOCOMPLETE_DEBOUNCE_MS = 300;
+//
+// LAYOUT-V3 WAVE 3 (2026-08-03, SPEC-layout-v3.md §5.1): the debounce/
+// generation-guard/suppression state machine below moved out to
+// lib/useAutocomplete.ts, unchanged, so the getting-around region's new
+// add-destination field can reuse it instead of building a second
+// typeahead. Pure extraction -- every test in AddressSearch.test.tsx is
+// unchanged and still green.
 
 interface AddressSearchProps {
   value: string;
@@ -46,70 +51,8 @@ export function AddressSearch({
   const errorId = useId();
   const pinErrorId = useId();
 
-  const [suggestions, setSuggestions] = useState<AutocompleteResult[]>([]);
-  const [suggestionsOpen, setSuggestionsOpen] = useState(false);
-  // Generation counter, not `AbortController` -- api.ts's `request()` has
-  // no signal support to plug one into, and this repo's own established
-  // pattern for "ignore a fetch that resolved after a newer one started"
-  // (every effect in MapView.tsx) is a plain guard variable, not a browser
-  // abort primitive. Only the LATEST keystroke's response is ever applied.
-  const requestGenRef = useRef(0);
-  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  // The value a submit/pick/pin action just consumed -- a real, live-caught
-  // bug this guards against: picking a suggestion (or submitting the typed
-  // text) changes `value` itself (via `onChange`/App.tsx's own address-input
-  // state), which re-triggers this effect and schedules a BRAND NEW
-  // autocomplete fetch for that now-complete address -- one that almost
-  // always matches, reopening the dropdown right after the user just picked
-  // or submitted it. Skipping a fetch when `value` exactly equals the last
-  // submitted value (not just invalidating an in-flight one, which
-  // `suppressAutocomplete()` below also does for the race-condition variant)
-  // closes both paths.
-  const lastSubmittedRef = useRef<string | null>(null);
-
-  useEffect(() => {
-    if (debounceRef.current) clearTimeout(debounceRef.current);
-    const trimmed = value.trim();
-    if (trimmed.length < AUTOCOMPLETE_MIN_CHARS || trimmed === lastSubmittedRef.current) {
-      setSuggestions([]);
-      setSuggestionsOpen(false);
-      return;
-    }
-    const gen = ++requestGenRef.current;
-    debounceRef.current = setTimeout(() => {
-      getAutocomplete(trimmed)
-        .then((res) => {
-          if (gen !== requestGenRef.current) return; // a newer keystroke already superseded this
-          setSuggestions(res.results);
-          setSuggestionsOpen(res.results.length > 0);
-        })
-        .catch(() => {
-          // Non-fatal: a typeahead that can't reach the API just shows no
-          // suggestions -- the form still works as a plain address search.
-          if (gen !== requestGenRef.current) return;
-          setSuggestions([]);
-          setSuggestionsOpen(false);
-        });
-    }, AUTOCOMPLETE_DEBOUNCE_MS);
-    return () => {
-      if (debounceRef.current) clearTimeout(debounceRef.current);
-    };
-  }, [value]);
-
-  // Cancels whatever autocomplete request is pending (scheduled OR already
-  // in flight) and closes the dropdown -- a real, live-caught bug this
-  // guards against: submitting the form while a debounced fetch was still
-  // in flight closed the dropdown at that instant, but the fetch's own
-  // `.then()` still resolved afterward and reopened it (nothing had
-  // invalidated its generation number, since `value` itself hadn't
-  // changed). Bumping the generation here makes that stale response a
-  // no-op regardless of when it resolves.
-  function suppressAutocomplete(consumedValue: string) {
-    if (debounceRef.current) clearTimeout(debounceRef.current);
-    requestGenRef.current++;
-    lastSubmittedRef.current = consumedValue;
-    setSuggestionsOpen(false);
-  }
+  const { suggestions, suggestionsOpen, setSuggestionsOpen, suppress: suppressAutocomplete } =
+    useAutocomplete(value);
 
   function handleSubmit(e: FormEvent) {
     e.preventDefault();

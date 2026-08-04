@@ -135,6 +135,42 @@ def test_all_six_orphaned_astoria_stations_are_reachable_from_an_anchor(times):
         assert reachable, f"{name} ({stop_id}) is unreachable from every anchor"
 
 
+# ---------------------------------------------------------------------------
+# LAYOUT-V3 WAVE 3 (SPEC-layout-v3.md §5.2 Option A): the live routable
+# graph singleton and destination_times() -- the destination-side mirror of
+# times_from_anchors(), for one arbitrary point instead of the 4 curated
+# ANCHORS.
+# ---------------------------------------------------------------------------
+
+
+def test_graph_is_memoised_across_calls():
+    a = transit.graph()
+    b = transit.graph()
+    assert a is b
+
+
+def test_destination_times_reaches_the_full_network_from_a_real_station():
+    # 14 St-Union Sq (R20) -- a real, exact station point (0m snap), so
+    # by_stop must cover the same reachable set every one of the 4 real
+    # ANCHORS already does (test_every_anchor_is_reachable above) --
+    # confirmed live 2026-08-03 that the non-SIR half of this graph is one
+    # strongly connected component, so ANY real non-SIR station's own
+    # reverse-Dijkstra reach is the identical set.
+    lat, lng = 40.734789, -73.990568
+    by_stop = transit.destination_times(lat, lng, transit.MAX_ANCHOR_SNAP_M)
+    assert by_stop is not None
+    assert len(by_stop) > 300
+
+
+def test_destination_times_none_when_nothing_within_the_snap_radius():
+    # Open ocean well off Rockaway (the same fixture point test_api.py's
+    # own test_cell_unknown_h3_is_404_not_500 uses for "no real cell here")
+    # -- the real nearest station is >21km away (confirmed live), so a
+    # generous 1200m snap radius still finds nothing.
+    by_stop = transit.destination_times(40.40, -73.75, 1200.0)
+    assert by_stop is None
+
+
 def test_farther_stations_take_longer(times):
     """Sanity: Coney Island must be farther from Midtown than Union Sq."""
     from bearings.sources import gtfs

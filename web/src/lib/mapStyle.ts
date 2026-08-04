@@ -355,6 +355,7 @@ export function buildOverlayLayers(): StyleSpecification["layers"] {
     ...buildCitywideGridLayers(),
     ...buildReachLayers(),
     ...buildTileHighlightLayers(),
+    ...buildDestinationPreviewLayers(),
   ];
 }
 
@@ -479,6 +480,57 @@ export function buildReachLayers(): StyleSpecification["layers"] {
         "circle-opacity": 0.82,
         "circle-stroke-width": 1,
         "circle-stroke-color": BONE,
+      },
+    },
+  ];
+}
+
+// LAYOUT-V3 WAVE 3 (SPEC-layout-v3.md §5.3 "Zone preview"): hovering or
+// selecting any getting-around bar (one of the 4 baked ANCHORS, or a
+// custom destination) draws the SAME straight-line 5/10/15-minute walk
+// rings buildReachLayers() already draws around a searched ADDRESS -- this
+// time centred on the DESTINATION instead, via a distinct source/layer set
+// (never overwrites "reach-rings", which stays the searched-address rings
+// regardless of what's highlighted in the getting-around region). Visually
+// identical treatment (same RED palette, same fading-outward bands) so the
+// two read as the same honest "approximate reach, not a routed shape"
+// vocabulary this app has already taught the user once. Painted LAST (see
+// buildOverlayLayers() above) -- topmost, since this is the most immediate
+// thing the user is currently pointing at.
+export function buildDestinationPreviewLayers(): StyleSpecification["layers"] {
+  return [
+    {
+      id: "destination-rings-fill",
+      type: "fill",
+      source: "destination-rings",
+      paint: {
+        "fill-color": RED,
+        "fill-opacity": ["match", ["get", "minutes"], 5, 0.26, 10, 0.17, 15, 0.1, 0.1],
+      },
+    },
+    {
+      id: "destination-rings-outline",
+      type: "line",
+      source: "destination-rings",
+      paint: {
+        "line-color": RED,
+        "line-width": 1,
+        "line-opacity": ["match", ["get", "minutes"], 5, 0.55, 10, 0.4, 15, 0.28, 0.28],
+      },
+    },
+    {
+      // The destination's own point -- without this, three faint concentric
+      // rings with no visible centre reads ambiguously; a small solid dot
+      // marks exactly where "there" is.
+      id: "destination-point",
+      type: "circle",
+      source: "destination-point",
+      paint: {
+        "circle-radius": 5,
+        "circle-color": RED,
+        "circle-opacity": 0.92,
+        "circle-stroke-width": 1.5,
+        "circle-stroke-color": INK,
       },
     },
   ];

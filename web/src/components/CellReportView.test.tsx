@@ -1,7 +1,7 @@
-import { fireEvent, render, screen, within } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { CellReportView, GettingAroundField } from "./CellReportView";
-import type { CellProfile } from "../types";
+import type { CellProfile, CommuteResult } from "../types";
 
 // Real shapes, live-captured 2026-07-18 from `bearings.cellprofile.
 // profile_for()` against the real, currently-baked shard data -- per this
@@ -286,5 +286,173 @@ describe("CellReportView -- onTileHighlight wiring (item 4)", () => {
     expect(screen.getByRole("region")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /− details/i }));
     expect(screen.queryByRole("region")).not.toBeInTheDocument();
+  });
+});
+
+// LAYOUT-V3 WAVE 3 (2026-08-03, SPEC-layout-v3.md §5): editable getting-
+// around destinations. `stubCommuteFetch()` mirrors AddressSearch.test.tsx's
+// own `stubFetch()` convention exactly (real endpoint URL matching, real
+// FastAPI-shaped 200/422 bodies), and every "reachable" fixture value below
+// is a REAL number captured live against GET /api/commute during this
+// wave's own implementation (see the project's Wave 3 report) -- fabricated
+// only in the sense that a live network call in a jsdom unit test would
+// itself be the wrong kind of test double (this project's "no mocking"
+// discipline applies to backend/data-source calls; a component test still
+// stubs `fetch`, matching the whole rest of this file's own convention for
+// component-level coverage, e.g. AddressSearch.test.tsx).
+const COMMUTE_RESULT: CommuteResult = {
+  destination: { label: "60 West 36 St, New York, NY, USA", lat: 40.750732, lng: -73.98484 },
+  minutes: 7,
+  reason: null,
+};
+
+const COMMUTE_UNREACHABLE: CommuteResult = {
+  destination: { label: "131 Huguenot Ave, Staten Island, NY, USA", lat: 40.522, lng: -74.213 },
+  minutes: -1,
+  reason: "no_station_in_range",
+};
+
+function stubCommuteFetch(overrides?: { fails?: boolean; result?: CommuteResult }) {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn((url: string) => {
+      if (url.includes("/api/geocode/autocomplete")) {
+        return Promise.resolve(new Response(JSON.stringify({ results: [] }), { status: 200 }));
+      }
+      if (url.includes("/api/commute")) {
+        if (overrides?.fails) {
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({ detail: "We couldn't find that address in New York City." }),
+              { status: 422 },
+            ),
+          );
+        }
+        return Promise.resolve(new Response(JSON.stringify(overrides?.result ?? COMMUTE_RESULT), { status: 200 }));
+      }
+      return Promise.reject(new Error(`unexpected fetch: ${url}`));
+    }),
+  );
+}
+
+function addViaField(query: string) {
+  const input = screen.getByLabelText(/add a destination/i);
+  fireEvent.change(input, { target: { value: query } });
+  fireEvent.click(screen.getByRole("button", { name: /^\+ add$/i }));
+}
+
+describe("GettingAroundField -- Wave 3 editable destinations", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("deleting a default anchor removes it from view, others stay, and the baked minute values are untouched", () => {
+    render(<GettingAroundField cell={CONTROL_CELL} />);
+    expect(screen.getByText("Newport, NJ (PATH)")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /remove newport, nj \(path\) from this list/i }));
+    expect(screen.queryByText("Newport, NJ (PATH)")).not.toBeInTheDocument();
+    expect(screen.getByText("Midtown")).toBeInTheDocument();
+    expect(screen.getByText("10 min")).toBeInTheDocument(); // midtown's own baked value, unaffected
+  });
+
+  it("hovering a default anchor reports its real coordinates up, and null once the cursor leaves", () => {
+    const onDestinationHighlight = vi.fn();
+    render(<GettingAroundField cell={CONTROL_CELL} onDestinationHighlight={onDestinationHighlight} />);
+    const row = screen.getByText("Midtown").closest('[role="button"]') as HTMLElement;
+    fireEvent.mouseEnter(row);
+    expect(onDestinationHighlight).toHaveBeenLastCalledWith({ lat: 40.7549, lng: -73.984 });
+    fireEvent.mouseLeave(row);
+    expect(onDestinationHighlight).toHaveBeenLastCalledWith(null);
+  });
+
+  it("clicking a default anchor selects it (the preview persists after the cursor leaves); clicking again deselects", () => {
+    const onDestinationHighlight = vi.fn();
+    render(<GettingAroundField cell={CONTROL_CELL} onDestinationHighlight={onDestinationHighlight} />);
+    const row = screen.getByText("Midtown").closest('[role="button"]') as HTMLElement;
+    fireEvent.click(row);
+    expect(row).toHaveAttribute("aria-pressed", "true");
+    expect(onDestinationHighlight).toHaveBeenLastCalledWith({ lat: 40.7549, lng: -73.984 });
+    fireEvent.click(row);
+    expect(row).toHaveAttribute("aria-pressed", "false");
+    expect(onDestinationHighlight).toHaveBeenLastCalledWith(null);
+  });
+
+  it("adding a destination calls GET /api/commute and renders a real computed minute value, never a placeholder", async () => {
+    stubCommuteFetch();
+    render(<GettingAroundField cell={CONTROL_CELL} />);
+    addViaField("60 West 36 St, Manhattan");
+    expect(await screen.findByText("7 min")).toBeInTheDocument();
+    expect(screen.getByText(COMMUTE_RESULT.destination.label)).toBeInTheDocument();
+    expect(fetch).toHaveBeenCalledWith(
+      expect.stringContaining(`/api/commute?cell=${CONTROL_CELL.h3}`),
+      expect.anything(),
+    );
+  });
+
+  it("an unreachable custom destination shows the real reason, never a fabricated minute value", async () => {
+    stubCommuteFetch({ result: COMMUTE_UNREACHABLE });
+    render(<GettingAroundField cell={CONTROL_CELL} />);
+    addViaField("131 Huguenot Ave, Staten Island");
+    expect(await screen.findByText("no station nearby")).toBeInTheDocument();
+    expect(screen.queryByText("-1 min")).not.toBeInTheDocument();
+    // The distinct-reasons "why" paragraph picks up a custom destination's
+    // reason too, not just the 4 defaults'.
+    expect(screen.getByText(/about a 15-minute walk/)).toBeInTheDocument();
+  });
+
+  it("a failed commute lookup shows a real error, not a silently swallowed failure", async () => {
+    stubCommuteFetch({ fails: true });
+    render(<GettingAroundField cell={CONTROL_CELL} />);
+    addViaField("qqqqqqqqzzzzzzz not a real place");
+    expect(await screen.findByText("We couldn't find that address in New York City.")).toBeInTheDocument();
+  });
+
+  it("deleting a custom destination removes it from view", async () => {
+    stubCommuteFetch();
+    render(<GettingAroundField cell={CONTROL_CELL} />);
+    addViaField("60 West 36 St, Manhattan");
+    await screen.findByText("7 min");
+    fireEvent.click(
+      screen.getByRole("button", { name: new RegExp(`remove ${COMMUTE_RESULT.destination.label}`, "i") }),
+    );
+    expect(screen.queryByText("7 min")).not.toBeInTheDocument();
+  });
+
+  it("hovering/selecting a custom destination reports its real resolved point, not the query text", async () => {
+    stubCommuteFetch();
+    const onDestinationHighlight = vi.fn();
+    render(<GettingAroundField cell={CONTROL_CELL} onDestinationHighlight={onDestinationHighlight} />);
+    addViaField("60 West 36 St, Manhattan");
+    await screen.findByText("7 min");
+    const row = screen.getByText(COMMUTE_RESULT.destination.label).closest('[role="button"]') as HTMLElement;
+    fireEvent.mouseEnter(row);
+    expect(onDestinationHighlight).toHaveBeenLastCalledWith({
+      lat: COMMUTE_RESULT.destination.lat,
+      lng: COMMUTE_RESULT.destination.lng,
+    });
+  });
+
+  it("changing the origin cell recomputes every custom destination's commute for the new cell (SPEC-layout-v3.md §5.2)", async () => {
+    stubCommuteFetch();
+    const { rerender } = render(<GettingAroundField cell={CONTROL_CELL} />);
+    addViaField("60 West 36 St, Manhattan");
+    await screen.findByText("7 min");
+
+    const callsBefore = (fetch as ReturnType<typeof vi.fn>).mock.calls.filter((c) =>
+      String(c[0]).includes("/api/commute"),
+    ).length;
+
+    rerender(<GettingAroundField cell={SIR_CELL} />);
+
+    await waitFor(() => {
+      const callsAfter = (fetch as ReturnType<typeof vi.fn>).mock.calls.filter((c) =>
+        String(c[0]).includes("/api/commute"),
+      ).length;
+      expect(callsAfter).toBeGreaterThan(callsBefore);
+    });
+    const commuteUrls = (fetch as ReturnType<typeof vi.fn>).mock.calls
+      .map((c) => String(c[0]))
+      .filter((u) => u.includes("/api/commute"));
+    expect(commuteUrls.some((u) => u.includes(`cell=${SIR_CELL.h3}`))).toBe(true);
   });
 });

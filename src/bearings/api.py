@@ -222,6 +222,48 @@ def get_cell(h3: str) -> dict:
     return prof
 
 
+@app.get("/api/commute")
+def get_commute(
+    cell: str = Query(..., min_length=1),
+    destination: str = Query(..., min_length=1),
+) -> dict:
+    """A live single-destination commute time from `cell`'s own centroid to
+    a user-typed destination -- SPEC-layout-v3.md Wave 3's editable
+    getting-around row. This is a NEW call site for the exact machinery the
+    4 baked ANCHORS already use (profile.commute_to_point(), which shares
+    profile._anchor_result() with cellprofile.py's own bake -- confirmed
+    live 2026-08-03 to reproduce an already-baked cell's own to_anchors[...]
+    value exactly when given one of the 4 real config.ANCHORS' own
+    coordinates), not new routing logic. GET /api/cell/{h3}'s 4-anchor bake
+    is completely untouched by this endpoint -- see this project's Wave 3
+    report for the measured live latency this adds (fast once
+    profile.warm_caches() has run: the expensive part, building the live
+    transit graph, is paid once at boot, not per request) and for the
+    session-scoped cache (profile.commute_to_point() itself, keyed on
+    (cell, resolved destination point)) that makes re-selecting the same
+    custom destination a cache hit rather than a second Dijkstra run.
+
+    404s if `cell` isn't one of this build's real H3 cells, matching
+    GET /api/cell/{h3}'s own guard -- never guesses a centroid for a cell
+    this build never baked. 422s on a `destination` this codebase can't
+    geocode, same GeocodeError handling as every other geocoding endpoint
+    above.
+    """
+    if cellprofile.profile_for(cell) is None:
+        raise HTTPException(status_code=404, detail=f"no baked profile for cell {cell!r}")
+    try:
+        loc = geocode.geocode(destination)
+    except geocode.GeocodeError as e:
+        logger.info("geocode failed: %s", e)
+        raise HTTPException(status_code=422, detail=e.user_message) from e
+    minutes, reason = profile.commute_to_point(cell, loc.lat, loc.lng)
+    return {
+        "destination": {"label": loc.label, "lat": loc.lat, "lng": loc.lng},
+        "minutes": minutes,
+        "reason": reason,
+    }
+
+
 @app.get("/api/geocode")
 def get_geocode(address: str = Query(..., min_length=1)) -> dict:
     """Address -> point, fast. Deliberately does NOT reuse /api/map or

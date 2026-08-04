@@ -1,7 +1,10 @@
-import { useEffect, useState } from "react";
+import { useEffect, useId, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
+import { ApiError, getCommute } from "../api";
+import { ANCHOR_COORDS } from "../lib/anchors";
 import { crimeRelativeLabel, formatPercentile } from "../lib/crime";
 import { unreachableReasonSentence, unreachableReasonShortLabel } from "../lib/transit";
-import type { CellProfile, UnreachableReason } from "../types";
+import { useAutocomplete } from "../lib/useAutocomplete";
+import type { AutocompleteResult, CellProfile, UnreachableReason } from "../types";
 import { SourceTag } from "./SourceTag";
 import { Stamp } from "./Stamp";
 import { Stat } from "./Stat";
@@ -74,31 +77,339 @@ const ANCHOR_LABELS: Record<keyof CellProfile["transit"]["to_anchors"], string> 
 // independently editable.
 const BAR_SCALE_MAX_MIN = 60;
 
+type AnchorKey = keyof CellProfile["transit"]["to_anchors"];
+
+// LAYOUT-V3 WAVE 3 (2026-08-03, SPEC-layout-v3.md §5.1): one live-computed
+// custom destination row -- added via the debounced autocomplete field
+// below, backed by GET /api/commute (bearings/api.py's get_commute(),
+// which shares profile._anchor_result() with the 4 baked ANCHORS -- see
+// that endpoint's own docstring). `lat`/`lng`/`minutes`/`reason` are
+// `null` only while the very first fetch for this row is in flight --
+// never a placeholder value; a genuinely unreachable destination gets a
+// real `minutes: -1` + a real `reason`, matching the 4 defaults' own
+// contract exactly (types.ts's ToAnchors/UnreachableReasons).
+interface CustomDestination {
+  id: string;
+  /** The exact string re-sent to GET /api/commute on every cell change --
+   * either a picked autocomplete suggestion's own label, or free-typed
+   * text submitted directly (mirrors AddressSearch.tsx's own dual submit
+   * path: pick a suggestion, or just hit enter on typed text). */
+  query: string;
+  label: string;
+  lat: number | null;
+  lng: number | null;
+  minutes: number | null;
+  reason: UnreachableReason | null;
+  loading: boolean;
+  error: string | null;
+}
+
+function newDestinationId(): string {
+  return `dest-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
+// LAYOUT-V3 WAVE 3 item: the add-destination field -- reuses
+// lib/useAutocomplete.ts (the exact debounce/suggestion machinery
+// AddressSearch.tsx's own search bar already established), per SPEC-
+// layout-v3.md §5.1's explicit "reuse it... don't build a second
+// typeahead" instruction. A separate component (not inlined into
+// GettingAroundField) purely so its own `value` state doesn't force the
+// whole getting-around field to re-render on every keystroke.
+function AddDestinationField({ onAdd }: { onAdd: (query: string) => void }) {
+  const [value, setValue] = useState("");
+  const inputId = useId();
+  const { suggestions, suggestionsOpen, setSuggestionsOpen, suppress } = useAutocomplete(value);
+
+  function submit(query: string) {
+    const trimmed = query.trim();
+    if (!trimmed) return;
+    onAdd(trimmed);
+    suppress(trimmed);
+    setValue("");
+  }
+
+  function handleSubmit(e: FormEvent) {
+    e.preventDefault();
+    submit(value);
+  }
+
+  function pick(s: AutocompleteResult) {
+    submit(s.label);
+  }
+
+  return (
+    <form className="anchors__add" onSubmit={handleSubmit} role="search">
+      <label className="sr-only" htmlFor={inputId}>
+        Add a destination
+      </label>
+      <div className="anchors__addfield">
+        <input
+          id={inputId}
+          type="text"
+          inputMode="text"
+          autoComplete="off"
+          spellCheck={false}
+          placeholder="Add a destination — an office, a gym, a friend's place"
+          value={value}
+          onChange={(e) => setValue(e.target.value)}
+          onFocus={() => setSuggestionsOpen(suggestions.length > 0)}
+          onBlur={() => {
+            // Same short-delay reasoning as AddressSearch.tsx's own input --
+            // otherwise blur fires before a suggestion's onClick registers.
+            window.setTimeout(() => setSuggestionsOpen(false), 150);
+          }}
+          role="combobox"
+          aria-expanded={suggestionsOpen}
+          aria-controls={`${inputId}-suggestions`}
+          aria-autocomplete="list"
+        />
+        <button type="submit" disabled={value.trim().length === 0}>
+          + add
+        </button>
+      </div>
+      {suggestionsOpen && (
+        <ul className="anchors__suggestions" id={`${inputId}-suggestions`} role="listbox">
+          {suggestions.map((s) => (
+            <li key={`${s.label}-${s.lat}-${s.lng}`}>
+              <button
+                type="button"
+                className="anchors__suggestion"
+                role="option"
+                aria-selected={false}
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => pick(s)}
+              >
+                {s.label}
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </form>
+  );
+}
+
 // "Getting around" -- the one transit field, rendered below the map, full
 // width (SPEC-layout-v3.md §3/§5: moved out of the side panel deliberately,
-// since it's about to grow editable destination rows in a later wave that
-// need real width, not a narrow column).
-export function GettingAroundField({ cell }: { cell: CellProfile }) {
-  const anchorEntries = Object.entries(cell.transit.to_anchors) as [
-    keyof CellProfile["transit"]["to_anchors"],
-    number,
-  ][];
+// since it grows editable destination rows in Wave 3, which need real
+// width, not a narrow column).
+//
+// LAYOUT-V3 WAVE 3 (2026-08-03, SPEC-layout-v3.md §5): the 4 baked ANCHORS
+// stay on their existing fast path (cell.transit.to_anchors, a pure baked-
+// JSON field -- untouched by anything below) and are now individually
+// removable from VIEW ("deletable from view is fine — but their baked data
+// path stays" per the dispatch); users can also add live-computed custom
+// destinations (GET /api/commute) and remove those too. Hovering or
+// clicking any bar (default or custom) reports its real point up via
+// `onDestinationHighlight`, which MapView.tsx turns into a straight-line
+// zone preview (SPEC-layout-v3.md §5.3) -- see that prop's own comment.
+export function GettingAroundField({
+  cell,
+  onDestinationHighlight,
+}: {
+  cell: CellProfile;
+  onDestinationHighlight?: (point: { lat: number; lng: number } | null) => void;
+}) {
+  const anchorEntries = Object.entries(cell.transit.to_anchors) as [AnchorKey, number][];
 
-  // Every anchor that failed carries its own real reason (see
-  // web/src/types.ts's UnreachableReasons) -- collapse to the DISTINCT
-  // reasons actually present so a shared cause (today, every failing cell
-  // fails all four anchors for the same reason -- see the 2026-07-18
-  // no-route-copy-split report) only prints one explanation, not four
-  // identical ones. Still correct if that ever stops being true: a future
-  // cell with a genuine per-anchor split would print one sentence per
-  // distinct reason, not silently drop one.
+  // Anchors hidden from view (Wave 3's "deletable from view" -- the baked
+  // to_anchors data itself is never touched, only what's rendered here).
+  // Deliberately session-scoped, NOT reset when `cell` changes -- hiding
+  // "Newport, NJ (PATH)" is a preference about what the user wants to see
+  // across every block they browse, not a fact about one specific block.
+  const [hiddenAnchors, setHiddenAnchors] = useState<Set<AnchorKey>>(new Set());
+  const [customDestinations, setCustomDestinations] = useState<CustomDestination[]>([]);
+  // Same session-scoped reasoning as hiddenAnchors -- a user's added
+  // destinations (and which one they're currently looking at) survive a
+  // cell swap; only the computed MINUTES for each one are recomputed per
+  // cell (see the recompute effect below).
+  const [hoveredKey, setHoveredKey] = useState<string | null>(null);
+  const [selectedKey, setSelectedKey] = useState<string | null>(null);
+
+  // Always-current ref -- the recompute effect below fires on `cell.h3`
+  // alone (never `customDestinations`, or adding a destination on the SAME
+  // cell would immediately re-trigger it in a loop); it needs whichever
+  // destinations exist AT THE MOMENT the cell actually changes, which this
+  // ref (updated on every render) always holds. Same "stale closure"
+  // reasoning MapView.tsx's own onCellClickRef/geoRef already document.
+  const customDestinationsRef = useRef<CustomDestination[]>(customDestinations);
+  customDestinationsRef.current = customDestinations;
+
+  const visibleAnchorEntries = anchorEntries.filter(([key]) => !hiddenAnchors.has(key));
+
+  // Every anchor OR custom destination that failed carries its own real
+  // reason (web/src/types.ts's UnreachableReason) -- collapse to the
+  // DISTINCT reasons actually present among what's currently VISIBLE, so a
+  // shared cause only prints one explanation, not one per row (matches the
+  // pre-Wave-3 behaviour for the 4 defaults exactly; extended here to
+  // custom rows using the identical reason codes, never a fabricated third
+  // one -- see profile.commute_to_point()'s own docstring for the one
+  // known, honestly-flagged asymmetry this reuse creates).
   const distinctUnreachableReasons = Array.from(
     new Set(
-      anchorEntries
-        .map(([key]) => cell.transit.unreachable_reason[key])
-        .filter((reason): reason is UnreachableReason => reason !== null)
+      [
+        ...visibleAnchorEntries.map(([key]) => cell.transit.unreachable_reason[key]),
+        ...customDestinations.map((d) => d.reason),
+      ].filter((reason): reason is UnreachableReason => reason !== null)
     )
   );
+
+  // LAYOUT-V3 WAVE 3 (SPEC-layout-v3.md §5.2 Option A+C): fetch a fresh
+  // commute for every existing custom destination whenever the ORIGIN cell
+  // changes -- the minute values are per-(cell, destination), so a new
+  // cell genuinely needs a new number. GET /api/commute's own session
+  // cache (profile.commute_to_point(), keyed on (cell, resolved point))
+  // makes re-visiting an already-seen cell for the same destination a
+  // cache hit rather than a second Dijkstra run. Skips entirely on first
+  // mount (nothing to recompute yet) and whenever there are no custom
+  // rows at all.
+  useEffect(() => {
+    const current = customDestinationsRef.current;
+    if (current.length === 0) return;
+    let cancelled = false;
+    const ids = current.map((d) => d.id);
+    setCustomDestinations((prev) =>
+      prev.map((d) => (ids.includes(d.id) ? { ...d, loading: true, error: null } : d)),
+    );
+    Promise.all(
+      current.map((d) =>
+        getCommute(cell.h3, d.query)
+          .then((result) => ({ id: d.id, result, error: null as string | null }))
+          .catch((e: unknown) => ({
+            id: d.id,
+            result: null,
+            error: e instanceof ApiError ? e.message : "Something went wrong finding that destination.",
+          })),
+      ),
+    ).then((outcomes) => {
+      if (cancelled) return;
+      setCustomDestinations((prev) =>
+        prev.map((d) => {
+          const outcome = outcomes.find((o) => o.id === d.id);
+          if (!outcome) return d;
+          if (outcome.result) {
+            return {
+              ...d,
+              label: outcome.result.destination.label,
+              lat: outcome.result.destination.lat,
+              lng: outcome.result.destination.lng,
+              minutes: outcome.result.minutes,
+              reason: outcome.result.reason,
+              loading: false,
+              error: null,
+            };
+          }
+          return { ...d, loading: false, error: outcome.error };
+        }),
+      );
+    });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cell.h3]);
+
+  function addDestination(query: string) {
+    const id = newDestinationId();
+    setCustomDestinations((prev) => [
+      ...prev,
+      { id, query, label: query, lat: null, lng: null, minutes: null, reason: null, loading: true, error: null },
+    ]);
+    getCommute(cell.h3, query)
+      .then((result) => {
+        setCustomDestinations((prev) =>
+          prev.map((d) =>
+            d.id === id
+              ? {
+                  ...d,
+                  label: result.destination.label,
+                  lat: result.destination.lat,
+                  lng: result.destination.lng,
+                  minutes: result.minutes,
+                  reason: result.reason,
+                  loading: false,
+                  error: null,
+                }
+              : d,
+          ),
+        );
+      })
+      .catch((e: unknown) => {
+        setCustomDestinations((prev) =>
+          prev.map((d) =>
+            d.id === id
+              ? {
+                  ...d,
+                  loading: false,
+                  error: e instanceof ApiError ? e.message : "Something went wrong finding that destination.",
+                }
+              : d,
+          ),
+        );
+      });
+  }
+
+  function removeDestination(id: string) {
+    setCustomDestinations((prev) => prev.filter((d) => d.id !== id));
+    setHoveredKey((prev) => (prev === id ? null : prev));
+    setSelectedKey((prev) => (prev === id ? null : prev));
+  }
+
+  function hideAnchor(key: AnchorKey) {
+    setHiddenAnchors((prev) => new Set(prev).add(key));
+    setHoveredKey((prev) => (prev === key ? null : prev));
+    setSelectedKey((prev) => (prev === key ? null : prev));
+  }
+
+  // LAYOUT-V3 WAVE 3 (SPEC-layout-v3.md §5.3): reports the currently
+  // hovered-or-selected bar's real point up to MapView, whichever is
+  // active (hover wins while it's live, matching CellReportView's own
+  // established `hoveredKey ?? ...` precedent for tiles -- but see item
+  // 13's own comment on WHY that fallback was removed there: unlike a
+  // tile's map highlight, a "selected" bar here has its own persistent,
+  // visible on-row state (`.anchor--selected`), so it does not recreate
+  // the "stuck at rest with no visible cause" bug that fix addressed).
+  const activeKey = hoveredKey ?? selectedKey;
+  useEffect(() => {
+    if (!onDestinationHighlight) return;
+    if (!activeKey) {
+      onDestinationHighlight(null);
+      return;
+    }
+    const anchorPoint = ANCHOR_COORDS[activeKey as AnchorKey];
+    if (anchorPoint) {
+      onDestinationHighlight(anchorPoint);
+      return;
+    }
+    const custom = customDestinations.find((d) => d.id === activeKey);
+    if (custom && custom.lat !== null && custom.lng !== null) {
+      onDestinationHighlight({ lat: custom.lat, lng: custom.lng });
+    } else {
+      onDestinationHighlight(null);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeKey, customDestinations]);
+
+  useEffect(() => {
+    return () => {
+      onDestinationHighlight?.(null);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  function rowHandlers(key: string) {
+    return {
+      onMouseEnter: () => setHoveredKey(key),
+      onMouseLeave: () => setHoveredKey((prev) => (prev === key ? null : prev)),
+      onClick: () => setSelectedKey((prev) => (prev === key ? null : key)),
+      onKeyDown: (e: KeyboardEvent) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          setSelectedKey((prev) => (prev === key ? null : key));
+        }
+      },
+    };
+  }
 
   return (
     <div className="fields">
@@ -121,12 +432,20 @@ export function GettingAroundField({ cell }: { cell: CellProfile }) {
 
         <div className="anchors">
           <p className="anchors__label">Ride time to —</p>
-          {anchorEntries.map(([key, minutes]) => {
+          {visibleAnchorEntries.map(([key, minutes]) => {
             const reachable = minutes >= 0;
             const pct = reachable ? Math.min(100, (minutes / BAR_SCALE_MAX_MIN) * 100) : 0;
             const reason = cell.transit.unreachable_reason[key];
+            const selected = selectedKey === key;
             return (
-              <div className="anchor" key={key}>
+              <div
+                className={`anchor${selected ? " anchor--selected" : ""}`}
+                key={key}
+                role="button"
+                tabIndex={0}
+                aria-pressed={selected}
+                {...rowHandlers(key)}
+              >
                 <span className="anchor__label">{ANCHOR_LABELS[key]}</span>
                 <span className="anchor__track">
                   {reachable ? <span className="anchor__fill" style={{ width: `${pct}%` }} /> : null}
@@ -134,10 +453,70 @@ export function GettingAroundField({ cell }: { cell: CellProfile }) {
                 <span className={`anchor__value${reachable ? "" : " anchor__value--nodata"}`}>
                   {reachable ? `${minutes} min` : unreachableReasonShortLabel(reason as UnreachableReason)}
                 </span>
+                <button
+                  type="button"
+                  className="anchor__delete"
+                  aria-label={`Remove ${ANCHOR_LABELS[key]} from this list`}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    hideAnchor(key);
+                  }}
+                >
+                  ×
+                </button>
+              </div>
+            );
+          })}
+
+          {customDestinations.map((d) => {
+            const reachable = d.minutes !== null && d.minutes >= 0;
+            const pct = reachable ? Math.min(100, ((d.minutes as number) / BAR_SCALE_MAX_MIN) * 100) : 0;
+            const selected = selectedKey === d.id;
+            return (
+              <div
+                className={`anchor anchor--custom${selected ? " anchor--selected" : ""}`}
+                key={d.id}
+                role="button"
+                tabIndex={0}
+                aria-pressed={selected}
+                {...rowHandlers(d.id)}
+              >
+                <span className="anchor__label">{d.label}</span>
+                <span className="anchor__track">
+                  {reachable ? <span className="anchor__fill" style={{ width: `${pct}%` }} /> : null}
+                </span>
+                <span className={`anchor__value${reachable ? "" : " anchor__value--nodata"}`}>
+                  {d.loading
+                    ? "computing…"
+                    : d.error
+                      ? "error"
+                      : reachable
+                        ? `${d.minutes} min`
+                        : unreachableReasonShortLabel(d.reason as UnreachableReason)}
+                </span>
+                <button
+                  type="button"
+                  className="anchor__delete"
+                  aria-label={`Remove ${d.label} from this list`}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    removeDestination(d.id);
+                  }}
+                >
+                  ×
+                </button>
               </div>
             );
           })}
         </div>
+
+        {customDestinations.some((d) => d.error) && (
+          <p className="anchor__error" role="alert">
+            {customDestinations.find((d) => d.error)?.error}
+          </p>
+        )}
+
+        <AddDestinationField onAdd={addDestination} />
 
         {distinctUnreachableReasons.length > 0 && (
           <p className="field__caveat mono">
@@ -149,8 +528,8 @@ export function GettingAroundField({ cell }: { cell: CellProfile }) {
         )}
 
         <p className="field__provenance">
-          Real MTA/PATH schedules · weekday 8am departure · fastest route to four key
-          destinations in the city.
+          Real MTA/PATH schedules · weekday 8am departure · fastest route to every destination in
+          this list, default or added.
           <br />
           <SourceTag source={cell.transit.source} />
         </p>

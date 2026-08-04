@@ -82,6 +82,90 @@ def test_finds_nearby_stations(empire_state):
     assert stations[0]["routes"]
 
 
+# ---------------------------------------------------------------------------
+# LAYOUT-V3 WAVE 3 (SPEC-layout-v3.md §5.2 Option A+C): commute_to_point(),
+# the live single-destination commute the editable getting-around region
+# calls for a custom row. The 4 baked ANCHORS (cellprofile.py's bake, served
+# by GET /api/cell/{h3}) are completely untouched by any of this -- these
+# tests instead prove the NEW live path reproduces an already-baked cell's
+# own numbers exactly when pointed at a real ANCHOR's own coordinates, which
+# is the load-bearing "this is the same machinery, not new routing logic"
+# claim SPEC-layout-v3.md §5.2 Option A makes.
+# ---------------------------------------------------------------------------
+from bearings import cellprofile, cells, config, transit  # noqa: E402
+
+
+def test_commute_to_point_matches_the_baked_anchor_for_the_same_cell(empire_state):
+    # Empire State's own cell, live-confirmed 2026-08-03 baked to
+    # {"midtown": 4, "wtc": 14, "downtown_brooklyn": 16, "newport_path": 17},
+    # every reason None. commute_to_point() given one of the 4 real
+    # config.ANCHORS' own coordinates for THIS SAME cell must reproduce
+    # each value exactly -- proving the origin-side candidate search and
+    # the destination-side Dijkstra both land on the identical answer the
+    # citywide bake already computed with the same underlying machinery.
+    cell = cells.cell_for(empire_state["location"]["lat"], empire_state["location"]["lng"])
+    baked = cellprofile.profile_for(cell)
+    assert baked is not None
+    for name, (lat, lng) in config.ANCHORS.items():
+        minutes, reason = profile.commute_to_point(cell, lat, lng)
+        assert (minutes, reason) == (
+            baked["transit"]["to_anchors"][name],
+            baked["transit"]["unreachable_reason"][name],
+        )
+
+
+def test_commute_to_point_real_reachable_custom_destination(empire_state):
+    # 60 West 36 St, Manhattan -- a real, close, reachable address (not one
+    # of the 4 curated ANCHORS) -- a genuine custom destination must return
+    # a real, non-fabricated minute value, never a placeholder.
+    cell = cells.cell_for(empire_state["location"]["lat"], empire_state["location"]["lng"])
+    dest = profile.geocode.geocode("60 West 36 St, Manhattan")
+    minutes, reason = profile.commute_to_point(cell, dest.lat, dest.lng)
+    assert reason is None
+    assert 0 <= minutes < 15
+
+
+def test_commute_to_point_no_rail_connection_when_destination_is_sir_only(empire_state):
+    # 43 Foster Rd, Staten Island -- confirmed live 2026-07-18 (test_profile
+    # .py's own test_no_rail_connection_at_a_real_staten_island_railway_
+    # address) to have only Staten Island Railway stations nearby.
+    # commute_to_point() only ever checked this on the ORIGIN side before
+    # Wave 3 -- this is the new destination-side case: a real address whose
+    # nearest real station is a real, in-range SIR stop with no rail path
+    # to the rest of the network.
+    cell = cells.cell_for(empire_state["location"]["lat"], empire_state["location"]["lng"])
+    dest = profile.geocode.geocode("43 Foster Rd, Staten Island")
+    minutes, reason = profile.commute_to_point(cell, dest.lat, dest.lng)
+    assert (minutes, reason) == (-1, "no_rail_connection")
+
+
+def test_commute_to_point_no_station_in_range_when_destination_is_far_from_transit(empire_state):
+    # 131 Huguenot Ave, Staten Island -- confirmed live 2026-07-18 to have
+    # no subway/PATH station of any kind within STATION_SEARCH_M. This is
+    # the destination-side mirror of test_no_station_in_range_at_a_real_
+    # staten_island_address above (which checks the ORIGIN side).
+    cell = cells.cell_for(empire_state["location"]["lat"], empire_state["location"]["lng"])
+    dest = profile.geocode.geocode("131 Huguenot Ave, Staten Island")
+    minutes, reason = profile.commute_to_point(cell, dest.lat, dest.lng)
+    assert (minutes, reason) == (-1, "no_station_in_range")
+
+
+def test_commute_to_point_is_session_cached_a_repeat_call_is_a_cache_hit(empire_state):
+    # SPEC-layout-v3.md §5.2 Option C: re-selecting the same custom
+    # destination for the same cell must not re-run Dijkstra. A direct
+    # cache_info() check -- deterministic, not a timing-based (and
+    # therefore flaky) assertion.
+    cell = cells.cell_for(empire_state["location"]["lat"], empire_state["location"]["lng"])
+    dest = profile.geocode.geocode("346 East 4 St, Manhattan")
+    profile.commute_to_point.cache_clear()
+    first = profile.commute_to_point(cell, dest.lat, dest.lng)
+    hits_after_first = profile.commute_to_point.cache_info().hits
+    second = profile.commute_to_point(cell, dest.lat, dest.lng)
+    hits_after_second = profile.commute_to_point.cache_info().hits
+    assert first == second
+    assert hits_after_second == hits_after_first + 1
+
+
 def test_midtown_is_dense_with_amenities(empire_state):
     a = empire_state["amenities"]
     assert a["restaurant"] > 10

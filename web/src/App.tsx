@@ -73,6 +73,16 @@ export default function App() {
   // click has no located amenity data to highlight).
   const [highlightedTile, setHighlightedTile] = useState<TileHighlightKey | null>(null);
 
+  // LAYOUT-V3 WAVE 3 (2026-08-03, SPEC-layout-v3.md §5.3): whichever
+  // getting-around destination (a default anchor or a custom row) is
+  // currently hovered/selected -- GettingAroundField owns that interaction
+  // state itself and reports just the resolved point up, mirroring
+  // highlightedTile/onTileHighlight's own "child owns it, parent relays a
+  // value to MapView" shape.
+  const [destinationHighlight, setDestinationHighlight] = useState<{ lat: number; lng: number } | null>(
+    null,
+  );
+
   function toggleCategory(key: string) {
     setActiveCategories((prev) => {
       const next = new Set(prev);
@@ -284,6 +294,7 @@ export default function App() {
                 pins={pins}
                 highlightedTile={highlightedTile}
                 crimePrecinct={cellReport?.safety.precinct ?? null}
+                destinationHighlight={destinationHighlight}
               />
 
               <aside className="sidepanel" aria-label="Block record">
@@ -304,7 +315,7 @@ export default function App() {
 
             {cellReport && (
               <>
-                <GettingAroundField cell={cellReport} />
+                <GettingAroundField cell={cellReport} onDestinationHighlight={setDestinationHighlight} />
 
                 {searchedAddress && (
                   <FactCheckView

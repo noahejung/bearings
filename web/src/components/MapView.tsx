@@ -224,6 +224,78 @@ function reachDotsGeoJSON(reach: Reach, activeCategories: Set<string>): FeatureC
 
 const EMPTY_FC: FeatureCollection = { type: "FeatureCollection", features: [] };
 
+// LAYOUT-V3 WAVE 3 (SPEC-layout-v3.md §5.3 "Zone preview") -- hovering or
+// selecting any getting-around bar (a default ANCHOR or a custom
+// destination) draws the SAME straight-line 5/10/15-minute walk rings
+// reach.py's own band_radius_m()/_ring_polygon() already compute for the
+// searched-address rings above, this time centred on the DESTINATION.
+// Recomputed here, client-side, rather than fetched from a new backend
+// endpoint -- this is pure circle trigonometry with no data dependency (no
+// places/stations lookup, unlike the real /api/reach rings), so a network
+// round-trip on every hover would add real latency for zero real benefit.
+// Mirrors reach.py's REACH_BANDS_MINUTES = (5, 10, 15) and its
+// band_radius_m()/`_ring_polygon()` formulas exactly (same
+// WALK_SPEED_MPS constant this file already mirrors above, same
+// longitude-correction-by-latitude math) -- see this project's Wave 3
+// report for the live side-by-side confirmation that this client port
+// reproduces the backend's own ring geometry.
+const DESTINATION_PREVIEW_BANDS_MINUTES = [5, 10, 15] as const;
+
+// Honest caption for the zone preview -- matches the exact register/claim
+// reach.METHOD_NOTE already established ("a straight line ... not an
+// actual route"), rewritten for a destination instead of a searched
+// address since this is a client-only computed overlay with no backend
+// endpoint of its own (see the rings/point builders above), not a literal
+// copy of that backend string.
+const DESTINATION_PREVIEW_NOTE =
+  "Roughly how far you could walk from this destination in 5, 10, and 15 minutes — a straight line, not an actual route, the same approximation used for the rings around a searched address.";
+
+function destinationRingPolygon(lat: number, lng: number, radiusM: number, n = 64): [number, number][] {
+  const dLatPerM = 1 / 111_320;
+  const dLngPerM = 1 / (111_320 * Math.cos((lat * Math.PI) / 180));
+  const ring: [number, number][] = [];
+  for (let i = 0; i <= n; i++) {
+    // +1 above closes the ring, matching reach.py's own `range(n + 1)`.
+    const theta = (2 * Math.PI * i) / n;
+    const dLat = radiusM * Math.sin(theta) * dLatPerM;
+    const dLng = radiusM * Math.cos(theta) * dLngPerM;
+    ring.push([lng + dLng, lat + dLat]); // GeoJSON order: [lng, lat]
+  }
+  return ring;
+}
+
+function destinationRingsGeoJSON(point: { lat: number; lng: number } | null): FeatureCollection {
+  if (!point) return EMPTY_FC;
+  // Largest band first -- same "a later feature paints on top of an
+  // earlier one" draw-order reasoning reachRingsGeoJSON() above documents.
+  const ordered = [...DESTINATION_PREVIEW_BANDS_MINUTES].sort((a, b) => b - a);
+  return {
+    type: "FeatureCollection",
+    features: ordered.map((minutes) => ({
+      type: "Feature",
+      properties: { minutes },
+      geometry: {
+        type: "Polygon",
+        coordinates: [destinationRingPolygon(point.lat, point.lng, WALK_SPEED_MPS * minutes * 60)],
+      },
+    })),
+  };
+}
+
+function destinationPointGeoJSON(point: { lat: number; lng: number } | null): FeatureCollection {
+  if (!point) return EMPTY_FC;
+  return {
+    type: "FeatureCollection",
+    features: [
+      {
+        type: "Feature",
+        properties: {},
+        geometry: { type: "Point", coordinates: [point.lng, point.lat] },
+      },
+    ],
+  };
+}
+
 // LAYOUT-V3 WAVE 1c (2026-08-03, SPEC-layout-v3.md §8 Wave 1c item 4, Noah:
 // "when these blocks note a place nearby, can it actually help highlight
 // stuff, i.e. where the groceries [are], the ... regioning"). Two real,
@@ -519,6 +591,7 @@ export function MapView({
   pins,
   highlightedTile,
   crimePrecinct,
+  destinationHighlight,
 }: {
   // The real searched address, or `null` when the current selection came
   // from a bare grid click (no address) -- drives the local building/
@@ -549,6 +622,13 @@ export function MapView({
   // polygon in the already-fetched `citywide` data, without MapView taking
   // a dependency on the whole CellProfile shape for one field.
   crimePrecinct: number | null;
+  // LAYOUT-V3 WAVE 3 (SPEC-layout-v3.md §5.3 "Zone preview"): whichever
+  // getting-around destination (a default ANCHOR or a custom row) is
+  // currently hovered/selected, or `null` when none is -- GettingAroundField
+  // owns that hover/select state itself and reports just the resolved
+  // point up, the same "child owns the interaction, parent just relays a
+  // point/key" shape onTileHighlight/highlightedTile already establishes.
+  destinationHighlight: { lat: number; lng: number } | null;
 }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<MapLibreMap | null>(null);
@@ -692,6 +772,12 @@ export function MapView({
     // comment for why these are the only two real shapes, never a third.
     map.addSource("tile-highlight-region", { type: "geojson", data: EMPTY_FC });
     map.addSource("tile-highlight-points", { type: "geojson", data: EMPTY_FC });
+    // LAYOUT-V3 WAVE 3 (SPEC-layout-v3.md §5.3): the getting-around region's
+    // zone preview -- see destinationRingsGeoJSON()/destinationPointGeoJSON()
+    // above for what these hold, and mapStyle.ts's buildDestinationPreviewLayers()
+    // for how they're painted.
+    map.addSource("destination-rings", { type: "geojson", data: EMPTY_FC });
+    map.addSource("destination-point", { type: "geojson", data: EMPTY_FC });
 
     // The actual layer definitions (paint/layout/filter) live in
     // mapStyle.ts's buildOverlayLayers(), as a pure/exported function so
@@ -1077,6 +1163,22 @@ export function MapView({
     (map.getSource("tile-highlight-points") as maplibregl.GeoJSONSource | undefined)?.setData(points);
   }, [highlightedTile, reach, citywide, selectedCell, crimePrecinct, mapReady]);
 
+  // ---- 10c. push the getting-around region's zone preview whenever the
+  // hovered/selected destination changes (LAYOUT-V3 WAVE 3, SPEC-layout-
+  // v3.md §5.3) -- three straight-line 5/10/15-minute rings plus a point,
+  // centred on `destinationHighlight`, or all three sources cleared back to
+  // empty when nothing is currently hovered/selected. ----
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !mapReady) return;
+    (map.getSource("destination-rings") as maplibregl.GeoJSONSource | undefined)?.setData(
+      destinationRingsGeoJSON(destinationHighlight),
+    );
+    (map.getSource("destination-point") as maplibregl.GeoJSONSource | undefined)?.setData(
+      destinationPointGeoJSON(destinationHighlight),
+    );
+  }, [destinationHighlight, mapReady]);
+
   // ---- 11. pinned-place markers (SPEC-lens-report.md §3: "a pinned place
   // is never silently absent" -- always rendered, even outside every real
   // band). Walk-time badge is computed client-side from the subject point
@@ -1275,6 +1377,7 @@ export function MapView({
 
       {geo && <p className="mapfield__note mono">{geo.basemap_note}</p>}
       {reach && <p className="mapfield__note mono">{reach.method_note}</p>}
+      {destinationHighlight && <p className="mapfield__note mono">{DESTINATION_PREVIEW_NOTE}</p>}
     </div>
   );
 }

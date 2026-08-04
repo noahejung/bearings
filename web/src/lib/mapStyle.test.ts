@@ -9,6 +9,7 @@ import { validateStyleMin } from "@maplibre/maplibre-gl-style-spec";
 import { describe, expect, it } from "vitest";
 import {
   buildCitywideGridLayers,
+  buildDestinationPreviewLayers,
   buildMapStyle,
   buildOverlayLayers,
   buildReachLayers,
@@ -262,5 +263,46 @@ describe("buildTileHighlightLayers (side-panel tile <-> map emphasis, item 4)", 
     const highlightIdx = ids.indexOf("tile-highlight-fill");
     expect(reachIdx).toBeGreaterThanOrEqual(0);
     expect(highlightIdx).toBeGreaterThan(reachIdx);
+  });
+});
+
+// LAYOUT-V3 WAVE 3 (2026-08-03, SPEC-layout-v3.md §5.3): the getting-around
+// region's zone preview -- the same reach-ring visual technique, redrawn
+// around whichever destination bar is hovered/selected, on its OWN
+// source/layer set (never overwrites the searched-address's own
+// reach-rings).
+describe("buildDestinationPreviewLayers (getting-around zone preview, §5.3)", () => {
+  function styleWithDestinationPreviewLayers(): StyleSpecification {
+    return {
+      version: 8,
+      sources: {
+        "destination-rings": { type: "geojson", data: { type: "FeatureCollection", features: [] } },
+        "destination-point": { type: "geojson", data: { type: "FeatureCollection", features: [] } },
+      },
+      layers: buildDestinationPreviewLayers(),
+    };
+  }
+
+  it("validates with zero errors against MapLibre's real style validator", () => {
+    expect(validateStyleMin(styleWithDestinationPreviewLayers())).toEqual([]);
+  });
+
+  it("includes a fill + outline pair for the rings, and a circle layer for the destination point", () => {
+    const ids = buildDestinationPreviewLayers().map((l) => l.id);
+    expect(ids).toEqual(["destination-rings-fill", "destination-rings-outline", "destination-point"]);
+  });
+
+  it("uses its own source, never the searched-address's reach-rings source", () => {
+    for (const layer of buildDestinationPreviewLayers()) {
+      const source = (layer as { source?: string }).source;
+      expect(source).not.toBe("reach-rings");
+      expect(source).not.toBe("reach-dots");
+    }
+  });
+
+  it("is included in buildOverlayLayers(), painted last (topmost)", () => {
+    const ids = buildOverlayLayers().map((l) => l.id);
+    expect(ids[ids.length - 1]).toBe("destination-point");
+    expect(ids.indexOf("destination-rings-fill")).toBeGreaterThan(ids.indexOf("tile-highlight-points"));
   });
 });

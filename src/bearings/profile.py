@@ -271,6 +271,13 @@ def warm_caches() -> None:
     _stations()
     _anchor_times()
     _disconnected_stop_ids()
+    # LAYOUT-V3 WAVE 3 (SPEC-layout-v3.md §5.2 Option A): the live routable
+    # graph commute_to_point() below needs for a user-typed custom
+    # destination -- warmed here for the same reason every cache above is
+    # (real ~3.3s cost, see transit.graph()'s own docstring, paid once at
+    # boot rather than inside whichever request happens to be first to add
+    # a custom destination).
+    transit.graph()
 
 
 def _walk_minutes(metres: float) -> int:
@@ -367,6 +374,68 @@ def _to_anchors(nearby: list[dict]) -> tuple[dict[str, int], dict[str, str | Non
         reason_out[anchor] = reason
 
     return minutes_out, reason_out
+
+
+# LAYOUT-V3 WAVE 3 (SPEC-layout-v3.md §5.2 Option A+C): live single-
+# destination commute for the editable getting-around region. The 4 baked
+# ANCHORS keep their existing fast path (cellprofile.py's bake, served by
+# GET /api/cell/{h3}) completely untouched -- this is a NEW call site for
+# the exact same _anchor_result() machinery, applied to a destination the
+# bake never covered, not new routing logic.
+@lru_cache(maxsize=512)
+def commute_to_point(cell: str, dest_lat: float, dest_lng: float) -> tuple[int, str | None]:
+    """Real, live (minutes, reason) from `cell`'s own centroid to one
+    user-chosen destination point.
+
+    Mirrors cellprofile.py's own per-cell baked-anchor computation exactly
+    on the origin side: the same cell centroid, the same
+    _nearby_stations()/_anchor_result() calls the 4 baked anchors were
+    computed with at build time (confirmed live 2026-08-03: calling this
+    with one of the 4 real config.ANCHORS' own coordinates reproduces that
+    cell's already-baked to_anchors[...] value exactly, for a real cell).
+    The only difference is the destination side: transit.destination_times()
+    (this module's own live mirror of transit.times_from_anchors(), run for
+    one arbitrary point instead of the 4 curated ANCHORS) in place of the
+    pre-baked anchor_times.json lookup.
+
+    lru_cache'd on (cell, dest_lat, dest_lng) -- SPEC-layout-v3.md §5.2
+    Option C's session-scoped cache: re-selecting the SAME custom
+    destination for the SAME cell inside this process's lifetime is a
+    cache hit (see this function's own `cache_info()`), never a second
+    Dijkstra run. Keyed on the RESOLVED point, not the raw address string
+    a caller searched -- two different strings that geocode to the same
+    point (or the identical string re-geocoded, which geocode.py's own
+    cache already makes a free dict lookup) both land on this same cache
+    entry. maxsize=512 mirrors geocode.py's own address-lookup cache size
+    -- generous for a single browsing session, not meant to hold citywide
+    history.
+    """
+    lat, lng = cells.centroid(cell)
+    nearby = _nearby_stations(lat, lng)
+    candidates = [(s["stop_id"], s["walk_minutes"]) for s in nearby]
+
+    by_stop = transit.destination_times(dest_lat, dest_lng, STATION_SEARCH_M)
+    if by_stop is None:
+        # No real station within STATION_SEARCH_M of the DESTINATION -- the
+        # same honest "nothing nearby" fact _anchor_result() already
+        # returns when the ORIGIN has no candidates, applied to the other
+        # end of the trip. The existing frontend copy ("no subway or PATH
+        # station within about a 15-minute walk") doesn't name which end
+        # of the trip it's about, so reusing NO_STATION_IN_RANGE here
+        # (rather than inventing a third reason code) stays honest without
+        # new copy. One real, known asymmetry this creates, flagged rather
+        # than papered over: NO_RAIL_CONNECTION's existing copy names
+        # Staten Island Railway specifically, written for the case where
+        # the ORIGIN is near SIR -- a custom DESTINATION that itself
+        # resolves to an SIR station would surface NO_RAIL_CONNECTION too
+        # (see destination_times()'s own docstring), with that copy
+        # describing the wrong side of the trip. Rare (SIR is 21 of ~500
+        # real stations) and still an honest "no real rail route" verdict,
+        # not a fabricated number -- but not a perfectly-worded one for
+        # that one edge case.
+        return -1, NO_STATION_IN_RANGE
+
+    return _anchor_result(candidates, by_stop)
 
 
 def _amenities(cell: str) -> dict[str, int]:

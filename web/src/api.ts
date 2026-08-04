@@ -3,6 +3,7 @@ import type {
   CellProfile,
   CellsIndex,
   Citywide,
+  CommuteResult,
   FactcheckResult,
   GeocodeResult,
   MapGeometry,
@@ -115,6 +116,23 @@ export function getCell(h3: string): Promise<CellProfile> {
 // per-cell shards getCell() reads from.
 export function getCellsIndex(): Promise<CellsIndex> {
   return request<CellsIndex>("/api/cells");
+}
+
+// LAYOUT-V3 WAVE 3 (SPEC-layout-v3.md §5.2 Option A): a live single-
+// destination commute for the editable getting-around region -- the exact
+// same profile._anchor_result() machinery the 4 baked ANCHORS already use
+// (bearings/api.py's get_commute() docstring), applied to a user-typed
+// destination the citywide bake never covers. `cell` is the h3 id driving
+// the currently-loaded CellProfile (its own centroid is the origin);
+// `destination` is whatever address string the add-destination field
+// resolved (a picked autocomplete suggestion's label, or free-typed text
+// submitted directly -- both real, geocodable strings, same as
+// AddressSearch's own dual submit path). See that endpoint's own docstring
+// for the (cell, destination) session cache a repeated selection hits.
+export function getCommute(cell: string, destination: string): Promise<CommuteResult> {
+  return request<CommuteResult>(
+    `/api/commute?cell=${encodeURIComponent(cell)}&destination=${encodeURIComponent(destination)}`,
+  );
 }
 
 // The 5/10/15-minute reach rings for a searched address (SPEC-lens-report.md
