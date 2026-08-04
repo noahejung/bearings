@@ -1,7 +1,7 @@
 import { useEffect, useId, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
 import { ApiError, getCommute } from "../api";
 import { ANCHOR_COORDS } from "../lib/anchors";
-import { crimeRelativeLabel, formatPercentile } from "../lib/crime";
+import { crimeRelativeLabel, formatPercentile, ordinalSuffix } from "../lib/crime";
 import { unreachableReasonSentence, unreachableReasonShortLabel } from "../lib/transit";
 import { useAutocomplete } from "../lib/useAutocomplete";
 import type { AutocompleteResult, CellProfile, UnreachableReason } from "../types";
@@ -734,7 +734,22 @@ export function CellReportView({
             <p className="tile__value tile__value--empty">We don&rsquo;t have crime data for this block yet.</p>
           ) : (
             <>
-              <p className="tile__value tile__value--text">{crimeRelativeLabel(crime.crime_percentile)}</p>
+              {/* UX-FIX 2026-08-03 (audit finding #8, "crime tile breaks the
+                  tile grid's visual scan rhythm"): the other three tiles
+                  all lead with a bold numeral (Stat) the eye lands on first,
+                  with the descriptive text as .tile__sub below; crime alone
+                  led with a prose sentence and no numeral at all. This adds
+                  the same real, already-computed percentile the noise tile
+                  already shows as its own sub-line (crime.crime_percentile,
+                  not a new number) as the bold headline -- the underlying
+                  "relative category, not a raw crime count" policy
+                  (VISUAL.md §5) is unchanged; only WHICH already-real number
+                  leads is different. */}
+              <p className="tile__value">
+                {Math.round(crime.crime_percentile)}
+                <span className="tile__value-ordinal">{ordinalSuffix(Math.round(crime.crime_percentile))}</span>
+              </p>
+              <p className="tile__sub">{crimeRelativeLabel(crime.crime_percentile)}</p>
               {disclosureToggle("crime")}
             </>
           )}

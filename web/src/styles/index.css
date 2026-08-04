@@ -437,10 +437,26 @@ button.search__pin:disabled {
    less-obvious feature that genuinely benefits from an explicit "here's
    what this section is" framing -- see the Wave 1c report's kept/removed
    inventory for the reasoning). */
-.record-line {
+/* UX-FIX 2026-08-03 (audit finding #7): the top border/spacing that used
+   to live on `.record-line` itself moves to this new wrapper so a kicker
+   line can sit above the address without a border rule cutting between
+   them -- `.record-line` keeps its own text styling untouched. */
+.record {
   margin-top: 1.4rem;
   padding-top: 0.85rem;
   border-top: 1px solid var(--ink);
+}
+
+.record-line__kicker {
+  font-size: 0.62rem;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--steel);
+  margin-bottom: 0.2rem;
+}
+
+.record-line {
   font-size: 0.92rem;
   font-weight: 700;
   color: var(--ink);
@@ -760,6 +776,16 @@ button.search__pin:disabled {
   padding: 0.6rem 0.8rem;
   font-size: 0.86rem;
   font-family: var(--font-mono);
+  /* UX-FIX 2026-08-03 (audit finding #9, "mobile placeholder truncates
+     mid-word"): at 375px this field's own long placeholder ("Add a
+     destination -- an office, a gym, a friend's place") has nowhere near
+     enough room and was hard-clipping mid-word ("...an of"), reading like a
+     typo rather than an intentionally-shortened hint. A single-line text
+     input already clips overflowing placeholder/value text with no
+     scrollbar; these two properties just add the missing "…" so the clip
+     reads as deliberate truncation, not a cut-off bug. */
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .anchors__addfield button {
@@ -1420,8 +1446,32 @@ button.search__pin:disabled {
    kicker/controls that sat above it; with those gone/moved, keeping the
    margin would just reopen the exact gap item 1 removes. */
 .mapfield__frame {
+  position: relative;
   border: 1.5px solid var(--ink);
   padding: 8px;
+}
+
+/* UX-FIX 2026-08-03 (audit finding #1) -- see MapView.tsx's own comment on
+   the `!mapReady` branch this styles. `inset: 0` on an absolutely-positioned
+   child lands on the nearest positioned ancestor's PADDING box, which is
+   exactly `.mapfield__map`'s own box (both are normal children of this now-
+   `position: relative` frame), so the overlay exactly covers the map canvas
+   with no separate width/height math to keep in sync. */
+.mapfield__loading {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bone);
+  pointer-events: none;
+}
+
+.mapfield__loading-text {
+  font-size: 0.8rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--steel);
 }
 
 /* MapLibre needs an explicit height on its container -- unlike the old
@@ -1664,6 +1714,18 @@ button.search__pin:disabled {
   color: var(--red);
 }
 
+/* UX-FIX 2026-08-03 (audit finding #8): the ordinal suffix ("th" in "94th")
+   next to the crime tile's new bold percentile headline -- a conventional
+   small superscript-style treatment, same mono/steel language every other
+   sub-label on this tile grid already uses. */
+.tile__value-ordinal {
+  font-size: 0.5em;
+  font-weight: 600;
+  vertical-align: super;
+  margin-left: 1px;
+  color: var(--steel);
+}
+
 .tile__valuerow {
   display: flex;
   flex-direction: column;
@@ -1834,9 +1896,22 @@ button.search__pin:disabled {
   color: var(--steel);
 }
 
+/* UX-FIX 2026-08-03 (audit finding #6, "disclosure grid leaves a large dead
+   void and uneven card heights"): DisclosurePage.tsx's `sections` array is a
+   static, hardcoded length of 6 (the app's own fixed six report categories,
+   never data-driven) -- the old `repeat(auto-fit, minmax(320px, 1fr))` (the
+   same pattern `.fields` uses for a genuinely VARIABLE card count) landed on
+   4 columns at 1366px purely as an accident of viewport width, splitting 6
+   cards into a 4-then-2 layout with two unexplained empty cells in row 2.
+   Explicit, division-friendly column counts (1 -> 2 -> 3) replace auto-fit
+   here so every tier is a clean rectangle for exactly 6 cards (6/1, 3x2,
+   2x3 -- never a remainder). If this array's length ever changes from 6,
+   these breakpoints and the nth-child border rules below need a matching
+   review -- there is no way to make a *fixed* item count self-adjust to an
+   *arbitrary* one without reintroducing this exact bug. */
 .disclosure__sections {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  grid-template-columns: 1fr;
   gap: 0;
   margin-top: 2rem;
   border-top: 1px solid var(--ink);
@@ -1846,11 +1921,32 @@ button.search__pin:disabled {
 .disclosure__section {
   border-bottom: 1px solid var(--ink);
   border-right: 1px solid var(--ink);
+  border-left: 1px solid var(--ink);
   padding: 1.3rem 1.4rem 1.5rem;
 }
 
-.disclosure__section:nth-child(odd) {
-  border-left: 1px solid var(--ink);
+@media (min-width: 640px) {
+  .disclosure__sections {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .disclosure__section {
+    border-left: none;
+  }
+  .disclosure__section:nth-child(2n + 1) {
+    border-left: 1px solid var(--ink);
+  }
+}
+
+@media (min-width: 1024px) {
+  .disclosure__sections {
+    grid-template-columns: repeat(3, 1fr);
+  }
+  .disclosure__section:nth-child(2n + 1) {
+    border-left: none;
+  }
+  .disclosure__section:nth-child(3n + 1) {
+    border-left: 1px solid var(--ink);
+  }
 }
 
 .disclosure__sectiontitle {
@@ -1875,8 +1971,20 @@ button.search__pin:disabled {
   color: var(--steel);
 }
 
+/* UX-FIX 2026-08-03 (audit finding #5, "two source links run together with
+   no separator"): `.provenance-link` (SourceTag.tsx) is `display:
+   inline-flex` -- two of them sitting adjacent with no gap between them
+   ran together as one unbroken string ("SOURCE X →SOURCE Y →"), since JSX
+   emits no whitespace between two sibling elements. `display: flex` +
+   `gap` on the shared wrapper gives every multi-source card (today, only
+   "Building age & serious hazards" -- PLUTO + HPD) a real visual break,
+   and wraps onto its own line at narrow widths rather than overflowing. */
 .disclosure__source {
   margin-top: 0.8rem;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem 1rem;
 }
 
 .disclosure__source--pending {

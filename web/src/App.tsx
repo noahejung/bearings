@@ -159,6 +159,21 @@ export default function App() {
   // The missing click-to-load feature (SPEC-precompute-v2.md Phase 2):
   // clicking any real cell on the citywide grid swaps the report to that
   // location, instantly (GET /api/cell/{h3} is a flat baked-JSON read).
+  //
+  // UX-AUDIT 2026-08-03 (finding #2, "a bare map-cell click desyncs the
+  // search bar from the loaded report"): re-investigated live via Playwright
+  // against this exact code (real hit-testing against the actual
+  // citywide-cells-fill layer, a real /api/cell/{h3} network call confirmed,
+  // both a single click and a rapid real double-click) -- `setAddressInput
+  // ("")` below already clears the bar synchronously, in the same tick as
+  // `setSearchedAddress(null)`, so a bare cell click always leaves BOTH the
+  // heading and the input honestly empty together; the submit button
+  // disabling itself is then correct (nothing typed), not a bug. The
+  // audit's finding did not reproduce. This is also already the dispatch's
+  // own first suggested resolution ("clear... the field") -- kept as the
+  // chosen, least-surprising behavior: a cell click gives back a fresh,
+  // honestly-empty search bar rather than a stale query that no longer
+  // matches what the panel now shows.
   async function handleCellClick(h3: string) {
     setSearchedAddress(null);
     setAddressInput("");
@@ -270,9 +285,29 @@ export default function App() {
                 panel therefore starts directly at the tile grid, with
                 nothing standing in for an address that was never given. */}
             {cellReport && searchedAddress && (
-              <h2 className="record-line mono" id="report-heading">
-                {searchedAddress}
-              </h2>
+              <div className="record">
+                {/* UX-FIX 2026-08-03 (audit finding #7, "search input and
+                    report heading show two different renderings of the
+                    address at once"): both are still correct and still
+                    shown (the input keeps exactly what was typed; this
+                    heading keeps the geocoder's own canonical form -- see
+                    this file's own item-2 comment above for why that's
+                    deliberate) -- this kicker is the missing visual link
+                    between them, so two real addresses on screen read as
+                    "the same one, confirmed" rather than "which one is
+                    right?". `aria-hidden`: the heading's own accessible
+                    name must stay exactly the address text (App.test.tsx
+                    pins `getByRole("heading", { name: GEOCODE_RESULT.label
+                    })`) -- a sighted-only affordance, not new information a
+                    screen-reader user is missing (the heading already
+                    states the real confirmed address either way). */}
+                <p className="record-line__kicker mono" aria-hidden="true">
+                  Confirmed as
+                </p>
+                <h2 className="record-line mono" id="report-heading">
+                  {searchedAddress}
+                </h2>
+              </div>
             )}
 
             {/* LAYOUT-V3 WAVE 1 (2026-08-02, SPEC-layout-v3.md §3): the

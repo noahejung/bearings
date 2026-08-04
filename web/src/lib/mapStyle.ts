@@ -497,6 +497,16 @@ export function buildReachLayers(): StyleSpecification["layers"] {
 // vocabulary this app has already taught the user once. Painted LAST (see
 // buildOverlayLayers() above) -- topmost, since this is the most immediate
 // thing the user is currently pointing at.
+// UX-FIX 2026-08-03 (audit finding #3, "layered map highlights compound
+// into an illegible wall of red") -- HIGHLIGHT PRIORITY RULE, applied here.
+// Every ring/point feature carries a real `dimmed` boolean (see MapView.tsx's
+// destinationRingsGeoJSON()/destinationPointGeoJSON(), set by that file's own
+// effect 10c comment for the full rule). `["case", ["get","dimmed"], <faint
+// flat value>, <existing per-band value>]` wraps every opacity below: a
+// SELECTED destination never goes fully invisible when a tile hover takes
+// priority (Wave 3's own "never silently absent" rule for a pinned place),
+// it just recedes well below the newer, more specific tile highlight instead
+// of visually fighting it for the same red ink.
 export function buildDestinationPreviewLayers(): StyleSpecification["layers"] {
   return [
     {
@@ -505,7 +515,12 @@ export function buildDestinationPreviewLayers(): StyleSpecification["layers"] {
       source: "destination-rings",
       paint: {
         "fill-color": RED,
-        "fill-opacity": ["match", ["get", "minutes"], 5, 0.26, 10, 0.17, 15, 0.1, 0.1],
+        "fill-opacity": [
+          "case",
+          ["boolean", ["get", "dimmed"], false],
+          0.05,
+          ["match", ["get", "minutes"], 5, 0.26, 10, 0.17, 15, 0.1, 0.1],
+        ],
       },
     },
     {
@@ -515,7 +530,12 @@ export function buildDestinationPreviewLayers(): StyleSpecification["layers"] {
       paint: {
         "line-color": RED,
         "line-width": 1,
-        "line-opacity": ["match", ["get", "minutes"], 5, 0.55, 10, 0.4, 15, 0.28, 0.28],
+        "line-opacity": [
+          "case",
+          ["boolean", ["get", "dimmed"], false],
+          0.15,
+          ["match", ["get", "minutes"], 5, 0.55, 10, 0.4, 15, 0.28, 0.28],
+        ],
       },
     },
     {
@@ -528,7 +548,7 @@ export function buildDestinationPreviewLayers(): StyleSpecification["layers"] {
       paint: {
         "circle-radius": 5,
         "circle-color": RED,
-        "circle-opacity": 0.92,
+        "circle-opacity": ["case", ["boolean", ["get", "dimmed"], false], 0.35, 0.92],
         "circle-stroke-width": 1.5,
         "circle-stroke-color": INK,
       },

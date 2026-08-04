@@ -85,11 +85,31 @@ export function FactCheckView({
             See a worked example (swaps to Sedgwick Ave)
           </button>
           <button type="submit" className="button" disabled={!canSubmit}>
-            {loading ? "Checking…" : "Check this listing"}
+            {/* UX-FIX 2026-08-03 (audit finding #10, "fact-check submission
+                gives no felt-progress affordance during a multi-second
+                wait"): reuses the exact `.loading__dots` animated-ellipsis
+                idiom App.tsx's own "Pulling the record" sidepanel
+                placeholder already established, rather than inventing a
+                second loading vocabulary or a fake progress bar/percentage
+                (this really is a multi-second live cross-reference against
+                several real datasets -- README's own documented cost -- so
+                there is no honest sub-step to report before it's done). */}
+            {loading ? (
+              <>
+                Checking<span className="loading__dots" aria-hidden="true" />
+              </>
+            ) : (
+              "Check this listing"
+            )}
           </button>
         </div>
         {!address && (
           <p className="factcheck__hint">Pull a neighborhood record above first.</p>
+        )}
+        {loading && (
+          <p className="factcheck__hint" role="status">
+            Checking against several real, live datasets — this can take a few seconds.
+          </p>
         )}
       </form>
 

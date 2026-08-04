@@ -264,7 +264,15 @@ function destinationRingPolygon(lat: number, lng: number, radiusM: number, n = 6
   return ring;
 }
 
-function destinationRingsGeoJSON(point: { lat: number; lng: number } | null): FeatureCollection {
+// UX-FIX 2026-08-03 (audit finding #3, "layered map highlights compound
+// into an illegible wall of red"): every feature below now carries a real
+// `dimmed` boolean, read by mapStyle.ts's buildDestinationPreviewLayers()
+// paint expressions -- see MapView's own "HIGHLIGHT PRIORITY RULE" comment
+// on effect 10c below for what sets it and why.
+function destinationRingsGeoJSON(
+  point: { lat: number; lng: number } | null,
+  dimmed: boolean,
+): FeatureCollection {
   if (!point) return EMPTY_FC;
   // Largest band first -- same "a later feature paints on top of an
   // earlier one" draw-order reasoning reachRingsGeoJSON() above documents.
@@ -273,7 +281,7 @@ function destinationRingsGeoJSON(point: { lat: number; lng: number } | null): Fe
     type: "FeatureCollection",
     features: ordered.map((minutes) => ({
       type: "Feature",
-      properties: { minutes },
+      properties: { minutes, dimmed },
       geometry: {
         type: "Polygon",
         coordinates: [destinationRingPolygon(point.lat, point.lng, WALK_SPEED_MPS * minutes * 60)],
@@ -282,14 +290,17 @@ function destinationRingsGeoJSON(point: { lat: number; lng: number } | null): Fe
   };
 }
 
-function destinationPointGeoJSON(point: { lat: number; lng: number } | null): FeatureCollection {
+function destinationPointGeoJSON(
+  point: { lat: number; lng: number } | null,
+  dimmed: boolean,
+): FeatureCollection {
   if (!point) return EMPTY_FC;
   return {
     type: "FeatureCollection",
     features: [
       {
         type: "Feature",
-        properties: {},
+        properties: { dimmed },
         geometry: { type: "Point", coordinates: [point.lng, point.lat] },
       },
     ],
@@ -647,6 +658,14 @@ export function MapView({
   geoRef.current = geo;
 
   const [reach, setReach] = useState<Reach | null>(null);
+  // UX-FIX 2026-08-03 (audit finding #4, "amenities-tile hover has a silent
+  // race condition"): true only WHILE a real address's own reach fetch is
+  // actually in flight -- distinct from `!reach`, which is also true before
+  // any address is searched at all, or after a genuinely failed fetch (see
+  // effect 4b below). Lets the render below tell "still loading" apart from
+  // "no address" or "gave up" -- the exact None-vs-0-style distinction this
+  // project's own rules require elsewhere, applied to a loading state.
+  const [reachLoading, setReachLoading] = useState(false);
 
   const [citywide, setCitywide] = useState<Citywide | null>(null);
   const citywideRef = useRef<Citywide | null>(null);
@@ -1016,15 +1035,20 @@ export function MapView({
   useEffect(() => {
     if (!address) {
       setReach(null);
+      setReachLoading(false);
       return;
     }
     let cancelled = false;
+    setReachLoading(true);
     getReach(address)
       .then((r) => {
         if (!cancelled) setReach(r);
       })
       .catch(() => {
         if (!cancelled) setReach(null);
+      })
+      .finally(() => {
+        if (!cancelled) setReachLoading(false);
       });
     return () => {
       cancelled = true;
@@ -1167,17 +1191,55 @@ export function MapView({
   // hovered/selected destination changes (LAYOUT-V3 WAVE 3, SPEC-layout-
   // v3.md §5.3) -- three straight-line 5/10/15-minute rings plus a point,
   // centred on `destinationHighlight`, or all three sources cleared back to
-  // empty when nothing is currently hovered/selected. ----
+  // empty when nothing is currently hovered/selected.
+  //
+  // HIGHLIGHT PRIORITY RULE (UX-FIX 2026-08-03, audit finding #3 -- "layered
+  // map highlights compound into an illegible wall of red"). Two independent
+  // systems can each put real, active red geometry on the map at the same
+  // time: a side-panel tile hover (`highlightedTile`, effect 10b) and a
+  // getting-around destination preview (`destinationHighlight`, this
+  // effect). The audit's own repro combined a SELECTED (pinned, therefore
+  // persistent -- see GettingAroundField's own comment on why "select"
+  // deliberately outlives the cursor) destination's rings with an amenities-
+  // tile hover's un-clustered point flood, on top of the always-on
+  // searched-address reach rings -- three real red layers stacked with no
+  // visual hierarchy between them.
+  //
+  // THE RULE: a live side-panel tile hover always outranks a destination
+  // preview, because only one of the two can ever be a genuinely LIVE hover
+  // at once (one cursor, two disjoint DOM regions -- CellReportView's own
+  // tiles vs. GettingAroundField's own rows) -- so whenever `highlightedTile`
+  // is non-null, it is unambiguously the newer, more specific "what is the
+  // user pointing at right now" signal. The destination preview does NOT
+  // disappear when outranked (a SELECTED destination must stay visible --
+  // Wave 3's own "never silently absent" rule for a pinned place, which this
+  // fix must not regress) -- it dims to a faint outline instead, via a real
+  // `dimmed` property on every ring/point feature that mapStyle.ts's paint
+  // expressions read (see buildDestinationPreviewLayers()'s own comment).
+  // The rule is centralized here, in the one place both `highlightedTile`
+  // and `destinationHighlight` already arrive as props, rather than patched
+  // per-case in either CellReportView.tsx or GettingAroundField.tsx.
+  //
+  // Baseline/always-on layers (the searched-address reach-rings, and the
+  // preference-chip-driven reach-dots) are deliberately NOT part of this
+  // rule -- they are steady-state context a user opted into (a chip toggle,
+  // or simply having searched an address), not a momentary "what am I
+  // pointing at" signal, so they keep their own existing, already-low
+  // opacity regardless of what else is highlighted. reach-dots is also
+  // painted in INK, not RED (see buildReachLayers()'s own comment), so it
+  // never competes with the red palette these two systems share in the
+  // first place. ----
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !mapReady) return;
+    const dimmed = highlightedTile !== null;
     (map.getSource("destination-rings") as maplibregl.GeoJSONSource | undefined)?.setData(
-      destinationRingsGeoJSON(destinationHighlight),
+      destinationRingsGeoJSON(destinationHighlight, dimmed),
     );
     (map.getSource("destination-point") as maplibregl.GeoJSONSource | undefined)?.setData(
-      destinationPointGeoJSON(destinationHighlight),
+      destinationPointGeoJSON(destinationHighlight, dimmed),
     );
-  }, [destinationHighlight, mapReady]);
+  }, [destinationHighlight, highlightedTile, mapReady]);
 
   // ---- 11. pinned-place markers (SPEC-lens-report.md §3: "a pinned place
   // is never silently absent" -- always rendered, even outside every real
@@ -1357,6 +1419,24 @@ export function MapView({
           role="img"
           aria-label="Navigable map of New York City. Every real city block is clickable to load its record; homes and apartment buildings are clickable for their own year built and hazard record; shows building outlines, streets, subway lines, and walk-time rings for the selected address."
         />
+        {/* UX-FIX 2026-08-03 (audit finding #1, "the map renders completely
+            blank -- no basemap, no loading indicator -- for ~1.5-2s on every
+            cold load"): `mapReady` (effect 1's own `map.on("load", ...)`)
+            already existed as real state, it just wasn't rendered anywhere.
+            No fake progress bar/percentage -- MapLibre gives no meaningful
+            sub-steps to report before its own "load" event fires -- just an
+            honest, already-established idiom (the same
+            text+`.loading__dots` animated-ellipsis pattern App.tsx's own
+            "Pulling the record" sidepanel placeholder uses) so a first-time
+            visitor sees SOMETHING telling them the box is a map that's still
+            arriving, not a broken/empty one. */}
+        {!mapReady && (
+          <div className="mapfield__loading" role="status">
+            <span className="mapfield__loading-text mono">
+              Loading the map<span className="loading__dots" aria-hidden="true" />
+            </span>
+          </div>
+        )}
       </div>
 
       {/* LAYOUT-V3 WAVE 1d item 4 (2026-08-03, SPEC-layout-v3.md §8, Noah:
@@ -1374,6 +1454,19 @@ export function MapView({
 
       {loading && <p className="mapfield__status mono">Loading the neighborhood record…</p>}
       {error && <p className="mapfield__status mapfield__status--error mono">{error}</p>}
+
+      {/* UX-FIX 2026-08-03 (audit finding #4, "amenities-tile hover has a
+          silent race condition"): hovering the amenities tile within the
+          first ~1-2s of a search -- before GET /api/reach has resolved --
+          used to draw nothing on the map with no explanation at all
+          (tileHighlightGeometry()'s own honest early-return for a tile with
+          no real data yet). Rather than fabricate placeholder dots, this
+          just says so -- the tile itself already has real data (it's
+          `cell.amenities.counts`, a separate, already-loaded field), only
+          the MAP's bonus point layer is still in flight. */}
+      {highlightedTile === "amenities" && !reach && reachLoading && (
+        <p className="mapfield__note mono">Loading nearby places to highlight on the map…</p>
+      )}
 
       {geo && <p className="mapfield__note mono">{geo.basemap_note}</p>}
       {reach && <p className="mapfield__note mono">{reach.method_note}</p>}
