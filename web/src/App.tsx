@@ -454,12 +454,12 @@ export default function App() {
                     Pulling the record<span className="loading__dots" aria-hidden="true" />
                   </p>
                 )}
-                {!reportLoading && !cellReport && (
-                  <p className="sidepanel__placeholder mono">
-                    Click any block for its real record, or search an address for 5, 10, and
-                    15-minute walk rings plus nearby places you turn on above.
-                  </p>
-                )}
+                {/* LAYOUT-V3 WAVE 6c item 5 (2026-08-11, Noah: "the click any
+                    block for real record box is unnecessary, remove it as a
+                    feature"). No replacement empty-state copy -- the panel is
+                    simply empty until a report loads (loaded via
+                    !reportLoading && cellReport below, or the "Pulling the
+                    record" status above). */}
                 {/* LAYOUT-V3 WAVE 1f item 4 (2026-08-11, SPEC-layout-v3.md
                     §8, "primary" option): Getting Around moves INTO the
                     side panel, below the tiles -- the panel column has

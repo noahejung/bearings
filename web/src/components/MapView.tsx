@@ -25,10 +25,10 @@ import { colorFor } from "./RouteBullet";
 // behind a loaded report. It mounts immediately with GET /api/cells (every
 // real H3 res-9 cell citywide) as an invisible, always-on, CLICKABLE hit
 // layer, independent of whether `address` is set. `address` drives the
-// local building/street/subway overlay AND the reach-rings feature for
-// whichever address was actually searched -- it can be `null` (a bare cell
-// click has no address), in which case both are simply empty, never
-// fetched, never blocking.
+// local building/street/subway overlay AND the reach-dots feature (chip-
+// selected nearby places/stations) for whichever address was actually
+// searched -- it can be `null` (a bare cell click has no address), in
+// which case both are simply empty, never fetched, never blocking.
 //
 // RETIRED 2026-07-29 (SPEC-lens-report.md, Noah: "i wanna move away from
 // hex grid styling anyways, its too much visual clutter and doesnt make a
@@ -38,11 +38,13 @@ import { colorFor } from "./RouteBullet";
 // layer (untouched -- reach.py/mapgeo.py/cellprofile.py), it is simply
 // never drawn here anymore; "click any block to load its report" survives
 // via the already-transparent hit-test fill (see mapStyle.ts's own
-// updated comment). Replacing them: reach rings + chip-selected amenity/
-// station dots + pinned-place badges (SPEC-lens-report.md §2-4), and a
-// two-entry lens-switcher stub ("minimal" is the only real lens this
-// slice; a disabled second slot exists so slice 2's transit/green/3D-tilt
-// lenses have somewhere to land).
+// updated comment). Replacing them: chip-selected amenity/station dots +
+// pinned-place badges (SPEC-lens-report.md §2-4), and a two-entry lens-
+// switcher stub ("minimal" is the only real lens this slice; a disabled
+// second slot exists so slice 2's transit/green/3D-tilt lenses have
+// somewhere to land). The 5/10/15-minute walk RINGS this same paragraph
+// used to also list here were themselves later removed -- Wave 6c item 6
+// (2026-08-11), see reachDotsGeoJSON()'s own neighbouring comment.
 
 // Mirrors bearings/config.py's NYC_BBOX -- used ONLY to frame the initial
 // view so the whole city is visible on first paint. This is NOT how "real
@@ -50,14 +52,84 @@ import { colorFor } from "./RouteBullet";
 // cellprofile.py's own module docstring) -- it is purely a camera bound.
 const NYC_BBOX = { south: 40.47, north: 40.93, west: -74.30, east: -73.70 };
 
+// LAYOUT-V3 WAVE 6c item 4 (2026-08-11, Noah, on the deployed pitched map:
+// "trim this down to a more reasonable piece in terms of where we can drag
+// to. keep a bit since we have the tiltable angle... no white horizon is
+// visible"). The DRAG clamp is now a separate, tighter box than NYC_BBOX
+// (which stays the initial-fit bounds above, unchanged -- the whole city
+// is still what greets a first paint). MEASURED, not guessed: fetched
+// GET /api/cells live (7,018 real H3 cells, matching this project's own
+// "~7,400 cells citywide" figure) and took the actual min/max lat/lng
+// across every real cell -- the TRUE data footprint, not the raw bake
+// bbox. That measurement: lat 40.4972-40.9136, lng -74.2552 to -73.6987.
+// Critically, the real cell footprint's EAST edge (-73.6987) already sits
+// slightly PAST NYC_BBOX's own east edge (-73.70) -- Queens/Nassau-border
+// cells are already right at the bake's edge with zero spare margin, so
+// the east side below is deliberately left AT NYC_BBOX, not trimmed
+// inward (trimming it would clip real, servable report cells, the one
+// thing this app can never do). The other three sides had real headroom
+// between the bake box and the true data footprint, so each is pulled in
+// by a margin sized off that side's own measured slack (not a single
+// uniform number, since the slack itself isn't uniform): west by ~0.02
+// deg (~2.2 km, well inside its 0.045 deg of real slack), south by ~0.015
+// deg (~1.7 km, inside its 0.027 deg slack). North is pulled in almost to
+// the real data edge itself (~0.005 deg / ~500m buffer, not the ~1.1 km
+// the other sides get) -- this is also WAVE 6c item 2's fix for this one
+// side (Noah: "we never got rid of roads from outside our map area"):
+// real Westchester/Yonkers roads north of the Bronx render with no fade
+// at all (unlike the west side, which the existing NJ_MASK_POLYGON in
+// mapStyle.ts already dims), so the honest fix here is minimizing how
+// much of that unmasked area is even reachable, not adding a second mask
+// polygon for a ~500m sliver. The same item 2 finding on the OTHER two
+// unmasked sides: south is open water beyond Staten Island/the Rockaways
+// (Raritan Bay/the Atlantic) at every zoom tested -- no real roads there
+// to leak through, nothing to fix; east has zero spare measured margin at
+// all (this comment's own east-edge finding above), and the live-verified
+// screenshot at this wave's own reachable east edge (-73.71, 40.75) showed
+// only real, still-NYC Queens neighbourhoods (Bayside, Douglaston-Little
+// Neck, Glen Oaks) -- not actually out-of-scope, so no fix was needed
+// there either.
+const MAX_DRAG_BOUNDS = { south: 40.485, north: 40.918, west: -74.28, east: -73.70 };
+
+// LAYOUT-V3 WAVE 6c items 1+4 (2026-08-11). ROOT CAUSE (item 1, "weird
+// triangle shading bugs"), found by live pitch-sweep screenshots, not
+// guessed: MapLibre GL triangulates each vector-tile layer's polygons PER
+// TILE (earcut on each tile's own clipped copy of a feature); at pitch 0
+// this is imperceptible (a sub-pixel seam at a tile boundary reads as
+// nothing under a near-orthographic top-down view), but under this map's
+// perspective projection at high pitch, that same sub-pixel world-space
+// gap gets magnified into a visible dark wedge exactly where a translucent
+// fill layer (open-space @ 0.22 opacity, water @ 0.5, the doubled
+// "water-unmasked" layer) crosses a tile boundary. Reproduced concretely
+// at JFK Airport's own tile boundary (-73.8, 40.63, zoom 12): a sharp
+// diagonal dark sliver cutting across the airport's open-space fill,
+// absent at pitch 0/20/30/40/50, visible only at pitch 55-60. Rather than
+// fight per-tile triangulation (a MapLibre GL rendering characteristic,
+// not a bug in this app's own style/data -- see the Wave 1f "Kill van
+// Kull" diagonal-seam entry in this project's own history for the same
+// class of imprecision, honestly documented rather than chased), the
+// direct fix is capping how far into that perspective-amplified regime
+// the map ever renders: `maxPitch` overrides MapLibre's own default (60)
+// down to 50, the highest value that stayed clean across every pitch-
+// sweep screenshot taken for this diagnosis. Still a real, felt tilt
+// (Noah's own "tiltable angle" is explicitly kept, not removed) -- just
+// short of the extreme where both the JFK seam AND the "look past the
+// data edge toward the horizon" risk maxBounds alone can't fully close
+// (a pitched camera's visible ground footprint grows with pitch; less
+// pitch means less of it can ever fall outside MAX_DRAG_BOUNDS above,
+// which is why this constant is listed as part of item 4's fix too).
+const MAX_PITCH = 50;
+
 // Mirrors bearings/transit.py's WALK_SPEED_MPS -- the same "Mirrors ..."
-// duplication pattern NYC_BBOX above already uses. Only ever used here for
-// a single scalar (a pinned place's own walk-time badge), never a rendered
-// geometry -- reach.py computes and returns the actual ring polygons
-// server-side (see reachRingsGeoJSON() below), so the one real duplication
-// risk (the ring SHAPE itself drifting from the backend) doesn't exist;
-// only the badge's minute count could ever disagree, and by how the two
-// are computed identically it won't.
+// duplication pattern NYC_BBOX above already uses. Two real uses: a pinned
+// place's own walk-time badge (a single scalar), and the getting-around
+// destination zone preview's own ring polygon math (destinationRingsGeoJSON()
+// below, mirroring bearings/reach.py's band_radius_m()/_ring_polygon()
+// formula -- see that function's own comment). The searched-address ring
+// polygons this same constant used to ALSO help format (via the now-removed
+// reachRingsGeoJSON(), Wave 6c item 6) came pre-computed from the backend
+// instead -- WALK_SPEED_MPS itself was never that function's own math, only
+// this file's two still-live client-side computations use it.
 const WALK_SPEED_MPS = 1.35;
 
 function haversineM(a: { lat: number; lng: number }, b: { lat: number; lng: number }): number {
@@ -198,26 +270,33 @@ function routeLineGeoJSON(geo: MapGeometry | null, shapeIds: string[] | null): F
   };
 }
 
-// Reach rings (SPEC-lens-report.md §3) -- one Feature per real 5/10/15-min
-// band, ordered LARGEST FIRST: mapStyle.ts's buildReachLayers() draws a
-// GeoJSON source's features in array order, so this ordering IS the "5-min
-// band paints on top of 10, which paints on top of 15" nesting, not a
-// z-index primitive. Sorted defensively rather than trusting the backend's
-// own array order, since draw order is load-bearing here.
-function reachRingsGeoJSON(reach: Reach): FeatureCollection {
-  const ordered = [...reach.bands].sort((a, b) => b.minutes - a.minutes);
-  return {
-    type: "FeatureCollection",
-    features: ordered.map((band) => ({
-      type: "Feature",
-      properties: { minutes: band.minutes },
-      geometry: {
-        type: "Polygon",
-        coordinates: [band.polygon.map(([lat, lng]): [number, number] => [lng, lat])],
-      },
-    })),
-  };
-}
+// LAYOUT-V3 WAVE 6c item 6 (2026-08-11, Noah, on the deployed map: "the 5/10/
+// 15-minute walk rings around searched addresses aren't helpful either").
+// The ring-drawing function that used to live here (reachRingsGeoJSON(),
+// formatting reach.bands's polygon coordinates for the now-deleted
+// "reach-rings" source/layers) is removed outright, not hidden -- the same
+// "retired, not just unhooked" standard mapStyle.ts's own citywide-cells-
+// outline removal (2026-07-29) already set. `reach.bands` itself (the
+// backend's ring polygon geometry, bearings/reach.py's _bands()/
+// _ring_polygon()) is left alone on the backend -- band_radius_m()/
+// _band_for() underneath it are NOT dead: reachDotsGeoJSON() below still
+// depends on every place/station's own `band_minutes` tag, which those same
+// functions compute (see reach.py's own docstring). Only the RING SHAPE
+// itself (the `bands` field's `polygon` coordinates) has no remaining
+// frontend reader after this wave -- flagged, not silently pruned, in this
+// wave's own report, since removing it is a backend/API-contract change
+// this frontend-scoped wave deliberately didn't reach into.
+//
+// KEPT, verified before deleting anything (per this wave's own dispatch):
+// the getting-around region's destination zone preview
+// (destinationRingsGeoJSON()/destinationPointGeoJSON() below) is a fully
+// separate, client-side-only computation -- it mirrors reach.py's ring
+// FORMULA (same WALK_SPEED_MPS constant, same circle math, see
+// DESTINATION_PREVIEW_BANDS_MINUTES's own comment below) but never reads
+// `reach.bands` or any other server-provided ring geometry, so removing the
+// searched-address rings above cannot regress it -- confirmed by reading
+// every call site of `reach` in this file before making this change, not
+// assumed from the two features merely looking similar.
 
 // Chip-selected amenity/station dots (SPEC-lens-report.md §2/§4) -- a pure
 // CLIENT-SIDE filter of the already-fetched `reach.places`/`reach.stations`
@@ -339,8 +418,12 @@ function destinationRingsGeoJSON(
   dimmed: boolean,
 ): FeatureCollection {
   if (!point) return EMPTY_FC;
-  // Largest band first -- same "a later feature paints on top of an
-  // earlier one" draw-order reasoning reachRingsGeoJSON() above documents.
+  // Largest band first -- a later feature in the same GeoJSON source paints
+  // on top of an earlier one, so the smallest/darkest band always ends up
+  // visually "inside" the larger/fainter ones without needing three
+  // separate layers (the same draw-order technique the now-removed
+  // reachRingsGeoJSON() used to also rely on for the searched-address
+  // rings, Wave 6c item 6).
   const ordered = [...DESTINATION_PREVIEW_BANDS_MINUTES].sort((a, b) => b - a);
   return {
     type: "FeatureCollection",
@@ -678,9 +761,9 @@ export function MapView({
 }: {
   // The real searched address, or `null` when the current selection came
   // from a bare grid click (no address) -- drives the local building/
-  // street/subway overlay fetch (GET /api/map) AND the reach-rings fetch
-  // (GET /api/reach) below, neither of which makes sense without a real
-  // searched address.
+  // street/subway overlay fetch (GET /api/map) AND the reach fetch
+  // (GET /api/reach, feeding the chip-selected amenity/station dots)
+  // below, neither of which makes sense without a real searched address.
   address: string | null;
   // The h3 id currently driving the report panel (App.tsx owns this) --
   // used to fly the camera there and to place the subject marker.
@@ -810,27 +893,33 @@ export function MapView({
         [NYC_BBOX.east, NYC_BBOX.north],
       ],
       fitBoundsOptions: { padding: 20 },
-      // Panning is clamped to the same NYC_BBOX the basemap was actually
-      // baked for (basemap.py's `pmtiles extract --bbox=...`), never a
-      // separately-guessed margin -- beyond it there are no tiles, no
-      // buildings/streets overlay, and no citywide grid, just blank space
-      // (Noah, 2026-08-02: "can currently drag on the map to a border
-      // outside the loaded nyc preview, which is just blank space"). No
-      // padding added around it: MapLibre's maxBounds already keeps the
-      // full bbox reachable at min zoom (the initial `bounds` fit above
-      // proves the whole box fits on screen at once), so there is no
-      // "too tight at the edges" tradeoff to weigh against showing blank
-      // space -- see test_basemap.py's own `abs=0.2` tolerance for how
-      // imprecise "exact" bbox matching already is at the tile-snap level,
-      // which is a reason to stay at 0 extra margin, not add one.
+      // Panning is clamped to MAX_DRAG_BOUNDS (its own comment above has
+      // the full 2026-08-11 Wave 6c measurement/reasoning) -- originally
+      // this was the raw NYC_BBOX bake box itself (Noah, 2026-08-02: "can
+      // currently drag on the map to a border outside the loaded nyc
+      // preview, which is just blank space"), now pulled in on three of
+      // its four sides toward the real, measured citywide-cell footprint.
       maxBounds: [
-        [NYC_BBOX.west, NYC_BBOX.south],
-        [NYC_BBOX.east, NYC_BBOX.north],
+        [MAX_DRAG_BOUNDS.west, MAX_DRAG_BOUNDS.south],
+        [MAX_DRAG_BOUNDS.east, MAX_DRAG_BOUNDS.north],
       ],
       minZoom: 9,
       maxZoom: 18,
+      maxPitch: MAX_PITCH,
     });
-    map.addControl(new maplibregl.NavigationControl({ showCompass: false }), "top-right");
+    // WAVE 6c item 3 (2026-08-11, Noah: "give me a compass to reorient the
+    // map"). `showCompass: true` restores MapLibre's own built-in compass
+    // button into this SAME NavigationControl group (already restyled to
+    // this app's tDR chrome via index.css's `.maplibregl-ctrl-group`
+    // selector, which applies to any control in the group generically --
+    // no new CSS needed) rather than a hand-built second control, so it
+    // sits directly below the existing zoom +/- buttons as one visually
+    // continuous control, the existing zoom-control idiom Noah asked to
+    // stay consistent with. Clicking it resets bearing to 0 (MapLibre's
+    // own default behavior) -- "reorient" is exactly a bearing reset, and
+    // this map's own bearing can already drift via drag-to-rotate (the
+    // default `dragRotate`, never disabled anywhere in this file).
+    map.addControl(new maplibregl.NavigationControl({ showCompass: true }), "top-right");
     mapRef.current = map;
     // Dev-only: exposes the live MapLibre instance for Playwright/manual
     // console verification (e.g. `map.getBounds()` after a drag, to check
@@ -871,7 +960,6 @@ export function MapView({
     map.addSource("buildings", { type: "geojson", data: EMPTY_FC });
     map.addSource("streets", { type: "geojson", data: EMPTY_FC });
     map.addSource("subway", { type: "geojson", data: EMPTY_FC });
-    map.addSource("reach-rings", { type: "geojson", data: EMPTY_FC });
     map.addSource("reach-dots", { type: "geojson", data: EMPTY_FC });
     // The citywide clickable grid's source (populated once GET /api/cells
     // resolves) -- hit-testing only, PLUS (LAYOUT-V3 WAVE 1c item 3) a real
@@ -1272,16 +1360,6 @@ export function MapView({
     );
   }, [cellsIndex, mapReady]);
 
-  // ---- 9. push reach rings into the map whenever the fetched data
-  // changes. ----
-  useEffect(() => {
-    const map = mapRef.current;
-    if (!map || !mapReady) return;
-    (map.getSource("reach-rings") as maplibregl.GeoJSONSource | undefined)?.setData(
-      reach ? reachRingsGeoJSON(reach) : EMPTY_FC,
-    );
-  }, [reach, mapReady]);
-
   // ---- 10. push chip-selected amenity/station dots -- a pure client-side
   // filter (spec: chip toggles must update the map "without re-searching
   // the address"), no network call here. ----
@@ -1381,14 +1459,13 @@ export function MapView({
   // and `destinationHighlight` already arrive as props, rather than patched
   // per-case in either CellReportView.tsx or GettingAroundField.tsx.
   //
-  // Baseline/always-on layers (the searched-address reach-rings, and the
-  // preference-chip-driven reach-dots) are deliberately NOT part of this
-  // rule -- they are steady-state context a user opted into (a chip toggle,
-  // or simply having searched an address), not a momentary "what am I
-  // pointing at" signal, so they keep their own existing, already-low
-  // opacity regardless of what else is highlighted. reach-dots is also
-  // painted in INK, not RED (see buildReachLayers()'s own comment), so it
-  // never competes with the red palette these two systems share in the
+  // The baseline/always-on preference-chip-driven reach-dots layer is
+  // deliberately NOT part of this rule -- it's steady-state context a user
+  // opted into (a chip toggle), not a momentary "what am I pointing at"
+  // signal, so it keeps its own existing, already-low opacity regardless of
+  // what else is highlighted. It's also painted in INK, not RED (see
+  // buildReachLayers()'s own comment), so it never competes with the
+  // red palette these two systems share in the
   // first place. ----
   //
   // MOTION WAVE (2026-08-03, item 3, "zone-preview fades/scales in (~200ms)
@@ -1666,6 +1743,37 @@ export function MapView({
           the MAP's bonus point layer is still in flight. */}
       {highlightedTile === "amenities" && !reach && reachLoading && (
         <p className="mapfield__note mono">Loading nearby places to highlight on the map…</p>
+      )}
+
+      {/* WAVE 6c item 7 (2026-08-11, Noah: "route lines don't preview").
+          REPRODUCED, then root-caused: the wiring (toggle -> hover ->
+          GET /api/route -> onRouteHighlight -> this file's own route-line
+          effect) is entirely correct -- confirmed live, the real line
+          DOES draw, every time, once its one real dependency is ready.
+          That dependency is `geo` (GET /api/map, this component's own
+          local building/street/subway overlay -- `routeLineGeoJSON()`
+          needs it to resolve a shape_id into real coordinates), and
+          GET /api/map measured a consistent ~4-5s server-side response
+          time on THIS machine across three repeated direct timed
+          requests -- not a one-time cold-boot cost, a real per-request
+          latency this endpoint has every time. `routeHighlight` itself
+          comes from a SEPARATE, fast fetch (GET /api/route) with no such
+          delay, so it very plausibly resolves to a real, non-empty
+          shape_id array WHILE `geo` is still in flight -- exactly what a
+          user toggling "Route lines: on" and immediately hovering a
+          destination row hits. The existing `loading && "Loading the
+          neighborhood record…"` message above already covers this window
+          in principle, but says nothing about route lines specifically,
+          and sits low in the map card, easy to not connect to a toggle
+          and hover that both happened in the side panel. This note is the
+          same fix precedent as the amenities-tile note just above it
+          (2026-08-03 UX-fix wave, same root-cause SHAPE: a real, already-
+          fetched-elsewhere UI action racing a second, independent,
+          slower fetch) -- feature-specific, not a generic spinner. */}
+      {loading && routeHighlight !== null && routeHighlight.length > 0 && (
+        <p className="mapfield__note mono">
+          Finding the real route line — still loading this address's street/transit detail…
+        </p>
       )}
 
       {/* LAYOUT-V3 WAVE 1f item 5's own "ⓘ How this map is made" link (which
