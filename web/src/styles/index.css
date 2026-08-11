@@ -273,52 +273,59 @@ body {
    Header.tsx itself is deleted, not just unmounted; the app now opens
    straight at the search bar. Removed here rather than left as dead CSS. */
 
-/* ---------- address search ---------- */
-.search {
-  padding-top: var(--space-8);
-}
-
-.search:not(.search--compact) {
-  min-height: calc(100dvh - 20rem);
+/* ---------- persistent app shell (LAYOUT-V3 WAVE 6, 2026-08-11) ----------
+   SPEC-layout-v3.md §8 Wave 6, Noah: "a more consistent home page/navbar
+   stuff -- it feels confusing that things change a lot depending on where
+   i click." `.shell` (App.tsx) wraps the app's one persistent anchor (the
+   search bar, `.search`, unchanged in markup) plus its two quiet links --
+   mounted ONCE, above the report/disclosure branch, so it renders the exact
+   same DOM in every one of the five views. No border, no background, no
+   title of its own: "the search bar IS the identity" (spec's own words),
+   not a decorative bar framing it. `.shell__link` uses a constant font-
+   weight between its active/inactive states (colour + underline only) so
+   toggling `aria-current` never changes the shell's own measured width. */
+.shell__nav {
   display: flex;
-  flex-direction: column;
-  justify-content: center;
+  gap: var(--space-5);
+  margin-top: var(--space-3);
 }
 
-.search--compact {
-  padding-top: var(--space-6);
-}
-
-.search__intro {
-  max-width: 52rem;
-  margin: 0 0 var(--space-7);
-}
-
-/* WAVE 4 (2026-08-11): `.search__kicker` removed -- orphaned by Wave 1d
-   item 6 deleting the masthead kicker; nothing in App.tsx/AddressSearch.tsx
-   has rendered it since. */
-.search__headline {
-  font-family: var(--font-display);
-  font-weight: 700;
-  font-stretch: condensed;
-  font-size: var(--text-display-lg);
-  line-height: 1.04;
-  letter-spacing: var(--tracking-tight);
+.shell__link {
+  border: none;
+  padding: 0;
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  font-weight: 600;
+  letter-spacing: var(--tracking-wide);
   text-transform: uppercase;
-  margin-top: var(--space-4);
+  color: var(--steel);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  transition: color 0.12s var(--ease);
 }
 
-.search__headline em {
-  font-style: normal;
-  color: var(--red);
-}
-
-.search__sub {
-  margin-top: var(--space-5);
-  max-width: 62ch;
-  font-size: var(--text-md);
-  line-height: 1.6;
+.shell__link:hover {
   color: var(--ink);
+}
+
+.shell__link[aria-current="page"] {
+  color: var(--ink);
+  text-decoration: none;
+}
+
+/* ---------- address search ---------- */
+/* LAYOUT-V3 WAVE 6 (2026-08-11, SPEC-layout-v3.md §8): one slim size, every
+   view -- the former hero/hero-vs-compact split (`.search:not(.search--
+   compact)`'s `min-height: calc(100dvh - 20rem)` centered flex, plus the
+   `.search__intro` headline/sub-copy block) is gone. That split was the
+   single largest source of the shell resizing between the fresh-load view
+   and every other view -- this wave's own binding acceptance is a byte-
+   identical shell bounding box across all five view states, which a bar
+   that changes height on first report load cannot satisfy. See
+   AddressSearch.tsx's own comment for why the hero copy itself was cut
+   outright rather than relocated. */
+.search {
+  padding-top: var(--space-6);
 }
 
 .search__form {
@@ -1435,26 +1442,12 @@ button.search__pin:disabled {
   max-width: 74ch;
 }
 
-/* LAYOUT-V3 WAVE 1f item 5 (2026-08-11, SPEC-layout-v3.md §8): replaces the
-   two always-visible `geo.basemap_note`/`reach.method_note` paragraphs
-   (`.mapfield__note`, above) that used to sit here -- a small tap target,
-   not a paragraph, matching `.footer__disclosurelink`'s own "reads as a
-   real link, not a competing CTA" register. Their text still exists
-   verbatim, one tap away (DisclosurePage.tsx's new "Reading the map"
-   section) -- see MapView.tsx's own comment for the honesty-inventory
-   reasoning. */
-.mapfield__disclosurelink {
-  display: inline-block;
-  margin-top: var(--space-3);
-  font-size: var(--text-2xs);
-  color: var(--steel);
-  text-decoration: underline;
-  text-underline-offset: 2px;
-}
-
-.mapfield__disclosurelink:hover {
-  color: var(--ink);
-}
+/* LAYOUT-V3 WAVE 6 (2026-08-11): `.mapfield__disclosurelink` (the old
+   view-scoped "ⓘ How this map is made" tap target, shown only once a
+   report had loaded) is gone along with the JSX button it styled -- see
+   MapView.tsx's own comment where that button used to render. The app's
+   one persistent shell now carries this same link (as "Methodology"),
+   always present, in every view -- not a second, conditional copy of it. */
 
 /* LAYOUT-V3 WAVE 1f item 2 (2026-08-11): `.mapfield__note--reserved` (the
    `visibility:hidden`-but-space-reserving CLS fix for the old destination-
@@ -1917,16 +1910,10 @@ button.search__pin:disabled {
   line-height: 1.6;
 }
 
-/* LAYOUT-V3 WAVE 1d item 14 (2026-08-03, SPEC-layout-v3.md §8) -- the
-   disclosure page's one guaranteed entry point, always reachable
-   regardless of report state. Underlined, not button-chrome: reads as a
-   real link inline in the footer's own sentence, not a competing CTA. */
-.footer__disclosurelink {
-  text-decoration: underline;
-  text-underline-offset: 2px;
-  font-weight: 600;
-  color: var(--ink);
-}
+/* LAYOUT-V3 WAVE 6 (2026-08-11): `.footer__disclosurelink` is gone -- the
+   button it styled is gone too (see App.tsx's own comment by the footer:
+   the shell's persistent "Methodology" link now owns this reachability,
+   in every view, not just the ones with a footer visible). */
 
 /* ---------- disclosure page (LAYOUT-V3 WAVE 1d item 14, 2026-08-03) ----------
    The honest home for every methodology/caveat/source string item 10 cut
@@ -1942,10 +1929,6 @@ button.search__pin:disabled {
 .disclosure__head {
   border-top: 1.5px solid var(--ink);
   padding-top: var(--space-6);
-}
-
-.disclosure__back {
-  margin-bottom: var(--space-5);
 }
 
 .disclosure__title {

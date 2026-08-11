@@ -669,7 +669,6 @@ export function MapView({
   crimePrecinct,
   destinationHighlight,
   routeHighlight,
-  onOpenDisclosure,
 }: {
   // The real searched address, or `null` when the current selection came
   // from a bare grid click (no address) -- drives the local building/
@@ -715,20 +714,6 @@ export function MapView({
   // above -- GettingAroundField owns the toggle state and the GET
   // /api/route fetch, this prop is just the resolved result.
   routeHighlight: string[] | null;
-  // LAYOUT-V3 WAVE 1f item 5 (2026-08-11, SPEC-layout-v3.md §8, Noah: "the
-  // walk-rings caveat paragraph sits exposed below the map ... in this
-  // version we cut down all this fluff"). `geo.basemap_note` and
-  // `reach.method_note` used to always render as two full-sentence
-  // paragraphs directly below the map frame -- real text, but read as
-  // clutter, and it's what mostly ATE the "vertical gap" Noah separately
-  // flagged (item 2): most of that visual gap was actually these two
-  // paragraphs' own box height, not empty space. Both moved verbatim into
-  // DisclosurePage.tsx's new "Reading the map" section (never deleted --
-  // this app's honesty rule); this optional callback is what the small (i)
-  // affordance below calls instead of rendering the text inline. Optional
-  // so this component still renders standalone (tests, future reuse)
-  // without a disclosure page to open.
-  onOpenDisclosure?: () => void;
 }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<MapLibreMap | null>(null);
@@ -1656,40 +1641,17 @@ export function MapView({
         <p className="mapfield__note mono">Loading nearby places to highlight on the map…</p>
       )}
 
-      {/* LAYOUT-V3 WAVE 1f item 5 -- see this file's own `onOpenDisclosure`
-          prop comment for why these two paragraphs (`geo.basemap_note`,
-          `reach.method_note`) no longer render inline. One small, mono,
-          tap-to-open affordance replaces both -- never rendered until
-          there's real map content to explain (mirrors every other
-          conditional note in this block). */}
-      {(geo || reach) && onOpenDisclosure && (
-        <button type="button" className="mapfield__disclosurelink mono" onClick={onOpenDisclosure}>
-          ⓘ How this map is made
-        </button>
-      )}
-      {/* LAYOUT-V3 WAVE 1f item 2 (2026-08-11, SPEC-layout-v3.md §8, Noah:
-          "vertical gap ... is too large -- tighten"). This note used to
-          render here too (as a visible paragraph while hovering, and a
-          `visibility:hidden`-but-space-reserving one otherwise -- see the
-          MOTION WAVE comment this replaces, below, for the real mount/
-          unmount CLS bug that reserved box was fixing). Measured live
-          (2026-08-11): that reserved box alone was 116px tall at 375px
-          viewport width (this sentence is long enough to wrap ~6 lines at
-          panel width) -- the single largest remaining contributor to the
-          "too-large gap" once item 5's other two notes had already moved
-          out. Folded into the same `onOpenDisclosure` link as those two
-          (DisclosurePage.tsx's "Reading the map" section carries this exact
-          text verbatim now) rather than kept as a third always-reserved
-          box. This ALSO fully retires the original MOTION WAVE bug this
-          replaces, not just works around it: that oscillation depended on
-          Getting Around sitting in normal document flow directly BELOW
-          `.mapfield` (App.tsx's pre-1f JSX order) so a height change here
-          shifted the hovered row out from under the cursor -- item 4 moved
-          Getting Around into the side panel, a separate grid COLUMN, so
-          even the live (pre-fold) version of this note could no longer
-          shift it; removing the note here entirely (rather than keeping a
-          conditional, non-reserved version) is a genuine simplification,
-          not a fix for a bug that could still happen. */}
+      {/* LAYOUT-V3 WAVE 1f item 5's own "ⓘ How this map is made" link (which
+          used to live here, scoped to `geo || reach`) is gone as of WAVE 6
+          (2026-08-11, SPEC-layout-v3.md §8) -- it was itself an instance of
+          the chrome-that-varies-by-view this wave exists to remove (present
+          only once a report had loaded, absent on a bare map). The app's
+          one persistent shell (App.tsx) now carries a single, always-
+          present "Methodology" link that reaches the exact same
+          DisclosurePage.tsx destination, including this same "Reading the
+          map" section (`geo.basemap_note`/`reach.method_note`/the
+          destination-preview zone note all still live there verbatim,
+          unchanged by this wave). */}
     </div>
   );
 }
