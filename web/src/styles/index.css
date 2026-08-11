@@ -2253,9 +2253,11 @@ button.search__pin:disabled {
   .wrap {
     padding: 16px 1.1rem 4rem;
   }
-  .field {
-    padding: 1.1rem 1.1rem 1.25rem;
-  }
+  /* WAVE 5 (2026-08-11): `.field`'s mobile padding override removed --
+     orphaned by Wave 4's dead-component removal (`.field` itself was
+     deleted with ReportView.tsx; nothing in the app has rendered this
+     class since), just missed in that pass since it lived inside this
+     media query rather than beside the base rule. */
   /* At narrow widths .search__field button (fixed-width, nowrap, uppercase
      mono "PULL THE RECORD") was eating enough of the row that the input had
      no floor and scrolled its own typed text behind the button -- confirmed
