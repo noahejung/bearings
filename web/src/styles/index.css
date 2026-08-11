@@ -170,6 +170,17 @@ table {
   --space-8: 3rem; /* 48px -- major section margin (report, search hero) */
   --space-9: 4rem; /* 64px -- largest section break (fact-check) */
 
+  /* WAVE 6e (2026-08-11, Noah: "can we add a very small rounded edge to all
+     the boxes"). ONE token, applied consistently to every box-like
+     container (tiles, cards, the search field, chips, buttons, the map
+     frame, etc.) -- explicitly overrides VISUAL.md §2's prior sharp-corner
+     convention (documented in that file's token table and in this wave's
+     own report, not silently). Kept deliberately tiny -- Noah's own "very
+     small" -- so the tDR steel-set register (grid-first, no gradients/drop
+     shadows/chrome) still reads through; this is a corner softness, not a
+     rounded-card redesign. */
+  --radius-sm: 3px;
+
   /* ---------- motion tokens (data-viz animations wave, 2026-08-03) ----------
      Defined ONCE; every transition/animation this wave adds (and future ones
      should add) reads these instead of a fresh literal duration/curve --
@@ -381,6 +392,12 @@ body {
   align-items: stretch;
   gap: 0;
   border: 1.5px solid var(--ink);
+  /* WAVE 6e: `overflow: hidden` clips the flush edge-to-edge input/buttons
+     inside to this box's own rounded corners -- without it, `border-radius`
+     on the container alone leaves the last button's square corner poking
+     past the rounded edge. */
+  border-radius: var(--radius-sm);
+  overflow: hidden;
 }
 
 .search__field input {
@@ -498,6 +515,7 @@ button.search__pin:disabled {
   z-index: 5;
   border: 1.5px solid var(--ink);
   border-top: none;
+  border-radius: 0 0 var(--radius-sm) var(--radius-sm);
   background: var(--bone);
   max-height: 16rem;
   overflow-y: auto;
@@ -526,6 +544,7 @@ button.search__pin:disabled {
   margin: var(--space-4) 0 0;
   padding: var(--space-4) var(--space-5);
   border: 1.5px solid var(--red);
+  border-radius: var(--radius-sm);
   color: var(--red);
   font-family: var(--font-mono);
   font-size: var(--text-sm);
@@ -617,23 +636,16 @@ button.search__pin:disabled {
    less-obvious feature that genuinely benefits from an explicit "here's
    what this section is" framing -- see the Wave 1c report's kept/removed
    inventory for the reasoning). */
-/* UX-FIX 2026-08-03 (audit finding #7): the top border/spacing that used
-   to live on `.record-line` itself moves to this new wrapper so a kicker
-   line can sit above the address without a border rule cutting between
-   them -- `.record-line` keeps its own text styling untouched. */
+/* WAVE 6e (2026-08-11, Noah live-use: "no divider needed between search bar
+   and the rest"): the border-top this rule used to carry (UX-FIX 2026-08-03
+   finding #7) existed to separate the "Confirmed as" kicker + heading pair
+   from the search field above it -- both the kicker (see App.tsx's own
+   comment where that paragraph used to render) and this rule are gone
+   together; `margin-top`/`padding-top` alone still give the heading room to
+   breathe without a ruled line under the search bar. */
 .record {
   margin-top: var(--space-6);
   padding-top: var(--space-4);
-  border-top: 1px solid var(--ink);
-}
-
-.record-line__kicker {
-  font-size: var(--text-3xs);
-  font-weight: 600;
-  letter-spacing: var(--tracking-wider);
-  text-transform: uppercase;
-  color: var(--steel);
-  margin-bottom: var(--space-2);
 }
 
 .record-line {
@@ -699,6 +711,7 @@ button.search__pin:disabled {
   margin-top: var(--space-5);
   padding: var(--space-4);
   border: 1px dashed var(--steel);
+  border-radius: var(--radius-sm);
   font-family: var(--font-mono);
   font-size: var(--text-2xs);
   color: var(--ink);
@@ -888,6 +901,7 @@ button.search__pin:disabled {
   width: 1.4rem;
   height: 1.4rem;
   border: 1px solid transparent;
+  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--steel);
   font-size: var(--text-md);
@@ -909,6 +923,7 @@ button.search__pin:disabled {
   margin-top: var(--space-3);
   padding: var(--space-3) var(--space-4);
   border: 1.5px solid var(--red);
+  border-radius: var(--radius-sm);
   color: var(--red);
   font-family: var(--font-mono);
   font-size: var(--text-2xs);
@@ -929,6 +944,9 @@ button.search__pin:disabled {
   display: flex;
   align-items: stretch;
   border: 1.5px solid var(--ink);
+  /* WAVE 6e: same flush-child clip as `.search__field` above. */
+  border-radius: var(--radius-sm);
+  overflow: hidden;
 }
 
 .anchors__addfield input {
@@ -984,6 +1002,7 @@ button.search__pin:disabled {
   z-index: 5;
   border: 1.5px solid var(--ink);
   border-top: none;
+  border-radius: 0 0 var(--radius-sm) var(--radius-sm);
   background: var(--bone);
   max-height: 14rem;
   overflow-y: auto;
@@ -1142,6 +1161,7 @@ button.search__pin:disabled {
   text-transform: uppercase;
   padding: var(--space-1) var(--space-3);
   border: 1px solid var(--steel);
+  border-radius: var(--radius-sm);
   color: var(--ink);
 }
 
@@ -1185,6 +1205,7 @@ button.search__pin:disabled {
   display: inline-flex;
   align-items: center;
   border: 1.5px solid var(--ink);
+  border-radius: var(--radius-sm);
   padding: var(--space-2) var(--space-3);
   font-family: var(--font-mono);
   font-weight: 700;
@@ -1256,6 +1277,7 @@ button.search__pin:disabled {
   resize: vertical;
   background: transparent;
   border: 1.5px solid var(--ink);
+  border-radius: var(--radius-sm);
   padding: var(--space-4) var(--space-5);
   font-size: var(--text-md);
   font-family: var(--font-display);
@@ -1272,6 +1294,7 @@ button.search__pin:disabled {
 
 .button {
   border: 1.5px solid var(--ink);
+  border-radius: var(--radius-sm);
   background: var(--ink);
   color: var(--bone);
   padding: var(--space-4) var(--space-5);
@@ -1326,6 +1349,7 @@ button.search__pin:disabled {
   gap: var(--space-3);
   padding: var(--space-3) var(--space-4);
   border: 1px solid var(--ink);
+  border-radius: var(--radius-sm);
   font-family: var(--font-mono);
   font-size: var(--text-2xs);
   letter-spacing: var(--tracking-wide);
@@ -1463,10 +1487,14 @@ button.search__pin:disabled {
    deliberately, a canvas with literally zero breathing room inside its own
    frame reads as a rendering bug, not a border) -- see the report for the
    exact measured numbers this round produced. */
+/* WAVE 6e (2026-08-11, Noah live-use: "no divider needed between search bar
+   and the rest" + "no need for divider line between tags and map"): the
+   top/bottom ruled borders this card used to carry are gone -- `.mapfield__
+   frame` (below) already borders the actual map canvas, so removing this
+   OUTER card's own top/bottom rules loses no framing the map itself relies
+   on, just the extra hairlines above/below the whole card. */
 .mapfield {
   grid-area: content;
-  border-top: 1px solid var(--ink);
-  border-bottom: 1px solid var(--ink);
   padding: 0 0 var(--space-6);
 }
 
@@ -1474,6 +1502,7 @@ button.search__pin:disabled {
   margin-top: var(--space-4);
   padding: var(--space-4);
   border: 1px dashed var(--steel);
+  border-radius: var(--radius-sm);
   font-family: var(--font-mono);
   font-size: var(--text-2xs);
   line-height: 1.55;
@@ -1503,6 +1532,7 @@ button.search__pin:disabled {
 
 .mapfield__toggle {
   border: 1.5px solid var(--ink);
+  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--ink);
   padding: var(--space-3) var(--space-4);
@@ -1532,7 +1562,14 @@ button.search__pin:disabled {
 .mapfield__frame {
   position: relative;
   border: 1.5px solid var(--ink);
+  border-radius: var(--radius-sm);
   padding: 8px;
+  /* WAVE 6e: no `overflow: hidden` here on purpose -- the 8px padding
+     already keeps `.mapfield__map`'s own square canvas corners well clear
+     of this frame's rounded border arc, so nothing needs clipping to look
+     right; adding overflow would risk cutting off a MapLibre popup
+     (`.buildinginfo`) that legitimately extends past the map's edge near a
+     boundary marker. */
 }
 
 /* UX-FIX 2026-08-03 (audit finding #1) -- see MapView.tsx's own comment on
@@ -1570,7 +1607,7 @@ button.search__pin:disabled {
    control chrome in its own visual language -- retint the navigation
    control to the tDR palette rather than leaving MapLibre's default blue. */
 .maplibregl-ctrl-group {
-  border-radius: 0 !important;
+  border-radius: var(--radius-sm) !important;
   border: 1.5px solid var(--ink) !important;
   box-shadow: none !important;
 }
@@ -1769,6 +1806,7 @@ button.search__pin:disabled {
    a block has been clicked or searched. */
 .sidepanel__placeholder {
   border: 1.5px solid var(--ink);
+  border-radius: var(--radius-sm);
   padding: var(--space-5);
   min-height: 200px;
   font-family: var(--font-mono);
@@ -1824,6 +1862,7 @@ button.search__pin:disabled {
 
 .tile {
   border: 1px solid var(--ink);
+  border-radius: var(--radius-sm);
   padding: var(--space-4);
   display: flex;
   flex-direction: column;
@@ -2012,6 +2051,7 @@ button.search__pin:disabled {
   width: 1.4rem;
   height: 1.4rem;
   border: 1px solid transparent;
+  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--steel);
   font-size: var(--text-md);
@@ -2242,10 +2282,21 @@ button.search__pin:disabled {
    row-gap (between the "content"/map row and this "chips" row) already
    supplies the gap this rule used to add above itself when it sat directly
    under AddressSearch in normal document flow. */
+/* WAVE 6e (2026-08-11, Noah live-use: "the alignment should be with the
+   bottom of the tags. not the line"). `.appgrid`'s own structural alignment
+   (Wave 6b) already puts THIS BOX's own bottom edge on the same grid line as
+   `.sidepanel`'s -- confirmed 0px diff live via Playwright -- but this rule's
+   own `padding-bottom` (was `var(--space-4)`, 12px) sat between the last
+   chip's real bottom and that line, so the two only agreed at the level of
+   an invisible padded box, not the actual tag pills a viewer sees. Dropping
+   the bottom half of the padding (top half kept, for breathing room below
+   the map) closes that last 12px -- re-measured live: last-chip bottom now
+   sits exactly on the sidebar's own bottom line, 0px diff, not just the
+   box's. */
 .prefbar {
   grid-area: chips;
   margin-top: 0;
-  padding: var(--space-4) 0;
+  padding: var(--space-4) 0 0;
   display: flex;
   flex-direction: column;
   gap: var(--space-3);
@@ -2259,6 +2310,7 @@ button.search__pin:disabled {
 
 .prefbar__chip {
   border: 1.5px solid var(--ink);
+  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--ink);
   padding: var(--space-2) var(--space-4);
@@ -2291,6 +2343,7 @@ button.search__pin:disabled {
   align-items: center;
   gap: var(--space-2);
   border: 1px dashed var(--steel);
+  border-radius: var(--radius-sm);
   padding: var(--space-2) var(--space-2) var(--space-2) var(--space-3);
   font-family: var(--font-mono);
   font-size: var(--text-3xs);
@@ -2348,6 +2401,7 @@ button.search__pin:disabled {
   color: var(--ink);
   background: var(--bone);
   border: 1px solid var(--red);
+  border-radius: var(--radius-sm);
   padding: 1px 5px;
   white-space: nowrap;
 }
@@ -2355,17 +2409,21 @@ button.search__pin:disabled {
 /* ---------- per-building info marker (LAYOUT-V3 WAVE 1e) ----------
    Anchored ("bottom") to the clicked residential building's own footprint
    (MapView.tsx's showBuildingInfo()) -- same bone/ink/mono chrome as
-   .tile/.sidepanel__placeholder (border, no shadow, no radius, per
-   VISUAL.md §2's "no drop shadows, no gradients" rule), sized for a compact
-   on-map card rather than a full-width panel. WAVE 6d renamed the old
-   `.tiledetail` this comment used to cite to `.tile__expandedbody` -- see
-   that class's own comment; the chrome convention it names is unchanged. */
+   .tile/.sidepanel__placeholder (border, no shadow, per VISUAL.md §2's "no
+   drop shadows, no gradients" rule -- WAVE 6e (2026-08-11) adds the same
+   small `--radius-sm` corner every other box in this file now carries, see
+   that token's own comment for the sharp-corner-convention override), sized
+   for a compact on-map card rather than a full-width panel. WAVE 6d renamed
+   the old `.tiledetail` this comment used to cite to `.tile__expandedbody`
+   -- see that class's own comment; the chrome convention it names is
+   unchanged. */
 .buildinginfo {
   position: relative;
   min-width: 148px;
   max-width: 200px;
   padding: var(--space-3);
   border: 1.5px solid var(--ink);
+  border-radius: var(--radius-sm);
   background: var(--bone);
   font-family: var(--font-mono);
 }
