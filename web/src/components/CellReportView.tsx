@@ -191,10 +191,22 @@ function AddDestinationField({ onAdd }: { onAdd: (query: string) => void }) {
   );
 }
 
-// "Getting around" -- the one transit field, rendered below the map, full
-// width (SPEC-layout-v3.md §3/§5: moved out of the side panel deliberately,
-// since it grows editable destination rows in Wave 3, which need real
-// width, not a narrow column).
+// "Getting around" -- the one transit field.
+//
+// LAYOUT-V3 WAVE 1f item 4 (2026-08-11, SPEC-layout-v3.md §8, "primary"
+// option): moved BACK into the side panel, below the tile grid -- Wave 1/3's
+// own reasoning above ("moved out of the side panel deliberately... needs
+// real width, not a narrow column") no longer held once Wave 1e dropped the
+// panel to four tiles, leaving the panel column genuinely shorter than the
+// map and real unused vertical room at its own bottom. The 4-column desktop
+// `.anchor` grid this wave's own predecessor used doesn't fit a 360px panel
+// (9.5rem+8rem+1.4rem of fixed columns alone is ~304px, leaving almost
+// nothing for the bar itself) -- this component's own row markup is
+// unchanged from Wave 3, but index.css's `.anchor` rule is rewritten to the
+// stacked (label+delete / track / value) layout this file's mobile
+// breakpoint already proved legible at an even narrower width (298px usable
+// at 375px viewport, per that rule's own pre-1f measurements) -- see
+// index.css's own comment on `.anchor` for the exact reasoning.
 //
 // LAYOUT-V3 WAVE 3 (2026-08-03, SPEC-layout-v3.md §5): the 4 baked ANCHORS
 // stay on their existing fast path (cell.transit.to_anchors, a pure baked-
@@ -455,26 +467,23 @@ export function GettingAroundField({
   }
 
   return (
-    <div className="fields">
-      <article className="field field--wide" aria-labelledby="cell-transit-heading">
-        <header className="field__head">
-          <div>
-            <h2 className="field__title" id="cell-transit-heading">
-              Getting around
-            </h2>
-          </div>
-          {/* Every other card's stamp answers "does this card have real
-              content" (crime: !crime -> no_data; building age: !hasBuildingAge
-              -> no_data). Transit's cell block ALWAYS has real content --
-              cellprofile.py's _transit_by_cell() fills all 4 anchors with
-              either a real ride time or a real, honest unreachable_reason,
-              never nothing -- so it's hardcoded confirmed to match, same as
-              amenities/noise/trees below. */}
-          <Stamp variant="confirmed" compact />
-        </header>
-
+    <div className="sidepanel__anchorswrap">
+      {/* LAYOUT-V3 WAVE 1f item 5 (2026-08-11, SPEC-layout-v3.md §8, Noah:
+          "the bars with destination names are self-explanatory"). The
+          "GETTING AROUND" heading, its CONFIRMED stamp (the one stamp that
+          survived Wave 1d's tile-stamp cut -- this card is a `.field`, not
+          a `.tile`, so item 1's cut never reached it until now), and the
+          "RIDE TIME TO —" label are all gone outright, not relocated --
+          each named place already appears as its own row label right next
+          to a real minute value, so none of the three added information a
+          reader didn't already have from the rows themselves (the same
+          "does removing this make the next user action harder? No" test
+          Wave 1c's own cut pass established). `aria-label` keeps the exact
+          same accessible name ("Getting around") a screen reader had
+          before, now on the article itself since there's no visible
+          heading left for `aria-labelledby` to point at. */}
+      <article className="tile tile--anchors" aria-label="Getting around">
         <div className="anchors">
-          <p className="anchors__label">Ride time to —</p>
           {visibleAnchorEntries.map(([key, minutes]) => {
             const reachable = minutes >= 0;
             const pct = reachable ? Math.min(100, (minutes / BAR_SCALE_MAX_MIN) * 100) : 0;
@@ -490,7 +499,9 @@ export function GettingAroundField({
                 aria-pressed={selected}
                 {...rowHandlers(key)}
               >
-                <span className="anchor__label">{ANCHOR_LABELS[key]}</span>
+                <span className="anchor__label" title={ANCHOR_LABELS[key]}>
+                  {ANCHOR_LABELS[key]}
+                </span>
                 <span className="anchor__track">
                   {/* Motion wave item 1: always rendered (never conditionally
                       omitted) so a mount-to-mount TRANSFORM change is what
@@ -530,7 +541,9 @@ export function GettingAroundField({
                 aria-pressed={selected}
                 {...rowHandlers(d.id)}
               >
-                <span className="anchor__label">{d.label}</span>
+                <span className="anchor__label" title={d.label}>
+                  {d.label}
+                </span>
                 <span className="anchor__track">
                   <span className="anchor__fill" style={{ transform: `scaleX(${pct / 100})` }} />
                 </span>

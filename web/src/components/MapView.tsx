@@ -282,14 +282,11 @@ function withFadeFallback(
 // reproduces the backend's own ring geometry.
 const DESTINATION_PREVIEW_BANDS_MINUTES = [5, 10, 15] as const;
 
-// Honest caption for the zone preview -- matches the exact register/claim
-// reach.METHOD_NOTE already established ("a straight line ... not an
-// actual route"), rewritten for a destination instead of a searched
-// address since this is a client-only computed overlay with no backend
-// endpoint of its own (see the rings/point builders above), not a literal
-// copy of that backend string.
-const DESTINATION_PREVIEW_NOTE =
-  "Roughly how far you could walk from this destination in 5, 10, and 15 minutes — a straight line, not an actual route, the same approximation used for the rings around a searched address.";
+// LAYOUT-V3 WAVE 1f item 2 (2026-08-11): the "Honest caption for the zone
+// preview" this constant used to hold no longer renders inline below the
+// map -- see this file's own comment further down (where the note used to
+// render) for why, and DisclosurePage.tsx's "Reading the map" section for
+// where its exact text lives now (moved verbatim, not deleted).
 
 function destinationRingPolygon(lat: number, lng: number, radiusM: number, n = 64): [number, number][] {
   const dLatPerM = 1 / 111_320;
@@ -644,6 +641,7 @@ export function MapView({
   highlightedTile,
   crimePrecinct,
   destinationHighlight,
+  onOpenDisclosure,
 }: {
   // The real searched address, or `null` when the current selection came
   // from a bare grid click (no address) -- drives the local building/
@@ -681,6 +679,20 @@ export function MapView({
   // point up, the same "child owns the interaction, parent just relays a
   // point/key" shape onTileHighlight/highlightedTile already establishes.
   destinationHighlight: { lat: number; lng: number } | null;
+  // LAYOUT-V3 WAVE 1f item 5 (2026-08-11, SPEC-layout-v3.md §8, Noah: "the
+  // walk-rings caveat paragraph sits exposed below the map ... in this
+  // version we cut down all this fluff"). `geo.basemap_note` and
+  // `reach.method_note` used to always render as two full-sentence
+  // paragraphs directly below the map frame -- real text, but read as
+  // clutter, and it's what mostly ATE the "vertical gap" Noah separately
+  // flagged (item 2): most of that visual gap was actually these two
+  // paragraphs' own box height, not empty space. Both moved verbatim into
+  // DisclosurePage.tsx's new "Reading the map" section (never deleted --
+  // this app's honesty rule); this optional callback is what the small (i)
+  // affordance below calls instead of rendering the text inline. Optional
+  // so this component still renders standalone (tests, future reuse)
+  // without a disclosure page to open.
+  onOpenDisclosure?: () => void;
 }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<MapLibreMap | null>(null);
@@ -1592,42 +1604,40 @@ export function MapView({
         <p className="mapfield__note mono">Loading nearby places to highlight on the map…</p>
       )}
 
-      {geo && <p className="mapfield__note mono">{geo.basemap_note}</p>}
-      {reach && <p className="mapfield__note mono">{reach.method_note}</p>}
-      {/* MOTION WAVE (2026-08-03) -- REAL BUG FOUND LIVE, not guessed: this
-          note used to mount/unmount on every hover-start/hover-end (the
-          same rapid cadence GettingAroundField's hover handlers already
-          drive), and each mount/unmount changes THIS component's own total
-          height. Because `.mapfield` sits ABOVE the separate "Getting
-          around" section in normal document flow (App.tsx's own JSX
-          order), that height change shifts the very row the cursor is
-          hovering OUT from under it -- which fires a native mouseleave,
-          clears `destinationHighlight`, unmounts this note, shifts the row
-          BACK under the cursor, fires mouseenter again... a genuine, self-
-          sustaining layout-shift oscillation loop, confirmed live via a
-          Playwright script instrumenting real mouseenter/mouseleave
-          timestamps on a STATIONARY simulated cursor (repeating every
-          ~15-100ms, never settling) -- not a testing artifact (ruled out
-          by pre-scrolling the target fully into view and letting the page's
-          own `scroll-behavior: smooth` settle first; the oscillation
-          persisted regardless). Pre-existing since Wave 3 (2026-08-03,
-          commit `2e50b80`, which already hovers-not-just-clicks to preview
-          a destination) -- this wave's own live-hover verification is what
-          finally exercised it. Fixed the same way any CLS-prevention
-          reserves space for a will-eventually-load element: ALWAYS
-          rendered once a report can exist (`selectedCell` is set), with
-          `mapfield__note--reserved` (index.css: `visibility: hidden`, not
-          `display: none`) hiding it visually without collapsing its box --
-          the paragraph's own height is now CONSTANT across every hover
-          start/end, so nothing below it in the page ever moves. */}
-      {selectedCell && (
-        <p
-          className={`mapfield__note mono${destinationHighlight ? "" : " mapfield__note--reserved"}`}
-          aria-hidden={!destinationHighlight}
-        >
-          {DESTINATION_PREVIEW_NOTE}
-        </p>
+      {/* LAYOUT-V3 WAVE 1f item 5 -- see this file's own `onOpenDisclosure`
+          prop comment for why these two paragraphs (`geo.basemap_note`,
+          `reach.method_note`) no longer render inline. One small, mono,
+          tap-to-open affordance replaces both -- never rendered until
+          there's real map content to explain (mirrors every other
+          conditional note in this block). */}
+      {(geo || reach) && onOpenDisclosure && (
+        <button type="button" className="mapfield__disclosurelink mono" onClick={onOpenDisclosure}>
+          ⓘ How this map is made
+        </button>
       )}
+      {/* LAYOUT-V3 WAVE 1f item 2 (2026-08-11, SPEC-layout-v3.md §8, Noah:
+          "vertical gap ... is too large -- tighten"). This note used to
+          render here too (as a visible paragraph while hovering, and a
+          `visibility:hidden`-but-space-reserving one otherwise -- see the
+          MOTION WAVE comment this replaces, below, for the real mount/
+          unmount CLS bug that reserved box was fixing). Measured live
+          (2026-08-11): that reserved box alone was 116px tall at 375px
+          viewport width (this sentence is long enough to wrap ~6 lines at
+          panel width) -- the single largest remaining contributor to the
+          "too-large gap" once item 5's other two notes had already moved
+          out. Folded into the same `onOpenDisclosure` link as those two
+          (DisclosurePage.tsx's "Reading the map" section carries this exact
+          text verbatim now) rather than kept as a third always-reserved
+          box. This ALSO fully retires the original MOTION WAVE bug this
+          replaces, not just works around it: that oscillation depended on
+          Getting Around sitting in normal document flow directly BELOW
+          `.mapfield` (App.tsx's pre-1f JSX order) so a height change here
+          shifted the hovered row out from under the cursor -- item 4 moved
+          Getting Around into the side panel, a separate grid COLUMN, so
+          even the live (pre-fold) version of this note could no longer
+          shift it; removing the note here entirely (rather than keeping a
+          conditional, non-reserved version) is a genuine simplification,
+          not a fix for a bug that could still happen. */}
     </div>
   );
 }

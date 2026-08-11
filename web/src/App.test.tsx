@@ -548,13 +548,22 @@ describe("App (full mount)", () => {
       expect(screen.getByRole("heading", { name: GEOCODE_RESULT.label })).toBeInTheDocument(),
     );
 
-    // The five real block-level report fields, from CellReportView -- named
+    // The real block-level report fields, from CellReportView -- named
     // by their own heading (VISUAL.md §1's NO-LARP rule). LAYOUT-V3 WAVE 1e
     // (2026-08-03): "building age & serious hazards" is REMOVED from this
     // grid -- it becomes a real per-building map interaction instead (see
     // CellReportView.tsx's own item-1e comment), so its absence here is
     // asserted explicitly, not just left out.
-    expect(screen.getByRole("heading", { name: /getting around/i })).toBeInTheDocument();
+    //
+    // LAYOUT-V3 WAVE 1f item 5 (2026-08-11): "Getting around" is no longer
+    // a visible heading -- its accessible name now lives on the `<article>`
+    // itself (`aria-label`, GettingAroundField's own comment), so this
+    // asserts the accessible NAME survives via `getByRole("article", ...)`
+    // (an `<article>`'s own implicit ARIA role) instead of
+    // `getByRole("heading", ...)`. Wave 1f item 4 also moved this card into
+    // the side panel -- "Midtown"'s real ride-time bar (asserted below) is
+    // the actual regression guard that it still renders at all.
+    expect(screen.getByRole("article", { name: /getting around/i })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: /grocery & everyday places/i })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: /crime near here/i })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: /noise complaints/i })).toBeInTheDocument();
