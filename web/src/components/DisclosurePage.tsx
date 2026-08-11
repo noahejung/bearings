@@ -58,6 +58,38 @@ const FALLBACK_NOISE_CAVEAT =
 const FALLBACK_HAZARD_NOTE =
   "Counts only the most serious violation class (\"immediately hazardous,\" the city's top severity rating), summed across every building on this block. Added only after an HPD (Housing Preservation and Development) inspector confirms it in person -- a step up from a raw, unverified complaint. Reflects inspection and reporting frequency, not necessarily every real issue: a 0 means no verified hazard on record, not that none exists.";
 
+// LAYOUT-V3 WAVE 1f item 5 (2026-08-11, SPEC-layout-v3.md §8, Noah: "the
+// walk-rings caveat paragraph sits exposed below the map ... cut down all
+// this fluff"). MapView.tsx used to render `geo.basemap_note` and
+// `reach.method_note` as two always-visible paragraphs directly below the
+// map; both now live here instead, behind the map's own small "How this
+// map is made" link -- verbatim, not deleted (this project's honesty rule
+// applies at the app level, same precedent Wave 1d item 14 already set for
+// the tile disclosures). Hardcoded rather than threaded down from
+// MapView's own `geo`/`reach` state: unlike TRANSIT_CAVEAT/CRIME_CAVEAT
+// above, both source constants (mapgeo.py's BASEMAP_NOTE, reach.py's
+// METHOD_NOTE) are plain module-level Python string literals with no
+// per-cell/per-address variation at all -- there is no "real live value"
+// this mirror could ever drift out of sync WITH, unlike the tree-source
+// citation that genuinely did drift once (see this file's own top comment).
+// Grepped live from the real backend source, 2026-08-11, same "Mirrors
+// bearings/X.py's Y" citation convention as every other fallback above.
+const BASEMAP_METHOD_NOTE =
+  "Everything on this map is real. The base layer -- streets, land, water -- is OpenStreetMap, a free public map. Everything on top is computed fresh from the city's own records: building outlines and streets from city property maps, subway/PATH lines from the transit agencies' own schedules, plus five per-block numbers (noise complaints, nearby places, street trees, building age, transit stations) -- each cited to its real source elsewhere in this report, nothing estimated. Click any home or apartment building for its own real year built and safety-violation record, not just the block's average.";
+const REACH_METHOD_NOTE =
+  "Roughly how far you could walk in 5, 10, and 15 minutes at a normal pace (about 3 mph) -- a straight line from the address, not an actual route, so it can overreach near rivers, parks, highways, or a long block.";
+
+// LAYOUT-V3 WAVE 1f item 2 (2026-08-11, SPEC-layout-v3.md §8): the zone-
+// preview caption that used to render below the map ONLY while hovering a
+// getting-around destination (and reserved its own box the rest of the
+// time, to avoid a real, live-diagnosed layout-shift bug -- see MapView.tsx
+// and index.css's own comments where that box used to live). Moved here
+// verbatim -- same text, same source (MapView.tsx's own former
+// `DESTINATION_PREVIEW_NOTE` constant, grepped live 2026-08-11 before it
+// was deleted), never reworded.
+const DESTINATION_PREVIEW_NOTE =
+  "Roughly how far you could walk from this destination in 5, 10, and 15 minutes — a straight line, not an actual route, the same approximation used for the rings around a searched address.";
+
 interface Section {
   title: string;
   what: string;
@@ -69,6 +101,12 @@ interface Section {
   // with no loaded cell (and therefore no real fact to state) simply omits
   // this paragraph instead of showing a stale or fabricated placeholder.
   detail?: string;
+  // LAYOUT-V3 WAVE 1f item 2: "Reading the map" is the one section carrying
+  // THREE real, previously-separate paragraphs (basemap note, reach-ring
+  // note, destination zone-preview note) rather than the usual one-fact
+  // `detail` -- optional, same "omit rather than fabricate" reasoning as
+  // `detail`/`source2` above, unused by every other section.
+  detail2?: string;
   how: string;
   source: { name: string; url: string } | null;
   // LAYOUT-V3 WAVE 1e: "Building age & serious hazards" is the one section
@@ -114,6 +152,18 @@ export function DisclosurePage({ cell, onBack }: { cell: CellProfile | null; onB
       : undefined;
 
   const sections: Section[] = [
+    {
+      // LAYOUT-V3 WAVE 1f item 5: the honest home for the two paragraphs
+      // that used to sit exposed below the map itself, not tied to any one
+      // of the six per-block metrics below -- see this file's own
+      // BASEMAP_METHOD_NOTE/REACH_METHOD_NOTE comment.
+      title: "Reading the map",
+      what: BASEMAP_METHOD_NOTE,
+      detail: REACH_METHOD_NOTE,
+      detail2: DESTINATION_PREVIEW_NOTE,
+      how: "Neither approximation routes around rivers, parks, or highways -- both are straight-line distance at a normal walking pace, not a real path.",
+      source: { name: "Protomaps Basemap (OpenStreetMap + Natural Earth)", url: "https://docs.protomaps.com/basemaps/downloads" },
+    },
     {
       title: "Getting around",
       what: "Real MTA/PATH schedules, weekday 8am departure, fastest route to four key destinations in the city.",
@@ -186,6 +236,7 @@ export function DisclosurePage({ cell, onBack }: { cell: CellProfile | null; onB
             </h3>
             <p className="disclosure__what">{s.what}</p>
             {s.detail && <p className="disclosure__what">{s.detail}</p>}
+            {s.detail2 && <p className="disclosure__what">{s.detail2}</p>}
             <p className="disclosure__how">{s.how}</p>
             {s.source && (
               <p className="disclosure__source">

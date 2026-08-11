@@ -330,6 +330,7 @@ export default function App() {
                 highlightedTile={highlightedTile}
                 crimePrecinct={cellReport?.safety.precinct ?? null}
                 destinationHighlight={destinationHighlight}
+                onOpenDisclosure={() => setShowDisclosure(true)}
               />
 
               <aside className="sidepanel" aria-label="Block record">
@@ -344,27 +345,35 @@ export default function App() {
                     15-minute walk rings plus nearby places you turn on above.
                   </p>
                 )}
-                {cellReport && <CellReportView cell={cellReport} onTileHighlight={setHighlightedTile} />}
+                {/* LAYOUT-V3 WAVE 1f item 4 (2026-08-11, SPEC-layout-v3.md
+                    §8, "primary" option): Getting Around moves INTO the
+                    side panel, below the tiles -- the panel column has
+                    always been shorter than the map (Wave 1e dropped it to
+                    4 tiles), leaving real unused vertical room at the
+                    bottom of this same column; that's its new home, not a
+                    separate full-width region below the map any more. See
+                    CellReportView.tsx's own GettingAroundField comment for
+                    the compact row redesign this required at 360px. */}
+                {cellReport && (
+                  <>
+                    <CellReportView cell={cellReport} onTileHighlight={setHighlightedTile} />
+                    <GettingAroundField cell={cellReport} onDestinationHighlight={setDestinationHighlight} />
+                  </>
+                )}
               </aside>
             </div>
 
-            {cellReport && (
-              <>
-                <GettingAroundField cell={cellReport} onDestinationHighlight={setDestinationHighlight} />
-
-                {searchedAddress && (
-                  <FactCheckView
-                    address={searchedAddress}
-                    listingText={listingText}
-                    onListingTextChange={setListingText}
-                    onSubmit={submitFactcheck}
-                    onLoadExample={loadExampleListing}
-                    loading={factcheckLoading}
-                    error={factcheckError}
-                    result={factcheckResult}
-                  />
-                )}
-              </>
+            {cellReport && searchedAddress && (
+              <FactCheckView
+                address={searchedAddress}
+                listingText={listingText}
+                onListingTextChange={setListingText}
+                onSubmit={submitFactcheck}
+                onLoadExample={loadExampleListing}
+                loading={factcheckLoading}
+                error={factcheckError}
+                result={factcheckResult}
+              />
             )}
           </>
         )}

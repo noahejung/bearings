@@ -650,36 +650,47 @@ button.search__pin:disabled {
 }
 
 .anchors {
-  margin-top: 1.2rem;
-  padding-top: 1rem;
-  border-top: 1px solid var(--ink);
   display: flex;
   flex-direction: column;
-  gap: 0.55rem;
+  gap: 0.5rem;
 }
 
-.anchors__label {
-  font-family: var(--font-mono);
-  font-size: 0.66rem;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  color: var(--steel);
-  margin-bottom: 0.15rem;
-}
+/* LAYOUT-V3 WAVE 1f item 5 (2026-08-11): the "RIDE TIME TO —" kicker
+   (`.anchors__label`) is gone from CellReportView.tsx's JSX -- removed
+   here too rather than left as dead CSS, matching this file's own
+   established "remove the rule with the element" convention. */
 
 /* LAYOUT-V3 WAVE 3 (2026-08-03, SPEC-layout-v3.md §5.1): a 4th narrow
    column for the per-row delete "×" -- the 4 default anchors and any
    custom destination share this exact row shape (`.anchor`/`.anchor--
-   custom` only changes the label's own content, never the layout). */
+   custom` only changes the label's own content, never the layout).
+   LAYOUT-V3 WAVE 1f item 4 (2026-08-11, SPEC-layout-v3.md §8): rewritten
+   to the STACKED layout (label+delete on one line, the bar on its own
+   full-width line below, the value below that) that used to be scoped to
+   `@media (max-width: 560px)` only. Now the ONLY layout, at every
+   viewport: GettingAroundField no longer renders in a full-width region
+   below the map (it moved into the 360px side-panel column -- see
+   CellReportView.tsx's own item-4 comment) so there is no wide context
+   left for the old 4-column `9.5rem 1fr 8rem 1.4rem` grid to earn its
+   keep -- that grid's fixed columns alone (152+128+22.4px, before gaps)
+   left almost nothing for the bar itself at 360px. This exact stacked
+   rule already shipped and was live-verified legible at 375px viewport
+   width (usable row width there, inside `.field`'s own padding, measured
+   ~298px) -- narrower than the ~334px this panel context gives it, so
+   reusing the SAME proven layout here carries no new risk. */
 .anchor {
   display: grid;
-  grid-template-columns: 9.5rem 1fr 8rem 1.4rem;
+  grid-template-columns: 1fr 1.4rem;
+  grid-template-areas:
+    "label delete"
+    "track track"
+    "value value";
+  gap: 0.28rem;
   align-items: center;
-  gap: 0.75rem;
   cursor: pointer;
   border: 1px solid transparent;
-  padding: 0.15rem 0.3rem;
-  margin: -0.15rem -0.3rem;
+  padding: 0.2rem 0.3rem;
+  margin: -0.2rem -0.3rem;
   /* Motion wave item 1: a deleted row (`.anchor--exiting`, below) eases
      out on these two GPU-composited properties only -- never `height`/
      `margin` (would reflow every row below it mid-transition, the exact
@@ -742,14 +753,16 @@ button.search__pin:disabled {
 }
 
 .anchor__label {
-  font-size: 0.86rem;
+  grid-area: label;
+  font-size: 0.78rem;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .anchor__track {
-  height: 0.45rem;
+  grid-area: track;
+  height: 0.4rem;
   background: rgba(138, 141, 143, 0.25);
   overflow: hidden;
 }
@@ -780,10 +793,11 @@ button.search__pin:disabled {
 }
 
 .anchor__value {
+  grid-area: value;
   font-family: var(--font-mono);
-  font-size: 0.82rem;
+  font-size: 0.76rem;
   font-weight: 700;
-  text-align: right;
+  text-align: left;
   white-space: nowrap;
 }
 
@@ -795,6 +809,8 @@ button.search__pin:disabled {
 }
 
 .anchor__delete {
+  grid-area: delete;
+  justify-self: end;
   width: 1.4rem;
   height: 1.4rem;
   border: 1px solid transparent;
@@ -824,30 +840,10 @@ button.search__pin:disabled {
   font-size: 0.78rem;
 }
 
-@media (max-width: 560px) {
-  .anchor {
-    grid-template-columns: 1fr 1.4rem;
-    grid-template-areas:
-      "label delete"
-      "track track"
-      "value value";
-    gap: 0.3rem;
-  }
-  .anchor__label {
-    grid-area: label;
-  }
-  .anchor__delete {
-    grid-area: delete;
-    justify-self: end;
-  }
-  .anchor__track {
-    grid-area: track;
-  }
-  .anchor__value {
-    grid-area: value;
-    text-align: left;
-  }
-}
+/* LAYOUT-V3 WAVE 1f item 4 (2026-08-11): the `@media (max-width: 560px)`
+   override that used to live here is gone -- its stacked layout is now the
+   ONLY `.anchor` layout (see that rule's own comment above), so there is
+   nothing left for a narrow-viewport override to add. */
 
 /* ---------- add-destination field (LAYOUT-V3 WAVE 3) ---------- */
 .anchors__add {
@@ -1514,17 +1510,33 @@ button.search__pin:disabled {
   max-width: 74ch;
 }
 
-/* MOTION WAVE (2026-08-03) -- see MapView.tsx's own comment on the
-   destination-preview note for the real, live-diagnosed layout-shift
-   oscillation this fixes. `visibility: hidden` (not `display: none`)
-   removes the box from PAINT (no border, no text, no colour -- fully
-   invisible) while leaving it fully present for LAYOUT (its height still
-   counts), which is the whole point: the note's box is always exactly this
-   same height whether a destination is currently hovered or not, so toggling
-   `destinationHighlight` on/off never changes anything below it on the page. */
-.mapfield__note--reserved {
-  visibility: hidden;
+/* LAYOUT-V3 WAVE 1f item 5 (2026-08-11, SPEC-layout-v3.md §8): replaces the
+   two always-visible `geo.basemap_note`/`reach.method_note` paragraphs
+   (`.mapfield__note`, above) that used to sit here -- a small tap target,
+   not a paragraph, matching `.footer__disclosurelink`'s own "reads as a
+   real link, not a competing CTA" register. Their text still exists
+   verbatim, one tap away (DisclosurePage.tsx's new "Reading the map"
+   section) -- see MapView.tsx's own comment for the honesty-inventory
+   reasoning. */
+.mapfield__disclosurelink {
+  display: inline-block;
+  margin-top: 0.6rem;
+  font-size: 0.72rem;
+  color: var(--steel);
+  text-decoration: underline;
+  text-underline-offset: 2px;
 }
+
+.mapfield__disclosurelink:hover {
+  color: var(--ink);
+}
+
+/* LAYOUT-V3 WAVE 1f item 2 (2026-08-11): `.mapfield__note--reserved` (the
+   `visibility:hidden`-but-space-reserving CLS fix for the old destination-
+   preview note) is gone along with the JSX element it styled -- see
+   MapView.tsx's own comment where that note used to render for why removing
+   it is a genuine simplification, not a workaround for a bug that's still
+   possible. */
 
 /* LAYOUT-V3 WAVE 1d item 4 (2026-08-03, SPEC-layout-v3.md §8): the
    "Map view: [minimal]" control row (`.mapfield__controls`, `.lensbar*`)
@@ -1774,16 +1786,24 @@ button.search__pin:disabled {
    sit 2-2-1; the fifth (building age + hazards, the one field carrying two
    real values) spans both columns via .tile--wide rather than leaving a
    half-empty trailing cell, the same convention .field--wide already uses
-   below the map for Getting Around. */
+   below the map for Getting Around.
+
+   LAYOUT-V3 WAVE 1f item 4 (2026-08-11, SPEC-layout-v3.md §8): gap and tile
+   padding both bumped up (0.55rem->0.7rem, 0.65/0.7/0.7rem->0.75/0.8/0.85rem)
+   -- Noah's own "give the tiles more breathing room" instruction, ahead of
+   Getting Around moving into the freed vertical room below this grid (see
+   .tile--anchors below). Four tiles (Wave 1e) at this new spacing still
+   measures well under the map's own height -- see this wave's report for
+   the live-measured before/after panel height. */
 .tilegrid {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 0.55rem;
+  gap: 0.7rem;
 }
 
 .tile {
   border: 1px solid var(--ink);
-  padding: 0.65rem 0.7rem 0.7rem;
+  padding: 0.75rem 0.8rem 0.85rem;
   display: flex;
   flex-direction: column;
   min-width: 0;
@@ -1791,6 +1811,20 @@ button.search__pin:disabled {
 
 .tile--wide {
   grid-column: 1 / -1;
+}
+
+/* LAYOUT-V3 WAVE 1f item 4 (2026-08-11): Getting Around's own card, now a
+   sibling of .tilegrid inside the side panel rather than a grid cell within
+   it (it doesn't participate in the 2-column tile grid at all -- full panel
+   width, its own block below). Visually matches .tile (border, similar
+   padding) so it reads as one more card in the same column, not a
+   foreign element. */
+.sidepanel__anchorswrap {
+  margin-top: 0.7rem;
+}
+
+.tile--anchors {
+  padding: 0.7rem 0.8rem 0.8rem;
 }
 
 .tile__head {

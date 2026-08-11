@@ -60,19 +60,40 @@ export const DESTINATION_EXIT_MS = 130;
 // Newport, NJ PATH anchor's own neighbourhood, if a search ever resolves
 // there -- still renders at full contrast on top of the dim). Reversible:
 // deleting this one source/layer pair restores the plain basemap.
+//
+// LAYOUT-V3 WAVE 1f item 1 (2026-08-11, SPEC-layout-v3.md §8, Noah: "the
+// gray out of new jersey covers the west of manhattan a bit, verify this").
+// VERIFIED, not assumed: cross-checked every east-edge vertex below against
+// real published shoreline longitudes (Battery Park -74.019, Chelsea Piers
+// -74.008, Midtown/Javits -74.002, Riverside Park/UWS -73.98, Washington
+// Heights/GWB Manhattan anchorage -73.94). The PRE-1f points were measurably
+// wrong in the direction Noah reported, not just "maybe": "opposite Midtown"
+// was -74.0 -- 0.002 deg (~170m) EAST of Midtown's own real shore (-74.002),
+// i.e. inside Manhattan; "George Washington Bridge landing" was -73.95,
+// closer to the bridge's MANHATTAN anchorage (-73.9425) than its NJ one
+// (Fort Lee, -73.97) -- a ~2.3km miss in the same "wrong side of the river"
+// direction as this project's own prior anchor-snap bug. Every east-edge
+// point below is now re-plotted with a deliberate westward safety margin
+// (0.015-0.03 deg, ~1.3-3km) from the real Manhattan/Bronx shore at that
+// latitude -- biased to fade a little EXTRA river rather than risk ever
+// touching real NYC land again. This is the one direction imprecision here
+// is actually safe: buildOverlayLayers()'s "water-unmasked" layer (below)
+// always repaints the real vector water shape on top of this mask, so the
+// river itself never reads as faded regardless of how far into the channel
+// this hand-plotted boundary reaches.
 const NJ_MASK_POLYGON: [number, number][] = [
   [-74.30, 40.93], // NW corner of NYC_BBOX
   [-74.30, 40.47], // SW corner
   [-74.25, 40.47], // south edge, to where the boundary line starts
   [-74.23, 40.5],
-  [-74.13, 40.6], // Kill van Kull / north shore of Staten Island
-  [-74.05, 40.66], // Upper Bay / Bayonne
-  [-74.02, 40.71], // Jersey City waterfront, opposite Lower Manhattan
-  [-74.0, 40.75], // Hoboken waterfront, opposite Midtown
-  [-73.96, 40.8], // opposite Upper Manhattan
-  [-73.95, 40.85], // George Washington Bridge landing
-  [-73.93, 40.87], // Riverdale/Yonkers latitude
-  [-73.9, 40.93], // boundary line reaches the north edge of NYC_BBOX
+  [-74.15, 40.6], // Kill van Kull / north shore of Staten Island
+  [-74.08, 40.66], // Upper Bay / Bayonne
+  [-74.035, 40.71], // Jersey City waterfront, opposite Lower Manhattan
+  [-74.025, 40.75], // Hoboken/Weehawken waterfront, opposite Midtown
+  [-73.995, 40.8], // Edgewater waterfront, opposite the Upper West Side
+  [-73.975, 40.85], // Fort Lee waterfront, opposite the GW Bridge
+  [-73.95, 40.87], // Alpine/Palisades, opposite Riverdale/Yonkers latitude
+  [-73.93, 40.93], // boundary line reaches the north edge of NYC_BBOX
   [-74.3, 40.93], // close back to the NW corner
 ];
 
@@ -183,18 +204,46 @@ export function buildMapStyle(tilesUrl: string): StyleSpecification {
         },
       },
       {
-        // LAYOUT-V3 WAVE 1d item 12 -- painted last among the base style's
-        // own layers (topmost of earth/water/roads, still below every
-        // per-address local overlay MapView.tsx appends afterward via
-        // `map.addLayer()`). A flat BONE wash, not a fifth colour -- reads
+        // LAYOUT-V3 WAVE 1d item 12 -- painted after earth/open-space/roads
+        // (topmost of the base style's own layers so far), still below
+        // every per-address local overlay MapView.tsx appends afterward via
+        // `map.addLayer()`. A flat BONE wash, not a fifth colour -- reads
         // as "receded/out of scope," never a fabricated absence (the real
         // basemap streets/water underneath are still faintly visible
         // through it, honestly showing there IS land there, just not this
-        // app's covered area).
+        // app's covered area). Sitting above roads-major/roads-minor is
+        // what satisfies SPEC-layout-v3.md §8 Wave 1f item 1's "no road
+        // rendering in the faded area" -- both road layers paint BEFORE
+        // this one, so this wash covers them within the polygon.
         id: "nj-mask-fill",
         type: "fill",
         source: "nj-mask",
         paint: { "fill-color": BONE, "fill-opacity": 0.72 },
+      },
+      {
+        // LAYOUT-V3 WAVE 1f item 1 (2026-08-11, SPEC-layout-v3.md §8, Noah:
+        // "the river stays unfaded; only the NJ land fades"). A real
+        // structural conflict, not solvable by coordinate-tuning alone:
+        // nj-mask-fill must paint ABOVE roads (to hide them, the requirement
+        // above) but must NOT visually cover the Hudson/bay water -- and
+        // "water" (above) already has to paint BEFORE roads elsewhere in
+        // this array so roads read on top of water citywide. The one clean
+        // fix that doesn't reorder any OTHER layer: repaint the exact same
+        // real vector "water" source-layer a second time, here, on top of
+        // the mask. Wherever NJ_MASK_POLYGON's hand-plotted boundary is
+        // imprecise (inevitable -- it's a dozen straight segments
+        // approximating a real, curved shoreline), the ACTUAL water
+        // geometry from the basemap always wins the last paint, so the
+        // river reads correctly regardless of exactly where the polygon
+        // edge falls within the channel. Purely additive (same source,
+        // source-layer, and paint as "water" above) -- deleting this one
+        // layer alone reverts to the pre-1f "mask can cover water" behavior
+        // with zero other changes.
+        id: "water-unmasked",
+        type: "fill",
+        source: "basemap",
+        "source-layer": "water",
+        paint: { "fill-color": STEEL, "fill-opacity": 0.5 },
       },
     ],
   };
