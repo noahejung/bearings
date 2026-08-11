@@ -27,3 +27,7 @@ wheels/
 # commit since it was written. A fresh clone of this repo was missing it
 # entirely; `git ls-files | grep examples.ts` returned nothing before this fix.
 /data/
+
+# Wave 6c diagnostic scratch dir (Playwright scripts/screenshots) -- never
+# committed, cleaned up at the end of the wave.
+/.scratch/

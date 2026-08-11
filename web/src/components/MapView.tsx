@@ -50,6 +50,74 @@ import { colorFor } from "./RouteBullet";
 // cellprofile.py's own module docstring) -- it is purely a camera bound.
 const NYC_BBOX = { south: 40.47, north: 40.93, west: -74.30, east: -73.70 };
 
+// LAYOUT-V3 WAVE 6c item 4 (2026-08-11, Noah, on the deployed pitched map:
+// "trim this down to a more reasonable piece in terms of where we can drag
+// to. keep a bit since we have the tiltable angle... no white horizon is
+// visible"). The DRAG clamp is now a separate, tighter box than NYC_BBOX
+// (which stays the initial-fit bounds above, unchanged -- the whole city
+// is still what greets a first paint). MEASURED, not guessed: fetched
+// GET /api/cells live (7,018 real H3 cells, matching this project's own
+// "~7,400 cells citywide" figure) and took the actual min/max lat/lng
+// across every real cell -- the TRUE data footprint, not the raw bake
+// bbox. That measurement: lat 40.4972-40.9136, lng -74.2552 to -73.6987.
+// Critically, the real cell footprint's EAST edge (-73.6987) already sits
+// slightly PAST NYC_BBOX's own east edge (-73.70) -- Queens/Nassau-border
+// cells are already right at the bake's edge with zero spare margin, so
+// the east side below is deliberately left AT NYC_BBOX, not trimmed
+// inward (trimming it would clip real, servable report cells, the one
+// thing this app can never do). The other three sides had real headroom
+// between the bake box and the true data footprint, so each is pulled in
+// by a margin sized off that side's own measured slack (not a single
+// uniform number, since the slack itself isn't uniform): west by ~0.02
+// deg (~2.2 km, well inside its 0.045 deg of real slack), south by ~0.015
+// deg (~1.7 km, inside its 0.027 deg slack). North is pulled in almost to
+// the real data edge itself (~0.005 deg / ~500m buffer, not the ~1.1 km
+// the other sides get) -- this is also WAVE 6c item 2's fix for this one
+// side (Noah: "we never got rid of roads from outside our map area"):
+// real Westchester/Yonkers roads north of the Bronx render with no fade
+// at all (unlike the west side, which the existing NJ_MASK_POLYGON in
+// mapStyle.ts already dims), so the honest fix here is minimizing how
+// much of that unmasked area is even reachable, not adding a second mask
+// polygon for a ~500m sliver. The same item 2 finding on the OTHER two
+// unmasked sides: south is open water beyond Staten Island/the Rockaways
+// (Raritan Bay/the Atlantic) at every zoom tested -- no real roads there
+// to leak through, nothing to fix; east has zero spare measured margin at
+// all (this comment's own east-edge finding above), and the live-verified
+// screenshot at this wave's own reachable east edge (-73.71, 40.75) showed
+// only real, still-NYC Queens neighbourhoods (Bayside, Douglaston-Little
+// Neck, Glen Oaks) -- not actually out-of-scope, so no fix was needed
+// there either.
+const MAX_DRAG_BOUNDS = { south: 40.485, north: 40.918, west: -74.28, east: -73.70 };
+
+// LAYOUT-V3 WAVE 6c items 1+4 (2026-08-11). ROOT CAUSE (item 1, "weird
+// triangle shading bugs"), found by live pitch-sweep screenshots, not
+// guessed: MapLibre GL triangulates each vector-tile layer's polygons PER
+// TILE (earcut on each tile's own clipped copy of a feature); at pitch 0
+// this is imperceptible (a sub-pixel seam at a tile boundary reads as
+// nothing under a near-orthographic top-down view), but under this map's
+// perspective projection at high pitch, that same sub-pixel world-space
+// gap gets magnified into a visible dark wedge exactly where a translucent
+// fill layer (open-space @ 0.22 opacity, water @ 0.5, the doubled
+// "water-unmasked" layer) crosses a tile boundary. Reproduced concretely
+// at JFK Airport's own tile boundary (-73.8, 40.63, zoom 12): a sharp
+// diagonal dark sliver cutting across the airport's open-space fill,
+// absent at pitch 0/20/30/40/50, visible only at pitch 55-60. Rather than
+// fight per-tile triangulation (a MapLibre GL rendering characteristic,
+// not a bug in this app's own style/data -- see the Wave 1f "Kill van
+// Kull" diagonal-seam entry in this project's own history for the same
+// class of imprecision, honestly documented rather than chased), the
+// direct fix is capping how far into that perspective-amplified regime
+// the map ever renders: `maxPitch` overrides MapLibre's own default (60)
+// down to 50, the highest value that stayed clean across every pitch-
+// sweep screenshot taken for this diagnosis. Still a real, felt tilt
+// (Noah's own "tiltable angle" is explicitly kept, not removed) -- just
+// short of the extreme where both the JFK seam AND the "look past the
+// data edge toward the horizon" risk maxBounds alone can't fully close
+// (a pitched camera's visible ground footprint grows with pitch; less
+// pitch means less of it can ever fall outside MAX_DRAG_BOUNDS above,
+// which is why this constant is listed as part of item 4's fix too).
+const MAX_PITCH = 50;
+
 // Mirrors bearings/transit.py's WALK_SPEED_MPS -- the same "Mirrors ..."
 // duplication pattern NYC_BBOX above already uses. Only ever used here for
 // a single scalar (a pinned place's own walk-time badge), never a rendered
@@ -810,27 +878,33 @@ export function MapView({
         [NYC_BBOX.east, NYC_BBOX.north],
       ],
       fitBoundsOptions: { padding: 20 },
-      // Panning is clamped to the same NYC_BBOX the basemap was actually
-      // baked for (basemap.py's `pmtiles extract --bbox=...`), never a
-      // separately-guessed margin -- beyond it there are no tiles, no
-      // buildings/streets overlay, and no citywide grid, just blank space
-      // (Noah, 2026-08-02: "can currently drag on the map to a border
-      // outside the loaded nyc preview, which is just blank space"). No
-      // padding added around it: MapLibre's maxBounds already keeps the
-      // full bbox reachable at min zoom (the initial `bounds` fit above
-      // proves the whole box fits on screen at once), so there is no
-      // "too tight at the edges" tradeoff to weigh against showing blank
-      // space -- see test_basemap.py's own `abs=0.2` tolerance for how
-      // imprecise "exact" bbox matching already is at the tile-snap level,
-      // which is a reason to stay at 0 extra margin, not add one.
+      // Panning is clamped to MAX_DRAG_BOUNDS (its own comment above has
+      // the full 2026-08-11 Wave 6c measurement/reasoning) -- originally
+      // this was the raw NYC_BBOX bake box itself (Noah, 2026-08-02: "can
+      // currently drag on the map to a border outside the loaded nyc
+      // preview, which is just blank space"), now pulled in on three of
+      // its four sides toward the real, measured citywide-cell footprint.
       maxBounds: [
-        [NYC_BBOX.west, NYC_BBOX.south],
-        [NYC_BBOX.east, NYC_BBOX.north],
+        [MAX_DRAG_BOUNDS.west, MAX_DRAG_BOUNDS.south],
+        [MAX_DRAG_BOUNDS.east, MAX_DRAG_BOUNDS.north],
       ],
       minZoom: 9,
       maxZoom: 18,
+      maxPitch: MAX_PITCH,
     });
-    map.addControl(new maplibregl.NavigationControl({ showCompass: false }), "top-right");
+    // WAVE 6c item 3 (2026-08-11, Noah: "give me a compass to reorient the
+    // map"). `showCompass: true` restores MapLibre's own built-in compass
+    // button into this SAME NavigationControl group (already restyled to
+    // this app's tDR chrome via index.css's `.maplibregl-ctrl-group`
+    // selector, which applies to any control in the group generically --
+    // no new CSS needed) rather than a hand-built second control, so it
+    // sits directly below the existing zoom +/- buttons as one visually
+    // continuous control, the existing zoom-control idiom Noah asked to
+    // stay consistent with. Clicking it resets bearing to 0 (MapLibre's
+    // own default behavior) -- "reorient" is exactly a bearing reset, and
+    // this map's own bearing can already drift via drag-to-rotate (the
+    // default `dragRotate`, never disabled anywhere in this file).
+    map.addControl(new maplibregl.NavigationControl({ showCompass: true }), "top-right");
     mapRef.current = map;
     // Dev-only: exposes the live MapLibre instance for Playwright/manual
     // console verification (e.g. `map.getBounds()` after a drag, to check
