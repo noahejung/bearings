@@ -268,12 +268,18 @@ describe("buildOverlayLayers (MapView's own app layers)", () => {
   });
 });
 
-describe("buildReachLayers (5/10/15-minute walk rings + amenity/station dots)", () => {
+// LAYOUT-V3 WAVE 6c item 6 (2026-08-11, Noah: "the 5/10/15-minute walk
+// rings around searched addresses aren't helpful either") -- the
+// "reach-rings-fill"/"reach-rings-outline" layers this describe block used
+// to also cover are deleted (see buildReachLayers()'s own comment); only
+// the amenity/station dots survive. Tests for the removed ring layers are
+// deleted along with them, not left disabled -- a real coverage reduction
+// matching a real feature removal, not a gap.
+describe("buildReachLayers (amenity/station dots for a searched address)", () => {
   function styleWithReachLayers(): StyleSpecification {
     return {
       version: 8,
       sources: {
-        "reach-rings": { type: "geojson", data: { type: "FeatureCollection", features: [] } },
         "reach-dots": { type: "geojson", data: { type: "FeatureCollection", features: [] } },
       },
       layers: buildReachLayers(),
@@ -284,25 +290,9 @@ describe("buildReachLayers (5/10/15-minute walk rings + amenity/station dots)", 
     expect(validateStyleMin(styleWithReachLayers())).toEqual([]);
   });
 
-  it("includes a fill + outline pair for the rings, and a circle layer for the dots", () => {
+  it("includes exactly one circle layer for the dots, no ring layers", () => {
     const ids = buildReachLayers().map((l) => l.id);
-    expect(ids).toEqual(["reach-rings-fill", "reach-rings-outline", "reach-dots"]);
-  });
-
-  it("the ring bands get progressively fainter from the innermost (5 min) to the outermost (15 min)", () => {
-    // Matches SPEC-lens-report.md §3's "nested" read: the 5-minute band is
-    // the most opaque (visually "closest"/darkest), 15 is the faintest.
-    const fill = buildReachLayers().find((l) => l.id === "reach-rings-fill") as {
-      paint: { "fill-opacity": unknown[] };
-    };
-    const expr = fill.paint["fill-opacity"];
-    expect(expr[0]).toBe("match");
-    const opacityFor = (minutes: number) => {
-      const idx = expr.findIndex((v) => v === minutes);
-      return expr[idx + 1] as number;
-    };
-    expect(opacityFor(5)).toBeGreaterThan(opacityFor(10));
-    expect(opacityFor(10)).toBeGreaterThan(opacityFor(15));
+    expect(ids).toEqual(["reach-dots"]);
   });
 
   it("dots are a single uniform ink colour, never a per-category hue (VISUAL.md: no colour outside the four tokens)", () => {
@@ -346,10 +336,10 @@ describe("buildTileHighlightLayers (side-panel tile <-> map emphasis, item 4)", 
 });
 
 // LAYOUT-V3 WAVE 3 (2026-08-03, SPEC-layout-v3.md §5.3): the getting-around
-// region's zone preview -- the same reach-ring visual technique, redrawn
-// around whichever destination bar is hovered/selected, on its OWN
-// source/layer set (never overwrites the searched-address's own
-// reach-rings).
+// region's zone preview -- straight-line 5/10/15-minute rings redrawn
+// around whichever destination bar is hovered/selected, on its own
+// source/layer set, fully independent of the (now-removed, Wave 6c item 6)
+// searched-address rings.
 describe("buildDestinationPreviewLayers (getting-around zone preview, §5.3)", () => {
   function styleWithDestinationPreviewLayers(): StyleSpecification {
     return {
@@ -371,7 +361,11 @@ describe("buildDestinationPreviewLayers (getting-around zone preview, §5.3)", (
     expect(ids).toEqual(["destination-rings-fill", "destination-rings-outline", "destination-point"]);
   });
 
-  it("uses its own source, never the searched-address's reach-rings source", () => {
+  it("uses its own source, never the searched-address's own reach source(s)", () => {
+    // "reach-rings" no longer exists as a real source (Wave 6c item 6
+    // deleted it) -- kept in this list anyway as a regression guard against
+    // ever reintroducing a same-named collision, alongside the one
+    // searched-address reach source that does still exist.
     for (const layer of buildDestinationPreviewLayers()) {
       const source = (layer as { source?: string }).source;
       expect(source).not.toBe("reach-rings");

@@ -25,10 +25,10 @@ import { colorFor } from "./RouteBullet";
 // behind a loaded report. It mounts immediately with GET /api/cells (every
 // real H3 res-9 cell citywide) as an invisible, always-on, CLICKABLE hit
 // layer, independent of whether `address` is set. `address` drives the
-// local building/street/subway overlay AND the reach-rings feature for
-// whichever address was actually searched -- it can be `null` (a bare cell
-// click has no address), in which case both are simply empty, never
-// fetched, never blocking.
+// local building/street/subway overlay AND the reach-dots feature (chip-
+// selected nearby places/stations) for whichever address was actually
+// searched -- it can be `null` (a bare cell click has no address), in
+// which case both are simply empty, never fetched, never blocking.
 //
 // RETIRED 2026-07-29 (SPEC-lens-report.md, Noah: "i wanna move away from
 // hex grid styling anyways, its too much visual clutter and doesnt make a
@@ -38,11 +38,13 @@ import { colorFor } from "./RouteBullet";
 // layer (untouched -- reach.py/mapgeo.py/cellprofile.py), it is simply
 // never drawn here anymore; "click any block to load its report" survives
 // via the already-transparent hit-test fill (see mapStyle.ts's own
-// updated comment). Replacing them: reach rings + chip-selected amenity/
-// station dots + pinned-place badges (SPEC-lens-report.md §2-4), and a
-// two-entry lens-switcher stub ("minimal" is the only real lens this
-// slice; a disabled second slot exists so slice 2's transit/green/3D-tilt
-// lenses have somewhere to land).
+// updated comment). Replacing them: chip-selected amenity/station dots +
+// pinned-place badges (SPEC-lens-report.md §2-4), and a two-entry lens-
+// switcher stub ("minimal" is the only real lens this slice; a disabled
+// second slot exists so slice 2's transit/green/3D-tilt lenses have
+// somewhere to land). The 5/10/15-minute walk RINGS this same paragraph
+// used to also list here were themselves later removed -- Wave 6c item 6
+// (2026-08-11), see reachDotsGeoJSON()'s own neighbouring comment.
 
 // Mirrors bearings/config.py's NYC_BBOX -- used ONLY to frame the initial
 // view so the whole city is visible on first paint. This is NOT how "real
@@ -119,13 +121,15 @@ const MAX_DRAG_BOUNDS = { south: 40.485, north: 40.918, west: -74.28, east: -73.
 const MAX_PITCH = 50;
 
 // Mirrors bearings/transit.py's WALK_SPEED_MPS -- the same "Mirrors ..."
-// duplication pattern NYC_BBOX above already uses. Only ever used here for
-// a single scalar (a pinned place's own walk-time badge), never a rendered
-// geometry -- reach.py computes and returns the actual ring polygons
-// server-side (see reachRingsGeoJSON() below), so the one real duplication
-// risk (the ring SHAPE itself drifting from the backend) doesn't exist;
-// only the badge's minute count could ever disagree, and by how the two
-// are computed identically it won't.
+// duplication pattern NYC_BBOX above already uses. Two real uses: a pinned
+// place's own walk-time badge (a single scalar), and the getting-around
+// destination zone preview's own ring polygon math (destinationRingsGeoJSON()
+// below, mirroring bearings/reach.py's band_radius_m()/_ring_polygon()
+// formula -- see that function's own comment). The searched-address ring
+// polygons this same constant used to ALSO help format (via the now-removed
+// reachRingsGeoJSON(), Wave 6c item 6) came pre-computed from the backend
+// instead -- WALK_SPEED_MPS itself was never that function's own math, only
+// this file's two still-live client-side computations use it.
 const WALK_SPEED_MPS = 1.35;
 
 function haversineM(a: { lat: number; lng: number }, b: { lat: number; lng: number }): number {
@@ -266,26 +270,33 @@ function routeLineGeoJSON(geo: MapGeometry | null, shapeIds: string[] | null): F
   };
 }
 
-// Reach rings (SPEC-lens-report.md §3) -- one Feature per real 5/10/15-min
-// band, ordered LARGEST FIRST: mapStyle.ts's buildReachLayers() draws a
-// GeoJSON source's features in array order, so this ordering IS the "5-min
-// band paints on top of 10, which paints on top of 15" nesting, not a
-// z-index primitive. Sorted defensively rather than trusting the backend's
-// own array order, since draw order is load-bearing here.
-function reachRingsGeoJSON(reach: Reach): FeatureCollection {
-  const ordered = [...reach.bands].sort((a, b) => b.minutes - a.minutes);
-  return {
-    type: "FeatureCollection",
-    features: ordered.map((band) => ({
-      type: "Feature",
-      properties: { minutes: band.minutes },
-      geometry: {
-        type: "Polygon",
-        coordinates: [band.polygon.map(([lat, lng]): [number, number] => [lng, lat])],
-      },
-    })),
-  };
-}
+// LAYOUT-V3 WAVE 6c item 6 (2026-08-11, Noah, on the deployed map: "the 5/10/
+// 15-minute walk rings around searched addresses aren't helpful either").
+// The ring-drawing function that used to live here (reachRingsGeoJSON(),
+// formatting reach.bands's polygon coordinates for the now-deleted
+// "reach-rings" source/layers) is removed outright, not hidden -- the same
+// "retired, not just unhooked" standard mapStyle.ts's own citywide-cells-
+// outline removal (2026-07-29) already set. `reach.bands` itself (the
+// backend's ring polygon geometry, bearings/reach.py's _bands()/
+// _ring_polygon()) is left alone on the backend -- band_radius_m()/
+// _band_for() underneath it are NOT dead: reachDotsGeoJSON() below still
+// depends on every place/station's own `band_minutes` tag, which those same
+// functions compute (see reach.py's own docstring). Only the RING SHAPE
+// itself (the `bands` field's `polygon` coordinates) has no remaining
+// frontend reader after this wave -- flagged, not silently pruned, in this
+// wave's own report, since removing it is a backend/API-contract change
+// this frontend-scoped wave deliberately didn't reach into.
+//
+// KEPT, verified before deleting anything (per this wave's own dispatch):
+// the getting-around region's destination zone preview
+// (destinationRingsGeoJSON()/destinationPointGeoJSON() below) is a fully
+// separate, client-side-only computation -- it mirrors reach.py's ring
+// FORMULA (same WALK_SPEED_MPS constant, same circle math, see
+// DESTINATION_PREVIEW_BANDS_MINUTES's own comment below) but never reads
+// `reach.bands` or any other server-provided ring geometry, so removing the
+// searched-address rings above cannot regress it -- confirmed by reading
+// every call site of `reach` in this file before making this change, not
+// assumed from the two features merely looking similar.
 
 // Chip-selected amenity/station dots (SPEC-lens-report.md §2/§4) -- a pure
 // CLIENT-SIDE filter of the already-fetched `reach.places`/`reach.stations`
@@ -407,8 +418,12 @@ function destinationRingsGeoJSON(
   dimmed: boolean,
 ): FeatureCollection {
   if (!point) return EMPTY_FC;
-  // Largest band first -- same "a later feature paints on top of an
-  // earlier one" draw-order reasoning reachRingsGeoJSON() above documents.
+  // Largest band first -- a later feature in the same GeoJSON source paints
+  // on top of an earlier one, so the smallest/darkest band always ends up
+  // visually "inside" the larger/fainter ones without needing three
+  // separate layers (the same draw-order technique the now-removed
+  // reachRingsGeoJSON() used to also rely on for the searched-address
+  // rings, Wave 6c item 6).
   const ordered = [...DESTINATION_PREVIEW_BANDS_MINUTES].sort((a, b) => b - a);
   return {
     type: "FeatureCollection",
@@ -746,9 +761,9 @@ export function MapView({
 }: {
   // The real searched address, or `null` when the current selection came
   // from a bare grid click (no address) -- drives the local building/
-  // street/subway overlay fetch (GET /api/map) AND the reach-rings fetch
-  // (GET /api/reach) below, neither of which makes sense without a real
-  // searched address.
+  // street/subway overlay fetch (GET /api/map) AND the reach fetch
+  // (GET /api/reach, feeding the chip-selected amenity/station dots)
+  // below, neither of which makes sense without a real searched address.
   address: string | null;
   // The h3 id currently driving the report panel (App.tsx owns this) --
   // used to fly the camera there and to place the subject marker.
@@ -945,7 +960,6 @@ export function MapView({
     map.addSource("buildings", { type: "geojson", data: EMPTY_FC });
     map.addSource("streets", { type: "geojson", data: EMPTY_FC });
     map.addSource("subway", { type: "geojson", data: EMPTY_FC });
-    map.addSource("reach-rings", { type: "geojson", data: EMPTY_FC });
     map.addSource("reach-dots", { type: "geojson", data: EMPTY_FC });
     // The citywide clickable grid's source (populated once GET /api/cells
     // resolves) -- hit-testing only, PLUS (LAYOUT-V3 WAVE 1c item 3) a real
@@ -1346,16 +1360,6 @@ export function MapView({
     );
   }, [cellsIndex, mapReady]);
 
-  // ---- 9. push reach rings into the map whenever the fetched data
-  // changes. ----
-  useEffect(() => {
-    const map = mapRef.current;
-    if (!map || !mapReady) return;
-    (map.getSource("reach-rings") as maplibregl.GeoJSONSource | undefined)?.setData(
-      reach ? reachRingsGeoJSON(reach) : EMPTY_FC,
-    );
-  }, [reach, mapReady]);
-
   // ---- 10. push chip-selected amenity/station dots -- a pure client-side
   // filter (spec: chip toggles must update the map "without re-searching
   // the address"), no network call here. ----
@@ -1455,14 +1459,13 @@ export function MapView({
   // and `destinationHighlight` already arrive as props, rather than patched
   // per-case in either CellReportView.tsx or GettingAroundField.tsx.
   //
-  // Baseline/always-on layers (the searched-address reach-rings, and the
-  // preference-chip-driven reach-dots) are deliberately NOT part of this
-  // rule -- they are steady-state context a user opted into (a chip toggle,
-  // or simply having searched an address), not a momentary "what am I
-  // pointing at" signal, so they keep their own existing, already-low
-  // opacity regardless of what else is highlighted. reach-dots is also
-  // painted in INK, not RED (see buildReachLayers()'s own comment), so it
-  // never competes with the red palette these two systems share in the
+  // The baseline/always-on preference-chip-driven reach-dots layer is
+  // deliberately NOT part of this rule -- it's steady-state context a user
+  // opted into (a chip toggle), not a momentary "what am I pointing at"
+  // signal, so it keeps its own existing, already-low opacity regardless of
+  // what else is highlighted. It's also painted in INK, not RED (see
+  // buildReachLayers()'s own comment), so it never competes with the
+  // red palette these two systems share in the
   // first place. ----
   //
   // MOTION WAVE (2026-08-03, item 3, "zone-preview fades/scales in (~200ms)

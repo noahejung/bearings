@@ -76,8 +76,21 @@ const FALLBACK_HAZARD_NOTE =
 // bearings/X.py's Y" citation convention as every other fallback above.
 const BASEMAP_METHOD_NOTE =
   "Everything on this map is real. The base layer -- streets, land, water -- is OpenStreetMap, a free public map. Everything on top is computed fresh from the city's own records: building outlines and streets from city property maps, subway/PATH lines from the transit agencies' own schedules, plus five per-block numbers (noise complaints, nearby places, street trees, building age, transit stations) -- each cited to its real source elsewhere in this report, nothing estimated. Click any home or apartment building for its own real year built and safety-violation record, not just the block's average.";
+// LAYOUT-V3 WAVE 6c item 6 (2026-08-11, Noah, on the deployed map: "the
+// 5/10/15-minute walk rings around searched addresses aren't helpful
+// either"). The rings themselves are gone (MapView.tsx no longer draws
+// them at all -- see that file's own item 6 comment), but the underlying
+// straight-line, 5/10/15-minute walk-time method they used to visualize is
+// NOT gone -- it's still exactly how this report decides which nearby
+// places/stations (the dots shown on the map once you turn on a category
+// below) count as close to the searched address (bearings/reach.py's
+// band_radius_m()/_band_for(), untouched by this wave). This note is
+// reworded, not deleted, to describe that surviving mechanism honestly
+// instead of a ring that no longer renders -- the underlying caveat
+// sentence (straight-line, can overreach near rivers/parks/highways) is
+// preserved word-for-word from the pre-Wave-6c text.
 const REACH_METHOD_NOTE =
-  "Roughly how far you could walk in 5, 10, and 15 minutes at a normal pace (about 3 mph) -- a straight line from the address, not an actual route, so it can overreach near rivers, parks, highways, or a long block.";
+  "Roughly how far you could walk in 5, 10, and 15 minutes at a normal pace (about 3 mph) -- a straight line from the address, not an actual route, so it can overreach near rivers, parks, highways, or a long block. Used to decide which nearby places (shown on the map once you turn on a category below) count as close to the address.";
 
 // LAYOUT-V3 WAVE 1f item 2 (2026-08-11, SPEC-layout-v3.md §8): the zone-
 // preview caption that used to render below the map ONLY while hovering a
@@ -86,9 +99,20 @@ const REACH_METHOD_NOTE =
 // and index.css's own comments where that box used to live). Moved here
 // verbatim -- same text, same source (MapView.tsx's own former
 // `DESTINATION_PREVIEW_NOTE` constant, grepped live 2026-08-11 before it
-// was deleted), never reworded.
+// was deleted), never reworded until Wave 6c below.
+//
+// WAVE 6c item 6 (2026-08-11): the trailing clause used to read "...the
+// same approximation used for the rings around a searched address" -- that
+// comparison is now to a feature that no longer visually exists (the
+// searched-address rings this sentence pointed at were removed the same
+// wave, see REACH_METHOD_NOTE's own comment above). Reworded to compare to
+// what actually still survives (the address's own nearby-places filter)
+// instead of a ring nobody sees any more -- the destination zone preview
+// ITSELF is fully unaffected by this wave (verified before any of this
+// wave's edits, see MapView.tsx's own item 6 comment); only this one
+// sentence's point of comparison changed.
 const DESTINATION_PREVIEW_NOTE =
-  "Roughly how far you could walk from this destination in 5, 10, and 15 minutes — a straight line, not an actual route, the same approximation used for the rings around a searched address.";
+  "Roughly how far you could walk from this destination in 5, 10, and 15 minutes — a straight line, not an actual route, the same approximation this report uses to decide which nearby places count as close to the searched address.";
 
 interface Section {
   title: string;

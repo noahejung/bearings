@@ -250,8 +250,8 @@ export function buildMapStyle(tilesUrl: string): StyleSpecification {
 }
 
 // MapView's own local overlay layers -- building mass, street hairlines,
-// subway/PATH, the citywide click-to-load hit layer, and the reach-rings/
-// dots feature -- extracted out of MapView.tsx (a pure, exported function
+// subway/PATH, the citywide click-to-load hit layer, and the reach-dots
+// feature -- extracted out of MapView.tsx (a pure, exported function
 // rather than inline `map.addLayer()` calls) so this exact layer set is
 // unit-testable with MapLibre's real style validator
 // (`@maplibre/maplibre-gl-style-spec`'s `validateStyleMin`, the same
@@ -561,42 +561,27 @@ export function buildTileHighlightLayers(): StyleSpecification["layers"] {
   ];
 }
 
-// Reach rings (SPEC-lens-report.md §3): three 5/10/15-minute walk bands,
-// straight-line circles (see bearings/reach.py's own module docstring for
-// why -- no routable pedestrian graph exists in this codebase yet), plus
-// one uniform-ink dot layer for chip-selected amenities/stations inside
-// them. "Uniform ink" (not a per-category colour) is deliberate: VISUAL.md's
-// four-token palette (bone/ink/steel/red) has no room for a 6th hue per
-// category without breaking that rule -- MapView.tsx differentiates dots by
-// content (name/category in a future hover), not colour.
+// Chip-selected amenity/station dots (SPEC-lens-report.md §3) -- one
+// uniform-ink dot layer for real named places/stations inside the searched
+// address's own 5/10/15-minute walk bands. "Uniform ink" (not a per-category
+// colour) is deliberate: VISUAL.md's four-token palette (bone/ink/steel/red)
+// has no room for a 6th hue per category without breaking that rule --
+// MapView.tsx differentiates dots by content (name/category in a future
+// hover), not colour.
 //
-// Draw order for the three nested bands is the GeoJSON FEATURE ARRAY order
-// (MapView's reachRingsGeoJSON() emits largest-band-first), not a MapLibre
-// z-index primitive -- a later feature in the same source/layer paints on
-// top of an earlier one, so the smallest/darkest band always ends up
-// visually "inside" the larger/fainter ones without needing three separate
-// layers.
+// LAYOUT-V3 WAVE 6c item 6 (2026-08-11, Noah: "the 5/10/15-minute walk rings
+// around searched addresses aren't helpful either"). The three nested ring
+// bands this function used to also draw ("reach-rings-fill"/"reach-rings-
+// outline", RED fills/outlines over a "reach-rings" source) are deleted
+// outright, not hidden -- MapView.tsx no longer populates any "reach-rings"
+// source at all (see that file's own item 6 comment for the full removal +
+// what was verified before deleting). This dot layer is the one part of the
+// original reach-rings feature set that survives: the underlying places/
+// stations are still real, still band-tagged, still worth showing on the
+// map once a category chip is turned on -- only the abstract distance-band
+// polygon itself was judged unhelpful.
 export function buildReachLayers(): StyleSpecification["layers"] {
   return [
-    {
-      id: "reach-rings-fill",
-      type: "fill",
-      source: "reach-rings",
-      paint: {
-        "fill-color": RED,
-        "fill-opacity": ["match", ["get", "minutes"], 5, 0.26, 10, 0.17, 15, 0.1, 0.1],
-      },
-    },
-    {
-      id: "reach-rings-outline",
-      type: "line",
-      source: "reach-rings",
-      paint: {
-        "line-color": RED,
-        "line-width": 1,
-        "line-opacity": ["match", ["get", "minutes"], 5, 0.55, 10, 0.4, 15, 0.28, 0.28],
-      },
-    },
     {
       id: "reach-dots",
       type: "circle",
@@ -614,14 +599,12 @@ export function buildReachLayers(): StyleSpecification["layers"] {
 
 // LAYOUT-V3 WAVE 3 (SPEC-layout-v3.md §5.3 "Zone preview"): hovering or
 // selecting any getting-around bar (one of the 4 baked ANCHORS, or a
-// custom destination) draws the SAME straight-line 5/10/15-minute walk
-// rings buildReachLayers() already draws around a searched ADDRESS -- this
-// time centred on the DESTINATION instead, via a distinct source/layer set
-// (never overwrites "reach-rings", which stays the searched-address rings
-// regardless of what's highlighted in the getting-around region). Visually
-// identical treatment (same RED palette, same fading-outward bands) so the
-// two read as the same honest "approximate reach, not a routed shape"
-// vocabulary this app has already taught the user once. Painted LAST (see
+// custom destination) draws straight-line 5/10/15-minute walk rings around
+// the DESTINATION, via its own dedicated source/layer set, fully
+// independent of the searched-address rings this same technique used to
+// also draw around the ADDRESS (removed in Wave 6c item 6 -- see
+// buildReachLayers()'s own comment; this function was never the thing that
+// drew those, so removing them left this one untouched). Painted LAST (see
 // buildOverlayLayers() above) -- topmost, since this is the most immediate
 // thing the user is currently pointing at.
 // UX-FIX 2026-08-03 (audit finding #3, "layered map highlights compound
