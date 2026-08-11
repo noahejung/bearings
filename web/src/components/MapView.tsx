@@ -1729,7 +1729,25 @@ export function MapView({
           deferred scope either way; this block returns with it if/when
           that lens ships. */}
 
-      {loading && <p className="mapfield__status mono">Loading the neighborhood record…</p>}
+      {/* WAVE 6e (2026-08-11, Noah live-use: "loading neighborhood record
+          seems to take a long time"). Diagnosed, not guessed: this `loading`
+          flag belongs to effect 4's own GET /api/map fetch (the map's local
+          building/street overlay) -- the side-panel REPORT (CellReportView's
+          tiles, driven by the separate, fast GET /api/cell/{h3}) is already
+          fully loaded and interactive by the time this text can even appear
+          (measured live via Playwright against this exact build: report
+          tiles paint in ~100-360ms; /api/map itself measured 2.5-15.8s in
+          the same run, consistent with the already-documented, already-
+          flagged backend cost in the 2026-08-11 Wave 6c report -- a live
+          bbox + per-cell metrics compute, not a frontend fetch-sequencing
+          bug: App.tsx already fires the cell/map/reach requests essentially
+          in parallel, confirmed in the same trace). The old copy ("Loading
+          the neighborhood record...") named the wrong thing -- it read as
+          if the whole report was still loading, when only this secondary
+          map overlay was. Reworded to name what is ACTUALLY still loading,
+          the same "loading the thing that's actually loading" fix Wave 6c
+          already applied to the route-line preview's own note. */}
+      {loading && <p className="mapfield__status mono">Loading this address's map detail…</p>}
       {error && <p className="mapfield__status mapfield__status--error mono">{error}</p>}
 
       {/* UX-FIX 2026-08-03 (audit finding #4, "amenities-tile hover has a
