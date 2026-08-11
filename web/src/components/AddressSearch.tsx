@@ -42,6 +42,10 @@ interface AddressSearchProps {
   onSubmit: (address: string) => void;
   /** Pins the given address (adds a badge on the map) rather than loading it as the main record. */
   onPin: (address: string) => void;
+  /** WAVE 6b (2026-08-11, SPEC-layout-v3.md §8): empties the field AND
+   * whatever selection/report it currently reflects -- see App.tsx's own
+   * `clearSelection` for what "coherently" resets alongside the text. */
+  onClear: () => void;
   pinLoading: boolean;
   pinError: string | null;
   loading: boolean;
@@ -53,6 +57,7 @@ export function AddressSearch({
   onChange,
   onSubmit,
   onPin,
+  onClear,
   pinLoading,
   pinError,
   loading,
@@ -115,6 +120,25 @@ export function AddressSearch({
             aria-invalid={error ? true : undefined}
             aria-describedby={error ? errorId : undefined}
           />
+          {/* WAVE 6b (2026-08-11, SPEC-layout-v3.md §8): a clear-X, shown only
+              once there's real text to clear -- clicking it resets the field
+              AND whatever selection/report it currently reflects (App.tsx's
+              clearSelection), never just the input alone (a text-only clear
+              would leave the map/panel pointed at an address the field no
+              longer names, reopening the exact desync this wave closes). */}
+          {value.length > 0 && (
+            <button
+              type="button"
+              className="search__clear"
+              aria-label="Clear search"
+              onClick={() => {
+                onClear();
+                suppressAutocomplete("");
+              }}
+            >
+              ×
+            </button>
+          )}
           <button type="submit" disabled={loading || value.trim().length === 0}>
             {loading ? "Pulling…" : "Pull the record"}
           </button>
