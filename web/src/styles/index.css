@@ -79,6 +79,52 @@ table {
   --font-display: "Bahnschrift", "DIN Alternate", "Archivo", sans-serif;
   --font-mono: "Cascadia Mono", "Consolas", ui-monospace, "SFMono-Regular", monospace;
 
+  /* ---------- type scale (WAVE 4, 2026-08-11) ----------
+     A 2026-08-03 audit counted 28+ distinct font-size/weight/letter-spacing
+     combos; by Wave 4 (after also removing the dead-component CSS above)
+     the live count had grown to 40 distinct raw font-size values across 62
+     distinct (size/weight/letter-spacing) combos -- this app had never had
+     a discrete scale, only whatever value a given wave's rule happened to
+     need. Six steps, chosen by snapping every live value to its nearest
+     round px anchor (10/12/14/16/18/22 at the fixed 16px root) rather than
+     a fresh top-down scale -- minimizes visual drift from what's already
+     shipped and measured. --text-md (16px/1rem) is deliberately the exact
+     body baseline, not a fresh value. Two more (--text-display-md/lg) cover
+     the app's 3 fluid clamp() headlines, unified from 3 raw clamp() calls
+     to 2 (`.report__title` and `.disclosure__title` differed only in their
+     clamp ceiling, 2.6rem vs 2.4rem -- converged to one shared 2.5rem).
+     EXCEPTION, documented not silent: five map-canvas/DOM-marker classes
+     (`.maplabel--neighborhood`, `.maplabel--precinct`, `.pinmarker__badge`,
+     `.mapstation__bullet`, and the third-party `.maplibregl-ctrl-attrib`
+     override) keep literal px values -- each is sized to fit a specific
+     fixed-px marker/glyph container (e.g. a 13px station-bullet circle),
+     not reflowable copy, and re-snapping them onto this scale risked visual
+     overflow inside those containers with no corresponding user benefit.
+     Font-weight is NOT tokenized here -- the live app already uses only
+     400/600/700, no consolidation needed. Letter-spacing gets its own
+     3-token scale below, same snap-to-nearest method. */
+  --text-3xs: 0.625rem; /* 10px -- micro chrome: badges, era tags, kickers, stamps */
+  --text-2xs: 0.75rem; /* 12px -- secondary/mono labels, captions, buttons */
+  --text-sm: 0.875rem; /* 14px -- secondary body copy */
+  --text-md: 1rem; /* 16px -- body baseline (matches body{} below) */
+  --text-lg: 1.125rem; /* 18px -- card/tile sub-headings, quote text */
+  --text-xl: 1.375rem; /* 22px -- headline stat values */
+  --text-display-md: clamp(1.6rem, 3.6vw, 2.5rem); /* section headlines (report, disclosure) */
+  --text-display-lg: clamp(2rem, 4.6vw, 3.4rem); /* the one hero headline (search) */
+
+  --tracking-tight: -0.01em; /* display/section headings */
+  --tracking-wide: 0.06em; /* standard uppercase mono label tracking */
+  --tracking-wider: 0.1em; /* the tightest cluster of tiny kickers */
+
+  /* Tabular numerals are already the GLOBAL default (body's own
+     font-feature-settings below) -- every digit in this app lines up in a
+     fixed-width column with no per-rule opt-in needed. `.tile__value` and
+     `.buildinginfo__value` used to redeclare this locally via the separate
+     `font-variant-numeric: tabular-nums` mechanism -- removed as truly
+     redundant (this is the "+ tabular variants" requirement satisfied at
+     the root, not a second, per-rule opt-in). */
+  --font-tabular: "tnum" 1;
+
   /* ---------- motion tokens (data-viz animations wave, 2026-08-03) ----------
      Defined ONCE; every transition/animation this wave adds (and future ones
      should add) reads these instead of a fresh literal duration/curve --
@@ -117,9 +163,9 @@ body {
   background: var(--bone);
   color: var(--ink);
   font-family: var(--font-display);
-  font-size: 16px;
+  font-size: var(--text-md);
   line-height: 1.5;
-  font-feature-settings: "tnum" 1;
+  font-feature-settings: var(--font-tabular);
 }
 
 /* ---------- focus & motion ---------- */
@@ -210,9 +256,9 @@ body {
   font-family: var(--font-display);
   font-weight: 700;
   font-stretch: condensed;
-  font-size: clamp(2rem, 4.6vw, 3.4rem);
+  font-size: var(--text-display-lg);
   line-height: 1.04;
-  letter-spacing: -0.01em;
+  letter-spacing: var(--tracking-tight);
   text-transform: uppercase;
   margin-top: 0.7rem;
 }
@@ -225,7 +271,7 @@ body {
 .search__sub {
   margin-top: 1rem;
   max-width: 62ch;
-  font-size: 1rem;
+  font-size: var(--text-md);
   line-height: 1.6;
   color: var(--ink);
 }
@@ -247,7 +293,7 @@ body {
   border: none;
   background: transparent;
   padding: 0.85rem 1rem;
-  font-size: 1rem;
+  font-size: var(--text-md);
   font-family: var(--font-mono);
 }
 
@@ -260,8 +306,8 @@ body {
   padding: 0.85rem 1.3rem;
   font-family: var(--font-mono);
   font-weight: 600;
-  font-size: 0.82rem;
-  letter-spacing: 0.08em;
+  font-size: var(--text-sm);
+  letter-spacing: var(--tracking-wide);
   text-transform: uppercase;
   white-space: nowrap;
   transition: background 0.12s ease;
@@ -291,8 +337,8 @@ body {
   padding: 0.85rem 1.1rem;
   font-family: var(--font-mono);
   font-weight: 600;
-  font-size: 0.82rem;
-  letter-spacing: 0.08em;
+  font-size: var(--text-sm);
+  letter-spacing: var(--tracking-wide);
   text-transform: uppercase;
   white-space: nowrap;
   transition: background 0.12s ease, color 0.12s ease;
@@ -345,7 +391,7 @@ button.search__pin:disabled {
   text-align: left;
   padding: 0.6rem 1rem;
   font-family: var(--font-mono);
-  font-size: 0.82rem;
+  font-size: var(--text-sm);
   border-bottom: 1px solid rgba(17, 17, 17, 0.12);
 }
 
@@ -364,7 +410,7 @@ button.search__pin:disabled {
   border: 1.5px solid var(--red);
   color: var(--red);
   font-family: var(--font-mono);
-  font-size: 0.82rem;
+  font-size: var(--text-sm);
 }
 
 /* LAYOUT-V3 WAVE 1d item 5 (2026-08-03, SPEC-layout-v3.md §8): the "or
@@ -375,8 +421,8 @@ button.search__pin:disabled {
 .loading {
   margin-top: 2.5rem;
   font-family: var(--font-mono);
-  font-size: 0.85rem;
-  letter-spacing: 0.06em;
+  font-size: var(--text-sm);
+  letter-spacing: var(--tracking-wide);
   text-transform: uppercase;
   color: var(--steel);
 }
@@ -421,8 +467,8 @@ button.search__pin:disabled {
 
 .report__kicker {
   font-family: var(--font-mono);
-  font-size: 0.72rem;
-  letter-spacing: 0.16em;
+  font-size: var(--text-2xs);
+  letter-spacing: var(--tracking-wider);
   text-transform: uppercase;
   color: var(--red);
 }
@@ -432,8 +478,8 @@ button.search__pin:disabled {
   font-weight: 700;
   font-stretch: condensed;
   text-transform: uppercase;
-  font-size: clamp(1.6rem, 3.6vw, 2.6rem);
-  letter-spacing: -0.01em;
+  font-size: var(--text-display-md);
+  letter-spacing: var(--tracking-tight);
   margin-top: 0.45rem;
 }
 
@@ -464,16 +510,16 @@ button.search__pin:disabled {
 }
 
 .record-line__kicker {
-  font-size: 0.62rem;
+  font-size: var(--text-3xs);
   font-weight: 600;
-  letter-spacing: 0.12em;
+  letter-spacing: var(--tracking-wider);
   text-transform: uppercase;
   color: var(--steel);
   margin-bottom: 0.2rem;
 }
 
 .record-line {
-  font-size: 0.92rem;
+  font-size: var(--text-sm);
   font-weight: 700;
   color: var(--ink);
 }
@@ -517,7 +563,7 @@ button.search__pin:disabled {
    styling directly, with no `.field` ancestor required. */
 .field__empty {
   font-family: var(--font-mono);
-  font-size: 0.86rem;
+  font-size: var(--text-sm);
   color: var(--steel);
 }
 
@@ -526,7 +572,7 @@ button.search__pin:disabled {
   padding-top: 0.85rem;
   border-top: 1px dashed var(--steel);
   font-family: var(--font-mono);
-  font-size: 0.72rem;
+  font-size: var(--text-2xs);
   line-height: 1.55;
   color: var(--steel);
 }
@@ -536,15 +582,15 @@ button.search__pin:disabled {
   padding: 0.7rem 0.85rem;
   border: 1px dashed var(--steel);
   font-family: var(--font-mono);
-  font-size: 0.78rem;
+  font-size: var(--text-2xs);
   color: var(--ink);
   line-height: 1.55;
 }
 
 .field__caveat-kicker {
   display: block;
-  font-size: 0.66rem;
-  letter-spacing: 0.1em;
+  font-size: var(--text-3xs);
+  letter-spacing: var(--tracking-wider);
   text-transform: uppercase;
   color: var(--steel);
   margin-bottom: 0.3rem;
@@ -570,7 +616,7 @@ button.search__pin:disabled {
   border-radius: 50%;
   font-family: var(--font-mono);
   font-weight: 700;
-  font-size: 0.7rem;
+  font-size: var(--text-2xs);
   color: var(--bone);
   line-height: 1;
 }
@@ -583,8 +629,8 @@ button.search__pin:disabled {
   width: auto;
   padding: 0 0.5rem;
   border-radius: 999px;
-  font-size: 0.6rem;
-  letter-spacing: 0.03em;
+  font-size: var(--text-3xs);
+  letter-spacing: var(--tracking-wide);
 }
 
 .anchors {
@@ -692,7 +738,7 @@ button.search__pin:disabled {
 
 .anchor__label {
   grid-area: label;
-  font-size: 0.78rem;
+  font-size: var(--text-2xs);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -733,7 +779,7 @@ button.search__pin:disabled {
 .anchor__value {
   grid-area: value;
   font-family: var(--font-mono);
-  font-size: 0.76rem;
+  font-size: var(--text-2xs);
   font-weight: 700;
   text-align: left;
   white-space: nowrap;
@@ -742,7 +788,7 @@ button.search__pin:disabled {
 .anchor__value--nodata {
   font-weight: 400;
   font-style: italic;
-  font-size: 0.74rem;
+  font-size: var(--text-2xs);
   color: var(--steel);
 }
 
@@ -754,7 +800,7 @@ button.search__pin:disabled {
   border: 1px solid transparent;
   background: transparent;
   color: var(--steel);
-  font-size: 1rem;
+  font-size: var(--text-md);
   line-height: 1;
   /* Retrofitted onto the shared motion tokens (data-viz animations wave,
      2026-08-03) -- was a literal 0.12s/ease pair, exactly the "scattered
@@ -775,7 +821,7 @@ button.search__pin:disabled {
   border: 1.5px solid var(--red);
   color: var(--red);
   font-family: var(--font-mono);
-  font-size: 0.78rem;
+  font-size: var(--text-2xs);
 }
 
 /* LAYOUT-V3 WAVE 1f item 4 (2026-08-11): the `@media (max-width: 560px)`
@@ -801,7 +847,7 @@ button.search__pin:disabled {
   border: none;
   background: transparent;
   padding: 0.6rem 0.8rem;
-  font-size: 0.86rem;
+  font-size: var(--text-sm);
   font-family: var(--font-mono);
   /* UX-FIX 2026-08-03 (audit finding #9, "mobile placeholder truncates
      mid-word"): at 375px this field's own long placeholder ("Add a
@@ -824,8 +870,8 @@ button.search__pin:disabled {
   padding: 0.6rem 1rem;
   font-family: var(--font-mono);
   font-weight: 600;
-  font-size: 0.78rem;
-  letter-spacing: 0.06em;
+  font-size: var(--text-2xs);
+  letter-spacing: var(--tracking-wide);
   text-transform: uppercase;
   white-space: nowrap;
   transition: background 0.12s ease;
@@ -859,7 +905,7 @@ button.search__pin:disabled {
   text-align: left;
   padding: 0.55rem 0.8rem;
   font-family: var(--font-mono);
-  font-size: 0.78rem;
+  font-size: var(--text-2xs);
   border-bottom: 1px solid rgba(17, 17, 17, 0.12);
 }
 
@@ -893,13 +939,13 @@ button.search__pin:disabled {
 .amenity__count {
   font-family: var(--font-mono);
   font-weight: 700;
-  font-size: 1.4rem;
+  font-size: var(--text-xl);
 }
 
 .amenity__label {
   font-family: var(--font-mono);
-  font-size: 0.7rem;
-  letter-spacing: 0.04em;
+  font-size: var(--text-2xs);
+  letter-spacing: var(--tracking-wide);
   text-transform: uppercase;
   color: var(--steel);
 }
@@ -952,7 +998,7 @@ button.search__pin:disabled {
   color: var(--steel);
   margin-left: 0.35rem;
   text-transform: uppercase;
-  letter-spacing: 0.04em;
+  letter-spacing: var(--tracking-wide);
 }
 
 /* WAVE 4 (2026-08-11): `.building__note`/`.building__facts` removed --
@@ -961,8 +1007,8 @@ button.search__pin:disabled {
    per-building info card and `.tile .era` both still use it directly. */
 .era {
   font-family: var(--font-mono);
-  font-size: 0.62rem;
-  letter-spacing: 0.08em;
+  font-size: var(--text-3xs);
+  letter-spacing: var(--tracking-wide);
   text-transform: uppercase;
   padding: 0.15rem 0.5rem;
   border: 1px solid var(--steel);
@@ -982,7 +1028,7 @@ button.search__pin:disabled {
   gap: 0.35rem;
   text-decoration: none;
   font-family: var(--font-mono);
-  font-size: 0.7rem;
+  font-size: var(--text-2xs);
   color: var(--ink);
   border-bottom: 1px solid var(--steel);
   padding-bottom: 1px;
@@ -996,11 +1042,11 @@ button.search__pin:disabled {
 
 .provenance-link__kicker {
   color: var(--steel);
-  letter-spacing: 0.1em;
+  letter-spacing: var(--tracking-wider);
 }
 
 .provenance-link__arrow {
-  font-size: 0.75rem;
+  font-size: var(--text-2xs);
 }
 
 /* ---------- verdict stamp ---------- */
@@ -1012,8 +1058,8 @@ button.search__pin:disabled {
   padding: 0.32rem 0.55rem;
   font-family: var(--font-mono);
   font-weight: 700;
-  font-size: 0.62rem;
-  letter-spacing: 0.06em;
+  font-size: var(--text-3xs);
+  letter-spacing: var(--tracking-wide);
   text-transform: uppercase;
   white-space: nowrap;
   color: var(--ink);
@@ -1021,7 +1067,7 @@ button.search__pin:disabled {
 
 .stamp--compact {
   padding: 0.2rem 0.4rem;
-  font-size: 0.56rem;
+  font-size: var(--text-3xs);
 }
 
 .stamp--confirmed {
@@ -1068,8 +1114,8 @@ button.search__pin:disabled {
 .factcheck__form label {
   display: block;
   font-family: var(--font-mono);
-  font-size: 0.7rem;
-  letter-spacing: 0.1em;
+  font-size: var(--text-2xs);
+  letter-spacing: var(--tracking-wider);
   text-transform: uppercase;
   color: var(--steel);
   margin-bottom: 0.4rem;
@@ -1081,7 +1127,7 @@ button.search__pin:disabled {
   background: transparent;
   border: 1.5px solid var(--ink);
   padding: 0.85rem 1rem;
-  font-size: 0.98rem;
+  font-size: var(--text-md);
   font-family: var(--font-display);
   line-height: 1.55;
 }
@@ -1101,8 +1147,8 @@ button.search__pin:disabled {
   padding: 0.65rem 1.2rem;
   font-family: var(--font-mono);
   font-weight: 600;
-  font-size: 0.8rem;
-  letter-spacing: 0.06em;
+  font-size: var(--text-2xs);
+  letter-spacing: var(--tracking-wide);
   text-transform: uppercase;
   transition: background 0.12s ease;
 }
@@ -1132,7 +1178,7 @@ button.search__pin:disabled {
 .factcheck__hint {
   margin-top: 0.6rem;
   font-family: var(--font-mono);
-  font-size: 0.78rem;
+  font-size: var(--text-2xs);
   color: var(--steel);
 }
 
@@ -1151,14 +1197,14 @@ button.search__pin:disabled {
   padding: 0.4rem 0.75rem;
   border: 1px solid var(--ink);
   font-family: var(--font-mono);
-  font-size: 0.72rem;
-  letter-spacing: 0.04em;
+  font-size: var(--text-2xs);
+  letter-spacing: var(--tracking-wide);
   text-transform: uppercase;
 }
 
 .tally__count {
   font-weight: 700;
-  font-size: 1rem;
+  font-size: var(--text-md);
 }
 
 .tally__item--contradicted {
@@ -1221,8 +1267,8 @@ button.search__pin:disabled {
 .claim__quote-kicker,
 .claim__evidence-kicker {
   font-family: var(--font-mono);
-  font-size: 0.64rem;
-  letter-spacing: 0.1em;
+  font-size: var(--text-3xs);
+  letter-spacing: var(--tracking-wider);
   text-transform: uppercase;
   color: var(--steel);
   margin-bottom: 0.3rem;
@@ -1230,7 +1276,7 @@ button.search__pin:disabled {
 
 .claim__quote-text {
   font-family: var(--font-display);
-  font-size: 1.1rem;
+  font-size: var(--text-lg);
   line-height: 1.4;
 }
 
@@ -1241,7 +1287,7 @@ button.search__pin:disabled {
 }
 
 .claim__evidence-text {
-  font-size: 0.94rem;
+  font-size: var(--text-md);
   line-height: 1.55;
 }
 
@@ -1298,7 +1344,7 @@ button.search__pin:disabled {
   padding: 0.7rem 0.85rem;
   border: 1px dashed var(--steel);
   font-family: var(--font-mono);
-  font-size: 0.74rem;
+  font-size: var(--text-2xs);
   line-height: 1.55;
   color: var(--steel);
   max-width: 74ch;
@@ -1315,7 +1361,7 @@ button.search__pin:disabled {
 .mapfield__disclosurelink {
   display: inline-block;
   margin-top: 0.6rem;
-  font-size: 0.72rem;
+  font-size: var(--text-2xs);
   color: var(--steel);
   text-decoration: underline;
   text-underline-offset: 2px;
@@ -1344,8 +1390,8 @@ button.search__pin:disabled {
   color: var(--ink);
   padding: 0.4rem 0.75rem;
   font-family: var(--font-mono);
-  font-size: 0.7rem;
-  letter-spacing: 0.08em;
+  font-size: var(--text-2xs);
+  letter-spacing: var(--tracking-wide);
   text-transform: uppercase;
 }
 
@@ -1389,8 +1435,8 @@ button.search__pin:disabled {
 }
 
 .mapfield__loading-text {
-  font-size: 0.8rem;
-  letter-spacing: 0.06em;
+  font-size: var(--text-2xs);
+  letter-spacing: var(--tracking-wide);
   text-transform: uppercase;
   color: var(--steel);
 }
@@ -1423,7 +1469,7 @@ button.search__pin:disabled {
 
 .mapfield__status {
   margin-top: 0.6rem;
-  font-size: 0.76rem;
+  font-size: var(--text-2xs);
   color: var(--steel);
 }
 
@@ -1551,10 +1597,10 @@ button.search__pin:disabled {
   padding: 14px;
   min-height: 200px;
   font-family: var(--font-mono);
-  font-size: 10.5px;
+  font-size: var(--text-3xs);
   line-height: 1.6;
   color: var(--steel);
-  letter-spacing: 0.04em;
+  letter-spacing: var(--tracking-wide);
 }
 
 /* ---------- side-panel stat tiles (LAYOUT-V3 WAVE 1b, 2026-08-02,
@@ -1618,16 +1664,15 @@ button.search__pin:disabled {
 .tile__title {
   font-family: var(--font-display);
   font-weight: 700;
-  font-size: 0.72rem;
+  font-size: var(--text-2xs);
   line-height: 1.2;
   text-transform: uppercase;
-  letter-spacing: -0.005em;
+  letter-spacing: var(--tracking-tight);
 }
 
 .tile__value {
   font-family: var(--font-mono);
-  font-variant-numeric: tabular-nums;
-  font-size: 1.35rem;
+  font-size: var(--text-xl);
   font-weight: 700;
   line-height: 1.1;
 }
@@ -1639,7 +1684,7 @@ button.search__pin:disabled {
 
 .tile__value--text {
   font-family: var(--font-display);
-  font-size: 0.86rem;
+  font-size: var(--text-sm);
   font-weight: 700;
   text-transform: none;
   line-height: 1.25;
@@ -1647,7 +1692,7 @@ button.search__pin:disabled {
 
 .tile__value--empty {
   font-family: var(--font-mono);
-  font-size: 0.76rem;
+  font-size: var(--text-2xs);
   font-weight: 400;
   color: var(--steel);
   line-height: 1.4;
@@ -1674,16 +1719,16 @@ button.search__pin:disabled {
 .tile__sub {
   margin-top: 0.1rem;
   font-family: var(--font-mono);
-  font-size: 0.62rem;
-  letter-spacing: 0.02em;
+  font-size: var(--text-3xs);
+  letter-spacing: var(--tracking-wide);
   color: var(--steel);
 }
 
 .tile .era {
   margin-left: 0.4rem;
   font-family: var(--font-mono);
-  font-size: 0.58rem;
-  letter-spacing: 0.06em;
+  font-size: var(--text-3xs);
+  letter-spacing: var(--tracking-wide);
   text-transform: uppercase;
   color: var(--steel);
 }
@@ -1713,8 +1758,8 @@ button.search__pin:disabled {
   cursor: pointer;
   text-align: left;
   font-family: var(--font-mono);
-  font-size: 0.62rem;
-  letter-spacing: 0.08em;
+  font-size: var(--text-3xs);
+  letter-spacing: var(--tracking-wide);
   text-transform: uppercase;
   color: var(--steel);
 }
@@ -1733,8 +1778,8 @@ button.search__pin:disabled {
 }
 
 .tiledetail__title {
-  font-size: 0.66rem;
-  letter-spacing: 0.1em;
+  font-size: var(--text-3xs);
+  letter-spacing: var(--tracking-wider);
   text-transform: uppercase;
   color: var(--steel);
   margin-bottom: 0.5rem;
@@ -1747,7 +1792,7 @@ button.search__pin:disabled {
 
 .tiledetail .field__empty {
   font-family: var(--font-mono);
-  font-size: 0.72rem;
+  font-size: var(--text-2xs);
   color: var(--ink);
   line-height: 1.5;
 }
@@ -1782,7 +1827,7 @@ button.search__pin:disabled {
 /* ---------- footer ---------- */
 .footer p {
   max-width: 46rem;
-  font-size: 0.82rem;
+  font-size: var(--text-sm);
   color: var(--steel);
   line-height: 1.6;
 }
@@ -1823,14 +1868,14 @@ button.search__pin:disabled {
   font-weight: 700;
   font-stretch: condensed;
   text-transform: uppercase;
-  font-size: clamp(1.6rem, 3.6vw, 2.4rem);
-  letter-spacing: -0.01em;
+  font-size: var(--text-display-md);
+  letter-spacing: var(--tracking-tight);
 }
 
 .disclosure__lede {
   margin-top: 0.6rem;
   max-width: 62ch;
-  font-size: 0.95rem;
+  font-size: var(--text-md);
   line-height: 1.6;
   color: var(--steel);
 }
@@ -1892,20 +1937,20 @@ button.search__pin:disabled {
   font-family: var(--font-display);
   font-weight: 700;
   text-transform: uppercase;
-  font-size: 0.95rem;
-  letter-spacing: -0.005em;
+  font-size: var(--text-md);
+  letter-spacing: var(--tracking-tight);
 }
 
 .disclosure__what {
   margin-top: 0.6rem;
-  font-size: 0.9rem;
+  font-size: var(--text-sm);
   line-height: 1.5;
 }
 
 .disclosure__how {
   margin-top: 0.6rem;
   font-family: var(--font-mono);
-  font-size: 0.78rem;
+  font-size: var(--text-2xs);
   line-height: 1.55;
   color: var(--steel);
 }
@@ -1927,7 +1972,7 @@ button.search__pin:disabled {
 }
 
 .disclosure__source--pending {
-  font-size: 0.72rem;
+  font-size: var(--text-2xs);
   color: var(--steel);
 }
 
@@ -1954,8 +1999,8 @@ button.search__pin:disabled {
   color: var(--ink);
   padding: 0.35rem 0.7rem;
   font-family: var(--font-mono);
-  font-size: 0.7rem;
-  letter-spacing: 0.04em;
+  font-size: var(--text-2xs);
+  letter-spacing: var(--tracking-wide);
 }
 
 .prefbar__chip[aria-pressed="true"] {
@@ -1984,7 +2029,7 @@ button.search__pin:disabled {
   border: 1px dashed var(--steel);
   padding: 0.25rem 0.3rem 0.25rem 0.55rem;
   font-family: var(--font-mono);
-  font-size: 0.68rem;
+  font-size: var(--text-3xs);
   color: var(--ink);
 }
 
@@ -1992,7 +2037,7 @@ button.search__pin:disabled {
   border: none;
   background: transparent;
   color: var(--steel);
-  font-size: 0.9rem;
+  font-size: var(--text-sm);
   line-height: 1;
   cursor: pointer;
   padding: 0 0.15rem;
@@ -2066,7 +2111,7 @@ button.search__pin:disabled {
   border: none;
   background: none;
   color: var(--steel);
-  font-size: 0.95rem;
+  font-size: var(--text-md);
   line-height: 1;
   cursor: pointer;
   padding: 0.1rem 0.2rem;
@@ -2077,8 +2122,7 @@ button.search__pin:disabled {
 }
 
 .buildinginfo__value {
-  font-variant-numeric: tabular-nums;
-  font-size: 0.78rem;
+  font-size: var(--text-2xs);
   font-weight: 700;
   color: var(--ink);
   line-height: 1.3;
@@ -2087,9 +2131,9 @@ button.search__pin:disabled {
 
 .buildinginfo__value .era {
   margin-left: 0.35rem;
-  font-size: 0.6rem;
+  font-size: var(--text-3xs);
   font-weight: 400;
-  letter-spacing: 0.05em;
+  letter-spacing: var(--tracking-wide);
   text-transform: uppercase;
   color: var(--steel);
 }
@@ -2107,8 +2151,8 @@ button.search__pin:disabled {
   margin-top: 0.35rem;
   padding-top: 0.3rem;
   border-top: 1px solid var(--steel);
-  font-size: 0.58rem;
-  letter-spacing: 0.03em;
+  font-size: var(--text-3xs);
+  letter-spacing: var(--tracking-wide);
   color: var(--steel);
 }
 
