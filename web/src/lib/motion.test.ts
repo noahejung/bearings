@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { motionDelay, MOTION_BASE_MS, MOTION_BAR_MS, MOTION_FAST_MS, prefersReducedMotion } from "./motion";
+import { motionDelay, MOTION_BASE_MS, MOTION_FAST_MS, prefersReducedMotion } from "./motion";
 
 function stubReducedMotion(matches: boolean) {
   vi.stubGlobal(
@@ -35,7 +35,6 @@ describe("prefersReducedMotion / motionDelay", () => {
     stubReducedMotion(true);
     expect(motionDelay(150)).toBe(0);
     expect(motionDelay(MOTION_BASE_MS)).toBe(0);
-    expect(motionDelay(MOTION_BAR_MS)).toBe(0);
   });
 });
 
@@ -44,9 +43,8 @@ describe("timing tokens", () => {
   // exported numbers this wave's report cites -- a future edit that
   // silently changes one of these without updating the report/CSS mirror
   // fails this test instead of drifting unnoticed.
-  it("exports the three real timing tokens this wave's motion spec calls for", () => {
+  it("exports the real timing tokens this wave's motion spec calls for", () => {
     expect(MOTION_FAST_MS).toBe(150);
     expect(MOTION_BASE_MS).toBe(200);
-    expect(MOTION_BAR_MS).toBe(250);
   });
 });

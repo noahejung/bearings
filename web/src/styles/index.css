@@ -651,39 +651,11 @@ button.search__pin:disabled {
 /* WAVE 4 (2026-08-11): `.stations`/`.station`/`.station__name`/
    `.station__walk` removed -- TransitCard.tsx's own nearest-station list
    layout; TransitCard.tsx is deleted (Wave 4 dead-component removal).
-   `.bullets`/`.bullet*` below are UNCHANGED -- RouteBullet.tsx still
-   renders route/line bullets independently of that list. */
-.bullets {
-  display: inline-flex;
-  gap: var(--space-2);
-  flex-shrink: 0;
-}
-
-.bullet {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 1.55rem;
-  height: 1.55rem;
-  border-radius: 50%;
-  font-family: var(--font-mono);
-  font-weight: 700;
-  font-size: var(--text-2xs);
-  color: var(--bone);
-  line-height: 1;
-}
-
-.bullet--dark-text {
-  color: var(--ink);
-}
-
-.bullet--wide {
-  width: auto;
-  padding: 0 var(--space-3);
-  border-radius: 999px;
-  font-size: var(--text-3xs);
-  letter-spacing: var(--tracking-wide);
-}
+   `.bullets`/`.bullet*` also removed (Wave 7 dead-code batch, 2026-08-11) --
+   they styled RouteBullet.tsx's own `RouteBullet`/`RouteBullets` JSX, which
+   had no mount point in the shipped UI; `colorFor()` (still exported from
+   RouteBullet.tsx) remains in use for the map's plain-DOM station markers,
+   styled via `.mapstation__bullet*` instead. */
 
 .anchors {
   display: flex;
@@ -1760,24 +1732,12 @@ button.search__pin:disabled {
   font-weight: inherit;
 }
 
-.tile__value--text {
-  font-family: var(--font-display);
-  font-size: var(--text-sm);
-  font-weight: 700;
-  text-transform: none;
-  line-height: 1.25;
-}
-
 .tile__value--empty {
   font-family: var(--font-mono);
   font-size: var(--text-2xs);
   font-weight: 400;
   color: var(--steel);
   line-height: 1.4;
-}
-
-.tile__value--flag {
-  color: var(--red);
 }
 
 /* UX-FIX 2026-08-03 (audit finding #8): the ordinal suffix ("th" in "94th")

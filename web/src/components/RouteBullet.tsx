@@ -30,10 +30,6 @@ const ROUTE_COLORS: Record<string, string> = {
   PATH: "#009CDE",
 };
 
-// The yellow, lime, and PATH-blue swatches are light enough that white text fails
-// contrast -- MTA signage itself uses black text on N/Q/R/W and G bullets.
-const DARK_TEXT_ROUTES = new Set(["N", "Q", "R", "W", "G"]);
-
 const FALLBACK_COLOR = "#5B5648";
 
 // Exported so the map (MapView.tsx) can build plain-DOM station markers in
@@ -44,38 +40,4 @@ export function colorFor(route: string): string {
   if (route in ROUTE_COLORS) return ROUTE_COLORS[route];
   const local = route.replace(/X$/, ""); // FX -> F, 6X -> 6 (express variants)
   return ROUTE_COLORS[local] ?? FALLBACK_COLOR;
-}
-
-export function isDarkTextRoute(route: string): boolean {
-  return DARK_TEXT_ROUTES.has(route.replace(/X$/, ""));
-}
-
-export function RouteBullet({ route }: { route: string }) {
-  const bg = colorFor(route);
-  const dark = DARK_TEXT_ROUTES.has(route.replace(/X$/, ""));
-  // "PATH" is four characters -- a circle bullet like the subway's single-character
-  // ones would either clip it or force a huge circle. Render it as a pill instead.
-  const wide = route.length > 2;
-  return (
-    <span
-      className={["bullet", dark && "bullet--dark-text", wide && "bullet--wide"]
-        .filter(Boolean)
-        .join(" ")}
-      style={{ backgroundColor: bg }}
-      title={route === "PATH" ? "PATH" : `${route} train`}
-    >
-      {route}
-    </span>
-  );
-}
-
-export function RouteBullets({ routes }: { routes: string[] }) {
-  if (routes.length === 0) return null;
-  return (
-    <span className="bullets">
-      {routes.map((r) => (
-        <RouteBullet route={r} key={r} />
-      ))}
-    </span>
-  );
 }
