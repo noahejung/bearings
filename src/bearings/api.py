@@ -264,6 +264,48 @@ def get_commute(
     }
 
 
+@app.get("/api/route")
+def get_route(
+    cell: str = Query(..., min_length=1),
+    anchor: str | None = Query(None),
+    dest_lat: float | None = Query(None),
+    dest_lng: float | None = Query(None),
+) -> dict:
+    """Real station-by-station directions + the GTFS shape_id(s) actually
+    ridden, for either one of the 4 baked ANCHORS (`anchor=`) or a
+    live-computed custom destination (`dest_lat=`&`dest_lng=`) -- Wave 4's
+    route-line preview and nav-directions feature (SPEC-layout-v3.md
+    Wave 4).
+
+    Computed live, on demand, for BOTH cases -- unlike GET /api/cell/{h3}'s
+    baked `to_anchors` minutes, no path/step data is baked (would bloat the
+    citywide bake for a feature only requested when a user actually asks to
+    see it: toggling route lines on, or hovering/selecting a getting-around
+    bar). Cheap per transit.graph()'s own warm-up: `profile.route_for()`
+    runs a single-pair Dijkstra (`transit.path_between()`), not a fresh
+    full-graph sweep, and shares its "which station won" scan with
+    `_anchor_result()`/`commute_to_point()` so the `minutes` this returns
+    can never disagree with the minutes already shown on the bar.
+
+    404s if `cell` isn't one of this build's real H3 cells, matching
+    GET /api/cell/{h3} and GET /api/commute's own guard. 400 if neither
+    `anchor` (one of the 4 real config.ANCHORS keys) nor a full
+    `dest_lat`/`dest_lng` pair is given.
+    """
+    if cellprofile.profile_for(cell) is None:
+        raise HTTPException(status_code=404, detail=f"no baked profile for cell {cell!r}")
+
+    if anchor is not None:
+        if anchor not in config.ANCHORS:
+            raise HTTPException(status_code=400, detail=f"unknown anchor {anchor!r}")
+    elif dest_lat is None or dest_lng is None:
+        raise HTTPException(
+            status_code=400, detail="pass anchor= or both dest_lat= and dest_lng="
+        )
+
+    return profile.route_for(cell, anchor=anchor, dest_lat=dest_lat, dest_lng=dest_lng)
+
+
 @app.get("/api/geocode")
 def get_geocode(address: str = Query(..., min_length=1)) -> dict:
     """Address -> point, fast. Deliberately does NOT reuse /api/map or

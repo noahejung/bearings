@@ -164,6 +164,12 @@ export interface MapBbox {
 export interface MapLine {
   coords: [number, number][]; // [lat, lng]
   route: string; // e.g. "B/D/F/M", "PATH" -- see sources/gtfs.py's shape_routes()
+  // WAVE 4 (2026-08-11, SPEC-layout-v3.md Wave 4): the join key the
+  // route-line preview needs -- GET /api/route returns the real shape_id(s)
+  // a computed commute rode; this array (already loaded once per address)
+  // is filtered by shape_id client-side to highlight them, no second
+  // geometry fetch. See mapgeo._subway_lines()'s own comment.
+  shape_id: string;
 }
 
 export interface MapStation {
@@ -457,6 +463,27 @@ export interface CommuteResult {
   destination: CommuteDestination;
   minutes: number;
   reason: UnreachableReason | null;
+}
+
+// Mirrors GET /api/route exactly (bearings/api.py's get_route(), backed by
+// profile.route_for()) -- WAVE 4 (2026-08-11, SPEC-layout-v3.md Wave 4):
+// route-line preview + nav directions. Every field here comes from a real
+// Dijkstra path + real GTFS trips -- never fabricated or interpolated, per
+// the spec's own binding rule. `minutes` always matches the corresponding
+// ToAnchors/CommuteResult value for the same query -- both read the same
+// backend scan (profile._best_candidate()).
+export type RouteStep =
+  | { type: "walk_to_station"; to: string; minutes: number }
+  | { type: "ride"; route: string | null; headsign: string | null; from: string; to: string; shape_ids: string[]; minutes: number }
+  | { type: "transfer"; at: string; minutes: number }
+  | { type: "walk_to_destination"; minutes: number; estimated: true };
+
+export interface RouteResult {
+  reachable: boolean;
+  reason: UnreachableReason | null;
+  minutes: number;
+  steps: RouteStep[] | null;
+  shape_ids: string[];
 }
 
 export interface CellProfile {

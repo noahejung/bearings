@@ -13,6 +13,7 @@ The parsing functions never branch on which feed they're looking at.
 
 import io
 import zipfile
+from functools import lru_cache
 from pathlib import Path
 
 import httpx
@@ -232,6 +233,74 @@ def shape_routes(feed: str = "mta") -> dict[str, str]:
         lambda s: "/".join(sorted(set(s.dropna())))
     )
     return grouped.to_dict()
+
+
+def feed_for_stop(stop_id: str) -> str:
+    """Which FEEDS key a namespaced stop_id belongs to, by its prefix --
+    the same table `_namespaced()` applies, reversed. Used by Wave 4's
+    route-line/directions feature (transit.py's graph nodes are namespaced
+    stop_ids with no feed of their own attached, but resolving a "ride"
+    edge back to a real GTFS trip/route/shape needs to know which feed's
+    stop_times.txt to look in). MTA has no prefix and is listed second in
+    FEEDS below -- fine as the fallback, by the same "no prefix == predates
+    namespacing" rule FEEDS' own comment states: a stop_id matching no
+    OTHER feed's prefix is MTA."""
+    for feed, spec in FEEDS.items():
+        prefix = spec["prefix"]
+        if prefix and stop_id.startswith(prefix):
+            return feed
+    return "mta"
+
+
+@lru_cache(maxsize=None)
+def _hop_routes(feed: str) -> dict[tuple[str, str], dict]:
+    """(src_stop_id, dst_stop_id) -> {route, shape_id, headsign} for every
+    real adjacent-stop pair this feed's timetable ever produces, built once
+    and memoised.
+
+    transit.py's own `_ride_times()` computes a MEDIAN seconds per (src,
+    dst) pair across every trip that makes that hop, deliberately
+    discarding which trip(s) produced it -- correct for a travel-time
+    estimate, useless for "which real line is this." This is the sibling
+    lookup Wave 4's route-line/directions feature needs instead: the FIRST
+    real trip found for a given adjacent pair, kept for its route label and
+    shape_id. Multiple trips serving the same adjacent pair (local/express
+    sharing track) are assumed to belong to the same rider-facing route
+    family -- picking one is enough to draw and name the real line ridden,
+    not a synthesized one; nothing here invents a pair that isn't a real,
+    scheduled adjacency in this feed's own stop_times.txt.
+    """
+    st = stop_times(feed).sort_values(["trip_id", "seq"])
+    st = st.copy()
+    st["next_stop"] = st.groupby("trip_id")["stop_id"].shift(-1)
+    legs = st.dropna(subset=["next_stop"])
+    first = legs.drop_duplicates(subset=["stop_id", "next_stop"], keep="first")
+
+    trips = _read(feed, "trips.txt")[["trip_id", "route_id", "shape_id", "trip_headsign"]]
+    routes = _read(feed, "routes.txt")[["route_id", "route_short_name"]]
+    joined = first.merge(trips, on="trip_id", how="left").merge(routes, on="route_id", how="left")
+    joined["shape_id"] = _namespaced(feed, joined["shape_id"])
+
+    out: dict[tuple[str, str], dict] = {}
+    for row in joined.itertuples():
+        out[(row.stop_id, row.next_stop)] = {
+            "route": row.route_short_name if pd.notna(row.route_short_name) else None,
+            "shape_id": row.shape_id if pd.notna(row.shape_id) else None,
+            "headsign": row.trip_headsign if pd.notna(row.trip_headsign) else None,
+        }
+    return out
+
+
+def route_for_hop(feed: str, src_stop_id: str, dst_stop_id: str) -> dict | None:
+    """{"route", "shape_id", "headsign"} for a real trip that rides
+    directly from `src_stop_id` to `dst_stop_id` (dst is the immediate next
+    stop after src on that trip) in `feed`'s own timetable -- or None if no
+    trip in this feed makes that exact adjacent hop (should not happen for
+    a "ride" edge transit.py's own graph produced, since that edge exists
+    only because SOME trip did; returning None instead of raising keeps a
+    route-line/directions request over this one honest caveat rather than
+    a 500)."""
+    return _hop_routes(feed).get((src_stop_id, dst_stop_id))
 
 
 def stop_times(feed: str = "mta") -> pd.DataFrame:

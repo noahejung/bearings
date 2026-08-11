@@ -196,3 +196,47 @@ def test_path_shapes_resolve_to_path(path_shapes):
 def test_shape_routes_keys_are_namespaced_like_shapes(path_shapes):
     routes = gtfs.shape_routes(feed="path")
     assert all(k.startswith("PATH:") for k in routes)
+
+
+# ---------------------------------------------------------------------------
+# WAVE 4 (SPEC-layout-v3.md Wave 4): route-line preview + nav directions --
+# resolving a "ride" graph edge back to the real GTFS trip/route/shape that
+# produced it.
+# ---------------------------------------------------------------------------
+
+
+def test_feed_for_stop_recognises_path_prefix():
+    assert gtfs.feed_for_stop("PATH:12345") == "path"
+
+
+def test_feed_for_stop_defaults_to_mta_for_unprefixed_ids():
+    assert gtfs.feed_for_stop("127") == "mta"
+
+
+def test_route_for_hop_resolves_a_real_adjacent_pair():
+    # Any real (src, dst) key `_hop_routes()` itself produced is, by
+    # construction, a real scheduled adjacent pair -- route_for_hop() must
+    # resolve it to the same info, not merely not-crash.
+    hops = gtfs._hop_routes("mta")
+    assert hops, "no MTA ride-edge resolved to a real trip at all"
+    (src, dst), expected = next(iter(hops.items()))
+    assert gtfs.route_for_hop("mta", src, dst) == expected
+    assert expected["route"]
+    assert expected["shape_id"]
+
+
+def test_route_for_hop_none_for_a_pair_that_is_never_adjacent(stations):
+    # Two real MTA stations that are never scheduled back-to-back on any
+    # trip (opposite ends of the system) -- must return None, not
+    # fabricate a route.
+    times_sq = stations[stations["name"].str.contains("Times Sq", case=False, na=False)]
+    coney = stations[stations["name"].str.contains("Coney Island", case=False, na=False)]
+    assert not times_sq.empty and not coney.empty
+    assert gtfs.route_for_hop("mta", times_sq.iloc[0]["stop_id"], coney.iloc[0]["stop_id"]) is None
+
+
+def test_hop_routes_shape_ids_are_namespaced_for_path_feed():
+    hops = gtfs._hop_routes("path")
+    shape_ids = {v["shape_id"] for v in hops.values() if v["shape_id"]}
+    assert shape_ids, "no PATH ride-edge resolved to a shape_id at all"
+    assert all(sid.startswith("PATH:") for sid in shape_ids)

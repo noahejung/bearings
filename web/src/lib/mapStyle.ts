@@ -424,6 +424,24 @@ export function buildOverlayLayers(): StyleSpecification["layers"] {
       layout: { "line-cap": "round", "line-join": "round" },
       paint: { "line-color": RED, "line-width": 2.4, "line-opacity": 0.92 },
     },
+    // WAVE 4 (2026-08-11, SPEC-layout-v3.md Wave 4): the route-line
+    // preview -- the real GTFS shape(s) a computed commute actually rode,
+    // drawn OVER the always-on "subway-line" backdrop above. No new colour
+    // (VISUAL.md's four-colour rule): distinct from that backdrop by width
+    // alone (5px vs 2.4px, full opacity vs 0.92) -- thick enough to read as
+    // "this is the one that matters" against the thin citywide wash, never
+    // competing with RouteBullet's own carved-out MTA-colour exception
+    // (that colours the bullet glyphs, not this line). Distinct from the
+    // destination zone preview too (a filled polygon, not a line) --
+    // MapView.tsx's own effect 10c never shows both for the same
+    // destination at once (see that effect's own comment).
+    {
+      id: "route-line-highlight",
+      type: "line",
+      source: "route-line",
+      layout: { "line-cap": "round", "line-join": "round" },
+      paint: { "line-color": RED, "line-width": 5, "line-opacity": 1 },
+    },
     ...buildCitywideGridLayers(),
     ...buildReachLayers(),
     ...buildTileHighlightLayers(),

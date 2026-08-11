@@ -171,6 +171,33 @@ function subwayGeoJSON(geo: MapGeometry): FeatureCollection {
   };
 }
 
+// WAVE 4 (2026-08-11, SPEC-layout-v3.md Wave 4): the route-line preview --
+// filters the SAME already-loaded subway_lines array (fetched once per
+// address, no second geometry request) down to just the real shape_id(s)
+// GET /api/route said a computed commute actually rode. `shapeIds` is
+// `null`/empty whenever there's nothing to draw (route-lines toggle off, no
+// active destination, or the active one has no real transit component) --
+// an empty FeatureCollection in every one of those cases, never a
+// fabricated or interpolated line (SPEC-layout-v3.md Wave 4's own binding
+// rule: "Route lines only ever drawn from a genuinely computed route").
+function routeLineGeoJSON(geo: MapGeometry | null, shapeIds: string[] | null): FeatureCollection {
+  if (!geo || !shapeIds || shapeIds.length === 0) return EMPTY_FC;
+  const wanted = new Set(shapeIds);
+  return {
+    type: "FeatureCollection",
+    features: geo.subway_lines
+      .filter((line) => wanted.has(line.shape_id))
+      .map((line) => ({
+        type: "Feature",
+        properties: { route: line.route },
+        geometry: {
+          type: "LineString",
+          coordinates: line.coords.map(([lat, lng]): [number, number] => [lng, lat]),
+        },
+      })),
+  };
+}
+
 // Reach rings (SPEC-lens-report.md §3) -- one Feature per real 5/10/15-min
 // band, ordered LARGEST FIRST: mapStyle.ts's buildReachLayers() draws a
 // GeoJSON source's features in array order, so this ordering IS the "5-min
@@ -641,6 +668,7 @@ export function MapView({
   highlightedTile,
   crimePrecinct,
   destinationHighlight,
+  routeHighlight,
   onOpenDisclosure,
 }: {
   // The real searched address, or `null` when the current selection came
@@ -679,6 +707,14 @@ export function MapView({
   // point up, the same "child owns the interaction, parent just relays a
   // point/key" shape onTileHighlight/highlightedTile already establishes.
   destinationHighlight: { lat: number; lng: number } | null;
+  // WAVE 4 (2026-08-11, SPEC-layout-v3.md Wave 4): the real GTFS shape_id(s)
+  // for the currently active destination's actual ridden line(s), or `null`
+  // when there's nothing to draw as a real line (route-lines toggle off, no
+  // active destination, or the active one has no real transit component).
+  // Same "child owns it, parent relays a value" shape as destinationHighlight
+  // above -- GettingAroundField owns the toggle state and the GET
+  // /api/route fetch, this prop is just the resolved result.
+  routeHighlight: string[] | null;
   // LAYOUT-V3 WAVE 1f item 5 (2026-08-11, SPEC-layout-v3.md §8, Noah: "the
   // walk-rings caveat paragraph sits exposed below the map ... in this
   // version we cut down all this fluff"). `geo.basemap_note` and
@@ -850,6 +886,10 @@ export function MapView({
     // for how they're painted.
     map.addSource("destination-rings", { type: "geojson", data: EMPTY_FC });
     map.addSource("destination-point", { type: "geojson", data: EMPTY_FC });
+    // WAVE 4 (2026-08-11, SPEC-layout-v3.md Wave 4): the route-line preview
+    // -- see routeLineGeoJSON()'s own comment above for what this holds,
+    // and mapStyle.ts's "route-line-highlight" layer for how it's painted.
+    map.addSource("route-line", { type: "geojson", data: EMPTY_FC });
 
     // The actual layer definitions (paint/layout/filter) live in
     // mapStyle.ts's buildOverlayLayers(), as a pure/exported function so
@@ -1358,7 +1398,16 @@ export function MapView({
     const map = mapRef.current;
     if (!map || !mapReady) return;
     const dimmed = highlightedTile !== null;
-    const visible = destinationHighlight !== null;
+    // WAVE 4 (2026-08-11): a real route line and the straight-line zone
+    // ring are never shown for the same destination at once (SPEC-layout-
+    // v3.md Wave 4: "distinct visually and in copy from the zone preview")
+    // -- GettingAroundField only ever sets `routeHighlight` for the SAME
+    // point it also set `destinationHighlight` to, so a non-empty
+    // `routeHighlight` here means "draw the real line instead," not "in
+    // addition to."
+    const routeLineShowing = routeHighlight !== null && routeHighlight.length > 0;
+    const ringTarget = routeLineShowing ? null : destinationHighlight;
+    const visible = ringTarget !== null;
 
     if (visible !== destPreviewWasVisibleRef.current) {
       const duration = visible ? DESTINATION_ENTER_MS : DESTINATION_EXIT_MS;
@@ -1370,12 +1419,15 @@ export function MapView({
     }
 
     (map.getSource("destination-rings") as maplibregl.GeoJSONSource | undefined)?.setData(
-      withFadeFallback(destinationRingsGeoJSON(destinationHighlight, dimmed), lastDestRingsRef),
+      withFadeFallback(destinationRingsGeoJSON(ringTarget, dimmed), lastDestRingsRef),
     );
     (map.getSource("destination-point") as maplibregl.GeoJSONSource | undefined)?.setData(
-      withFadeFallback(destinationPointGeoJSON(destinationHighlight, dimmed), lastDestPointRef),
+      withFadeFallback(destinationPointGeoJSON(ringTarget, dimmed), lastDestPointRef),
     );
-  }, [destinationHighlight, highlightedTile, mapReady]);
+    (map.getSource("route-line") as maplibregl.GeoJSONSource | undefined)?.setData(
+      routeLineGeoJSON(geoRef.current, routeHighlight),
+    );
+  }, [destinationHighlight, routeHighlight, highlightedTile, mapReady, geo]);
 
   // ---- 11. pinned-place markers (SPEC-lens-report.md §3: "a pinned place
   // is never silently absent" -- always rendered, even outside every real

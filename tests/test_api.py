@@ -493,6 +493,84 @@ def test_commute_bad_destination_is_422_not_500(client):
     assert "detail" in resp.json()
 
 
+# ---------------------------------------------------------------------------
+# WAVE 4 (SPEC-layout-v3.md Wave 4): GET /api/route -- route-line preview +
+# nav-directions steps, for either a baked anchor or a live custom
+# destination. GET /api/cell/{h3} and GET /api/commute are both untouched.
+# ---------------------------------------------------------------------------
+
+
+def test_route_for_anchor_returns_real_steps_and_shape_ids(client):
+    loc = geocode.geocode(EMPIRE_STATE)
+    h3 = cells.cell_for(loc.lat, loc.lng)
+    resp = client.get("/api/route", params={"cell": h3, "anchor": "midtown"})
+    assert resp.status_code == 200
+    body = resp.json()
+    assert set(body) == {"reachable", "reason", "minutes", "steps", "shape_ids"}
+    assert body["reachable"] is True
+    assert body["reason"] is None
+    assert body["steps"][0]["type"] == "walk_to_station"
+    assert body["steps"][-1]["type"] == "walk_to_destination"
+    assert any(s["type"] == "ride" for s in body["steps"])
+    assert body["shape_ids"]
+
+
+def test_route_for_custom_destination_matches_commute_minutes(client):
+    loc = geocode.geocode(EMPIRE_STATE)
+    h3 = cells.cell_for(loc.lat, loc.lng)
+    commute = client.get(
+        "/api/commute", params={"cell": h3, "destination": "60 West 36 St, Manhattan"}
+    ).json()
+    dest = commute["destination"]
+    resp = client.get(
+        "/api/route",
+        params={"cell": h3, "dest_lat": dest["lat"], "dest_lng": dest["lng"]},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["reachable"] is True
+    assert body["minutes"] == commute["minutes"]
+
+
+def test_route_no_rail_connection_when_destination_is_sir_only(client):
+    loc = geocode.geocode(EMPIRE_STATE)
+    h3 = cells.cell_for(loc.lat, loc.lng)
+    dest = geocode.geocode("43 Foster Rd, Staten Island")
+    resp = client.get(
+        "/api/route",
+        params={"cell": h3, "dest_lat": dest.lat, "dest_lng": dest.lng},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body == {
+        "reachable": False,
+        "reason": "no_rail_connection",
+        "minutes": -1,
+        "steps": None,
+        "shape_ids": [],
+    }
+
+
+def test_route_unknown_cell_is_404_not_500(client):
+    ocean_cell = cells.cell_for(40.40, -73.75)
+    resp = client.get("/api/route", params={"cell": ocean_cell, "anchor": "midtown"})
+    assert resp.status_code == 404
+
+
+def test_route_unknown_anchor_is_400_not_500(client):
+    loc = geocode.geocode(EMPIRE_STATE)
+    h3 = cells.cell_for(loc.lat, loc.lng)
+    resp = client.get("/api/route", params={"cell": h3, "anchor": "not_a_real_anchor"})
+    assert resp.status_code == 400
+
+
+def test_route_no_destination_at_all_is_400_not_500(client):
+    loc = geocode.geocode(EMPIRE_STATE)
+    h3 = cells.cell_for(loc.lat, loc.lng)
+    resp = client.get("/api/route", params={"cell": h3})
+    assert resp.status_code == 400
+
+
 def test_commute_live_compute_is_fast_once_geocode_and_graph_are_warm(client):
     # Isolates the LIVE-COMPUTE cost this endpoint actually adds (the thing
     # SPEC-layout-v3.md Wave 3 asks to measure) from the unrelated, already-

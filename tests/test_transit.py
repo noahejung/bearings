@@ -171,6 +171,47 @@ def test_destination_times_none_when_nothing_within_the_snap_radius():
     assert by_stop is None
 
 
+# ---------------------------------------------------------------------------
+# WAVE 4 (SPEC-layout-v3.md Wave 4): route-line preview + nav directions --
+# single-pair path reconstruction (`nearest_stop()`/`path_between()`), the
+# on-demand complement to the bulk single-source sweeps above.
+# ---------------------------------------------------------------------------
+
+
+def test_nearest_stop_matches_the_internal_snap(graph):
+    lat, lng = transit.config.ANCHORS["midtown"]
+    assert transit.nearest_stop(lat, lng) == transit._nearest_station(graph, lat, lng)
+
+
+def test_path_between_same_stop_is_a_real_but_empty_path():
+    stop = transit.nearest_stop(*transit.config.ANCHORS["midtown"])
+    assert transit.path_between(stop, stop) == []
+
+
+def test_path_between_a_real_reachable_pair_has_only_real_edge_kinds():
+    origin = transit.nearest_stop(40.734789, -73.990568)  # 14 St-Union Sq
+    dest = transit.nearest_stop(*transit.config.ANCHORS["downtown_brooklyn"])
+    hops = transit.path_between(origin, dest)
+    assert hops
+    assert all(h["kind"] in ("ride", "transfer") for h in hops)
+    assert all(h["seconds"] > 0 for h in hops)
+    # Hops must actually chain: each hop's "to" is the next hop's "from".
+    for a, b in zip(hops, hops[1:]):
+        assert a["to"] == b["from"]
+
+
+def test_path_between_none_across_disconnected_components(graph):
+    # Any real SIR station has no path to the rest of the network at all
+    # (test_profile.py's own _disconnected_stop_ids() proves this set is
+    # exactly Staten Island Railway) -- path_between() must say so honestly
+    # rather than raising or fabricating a route.
+    sir = next(
+        n for n, d in graph.nodes(data=True) if "st george" in d["name"].lower()
+    )
+    midtown_stop = transit.nearest_stop(*transit.config.ANCHORS["midtown"])
+    assert transit.path_between(sir, midtown_stop) is None
+
+
 def test_farther_stations_take_longer(times):
     """Sanity: Coney Island must be farther from Midtown than Union Sq."""
     from bearings.sources import gtfs
