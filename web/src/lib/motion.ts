@@ -11,7 +11,6 @@
 
 export const MOTION_FAST_MS = 150; // exits/deletions -- "users forgive slow entry; they do not forgive slow exit" (emil-design-eng skill)
 export const MOTION_BASE_MS = 200; // settle: tile/percentile value crossfade, row entrance
-export const MOTION_BAR_MS = 250; // getting-around bar width/scale transitions
 
 // Matches App.tsx's own scrollToId() convention exactly -- window.matchMedia
 // called directly, no feature-detect wrapper, since that's this project's
