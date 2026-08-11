@@ -121,6 +121,12 @@ export default function App() {
     try {
       const result = await getGeocode(address);
       addPin({ label: result.label, lat: result.lat, lng: result.lng });
+      // WAVE 6 (2026-08-11, SPEC-layout-v3.md §8): a pin is only visible on
+      // the map, so pinning from the disclosure page (the shell's search
+      // bar is present there too) returns to the map view -- same "an
+      // action taken from any view lands you somewhere that shows its
+      // result" rule handleSearch below already follows.
+      setShowDisclosure(false);
     } catch (e) {
       setPinError(e instanceof ApiError ? e.message : "Something went wrong pinning that place.");
     } finally {
@@ -186,6 +192,7 @@ export default function App() {
   async function handleCellClick(h3: string) {
     setSearchedAddress(null);
     setAddressInput("");
+    setShowDisclosure(false);
     await loadCell(h3);
   }
 
@@ -197,6 +204,11 @@ export default function App() {
     setReportLoading(true);
     setReportError(null);
     resetFactcheck();
+    // WAVE 6 (2026-08-11, SPEC-layout-v3.md §8): the shell's search bar is
+    // now present on the disclosure page too -- searching from there must
+    // land you back on the map view to see the result, the concrete form
+    // of "every view reachable from every other view" for this action.
+    setShowDisclosure(false);
     try {
       const geo = await getGeocode(address);
       setSearchedAddress(geo.label);
@@ -254,24 +266,66 @@ export default function App() {
           is deleted, not just unmounted. The app now opens straight at the
           search bar; address identity, when there is one, lives at the
           panel's own compact `.record-line` below (item 2's line), not a
-          page-level band duplicating the same fact. */}
+          page-level band duplicating the same fact.
+
+          LAYOUT-V3 WAVE 6 (2026-08-11, SPEC-layout-v3.md §8, Noah: "a more
+          consistent home page/navbar ... it feels confusing that things
+          change a lot depending on where i click"). Root cause named in the
+          spec: 1d/1f removed the masthead and per-region headers without
+          replacing them with any persistent chrome, so each view improvised
+          its own top edge. `.shell` is the fix -- mounted here, ONCE,
+          outside the showDisclosure branch below, so it renders identically
+          (same DOM, same size) whether the report view or the disclosure
+          view is showing. It carries the app's one search-bar anchor (no
+          `compact` prop any more -- see AddressSearch.tsx's own comment)
+          plus the two links the spec allows ("Methodology"; "Map", the
+          spec's "back-to-map when off the map view" link, kept always
+          mounted with an active/inactive colour state rather than
+          conditionally rendered so the shell's own bounding box never
+          changes size by view -- a link that appears/disappears would
+          re-introduce the exact drift this wave removes). Former per-view
+          entry points to the same disclosure page (MapView.tsx's own
+          scoped-to-a-loaded-report "ⓘ How this map is made" link,
+          DisclosurePage.tsx's own local "← Back" button, the footer's
+          `footer__disclosurelink` button below) are all retired in favour
+          of this one, always-present pair -- one navigation surface, not
+          three that only sometimes show up. */}
+      <div className="shell">
+        <AddressSearch
+          value={addressInput}
+          onChange={setAddressInput}
+          onSubmit={handleSearch}
+          onPin={pinAddress}
+          pinLoading={pinLoading}
+          pinError={pinError}
+          loading={reportLoading}
+          error={reportError}
+        />
+        <nav className="shell__nav" aria-label="App">
+          <button
+            type="button"
+            className="shell__link"
+            aria-current={!showDisclosure ? "page" : undefined}
+            onClick={() => setShowDisclosure(false)}
+          >
+            Map
+          </button>
+          <button
+            type="button"
+            className="shell__link"
+            aria-current={showDisclosure ? "page" : undefined}
+            onClick={() => setShowDisclosure(true)}
+          >
+            Methodology
+          </button>
+        </nav>
+      </div>
+
       <main>
         {showDisclosure ? (
-          <DisclosurePage cell={cellReport} onBack={() => setShowDisclosure(false)} />
+          <DisclosurePage cell={cellReport} />
         ) : (
           <>
-            <AddressSearch
-              value={addressInput}
-              onChange={setAddressInput}
-              onSubmit={handleSearch}
-              onPin={pinAddress}
-              pinLoading={pinLoading}
-              pinError={pinError}
-              loading={reportLoading}
-              error={reportError}
-              compact={cellReport !== null}
-            />
-
             {/* Slim bar above the map (SPEC-lens-report.md §2) -- category
                 chips + the pinned-places list, session-only. */}
             <PreferenceBar
@@ -340,7 +394,6 @@ export default function App() {
                 crimePrecinct={cellReport?.safety.precinct ?? null}
                 destinationHighlight={destinationHighlight}
                 routeHighlight={routeHighlight}
-                onOpenDisclosure={() => setShowDisclosure(true)}
               />
 
               <aside className="sidepanel" aria-label="Block record">
@@ -393,13 +446,13 @@ export default function App() {
         )}
       </main>
 
+      {/* LAYOUT-V3 WAVE 6 (2026-08-11): the footer's own "How this data
+          works" button is gone -- the shell's "Methodology" link (always
+          present, every view) already reaches the identical page; keeping
+          a second button here duplicated that one navigation action rather
+          than adding a distinct one. */}
       <footer className="footer">
-        <p>
-          Built on public data — every number traces to a source you can click.{" "}
-          <button type="button" className="footer__disclosurelink" onClick={() => setShowDisclosure(true)}>
-            How this data works
-          </button>
-        </p>
+        <p>Built on public data — every number traces to a source you can click.</p>
       </footer>
     </div>
   );

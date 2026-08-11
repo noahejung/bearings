@@ -118,7 +118,7 @@ interface Section {
 
 const ERA_LABELS: Record<string, string> = { prewar: "Pre-war", postwar: "Post-war", modern: "Modern" };
 
-export function DisclosurePage({ cell, onBack }: { cell: CellProfile | null; onBack: () => void }) {
+export function DisclosurePage({ cell }: { cell: CellProfile | null }) {
   // Byte-identical to CellReportView.tsx's own pre-Wave-1d crime disclosure
   // sentence ("NYPD crime data, week ending {week_ending} · {total_ytd}
   // major crimes so far this year in this area.") -- a real per-cell data
@@ -216,9 +216,6 @@ export function DisclosurePage({ cell, onBack }: { cell: CellProfile | null; onB
   return (
     <section className="disclosure" aria-labelledby="disclosure-heading">
       <header className="disclosure__head">
-        <button type="button" className="button button--ghost disclosure__back" onClick={onBack}>
-          ← Back
-        </button>
         <h2 className="disclosure__title" id="disclosure-heading">
           How this data works
         </h2>

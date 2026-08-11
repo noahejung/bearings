@@ -58,7 +58,6 @@ function baseProps(overrides?: Partial<Parameters<typeof AddressSearch>[0]>) {
     pinError: null,
     loading: false,
     error: null,
-    compact: false,
     ...overrides,
   };
 }

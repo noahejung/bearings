@@ -21,6 +21,20 @@ import type { AutocompleteResult } from "../types";
 // add-destination field can reuse it instead of building a second
 // typeahead. Pure extraction -- every test in AddressSearch.test.tsx is
 // unchanged and still green.
+//
+// LAYOUT-V3 WAVE 6 (2026-08-11, SPEC-layout-v3.md §8): this bar is now the
+// app's one persistent shell anchor (App.tsx mounts it unconditionally,
+// above the map/disclosure split) -- the former `compact` prop and its
+// hero-mode sibling (`.search__intro`: headline + sub-copy, shown only
+// pre-first-report) are gone. A shell whose own anchor element resizes
+// between "hero" and "slim" as soon as a report loads is exactly the kind
+// of chrome drift this wave exists to remove -- the bar now always renders
+// at its one slim size, in every view, so its bounding box never changes.
+// The hero copy itself is not reworded or relocated -- it named no fact
+// the slim bar's placeholder text doesn't already convey ("NYC address" via
+// its label, "350 5TH AVE, MANHATTAN" via its placeholder), so it is cut
+// outright, the same "does removing this make the next user action harder"
+// test Wave 1d item 2 already applied to decorative headers.
 
 interface AddressSearchProps {
   value: string;
@@ -32,8 +46,6 @@ interface AddressSearchProps {
   pinError: string | null;
   loading: boolean;
   error: string | null;
-  /** true once a profile has already loaded -- renders the slim compact bar instead of the hero. */
-  compact: boolean;
 }
 
 export function AddressSearch({
@@ -45,7 +57,6 @@ export function AddressSearch({
   pinError,
   loading,
   error,
-  compact,
 }: AddressSearchProps) {
   const inputId = useId();
   const errorId = useId();
@@ -74,20 +85,7 @@ export function AddressSearch({
   }
 
   return (
-    <section className={`search${compact ? " search--compact" : ""}`}>
-      {!compact && (
-        <div className="search__intro">
-          <h2 className="search__headline">
-            See what <em>public records</em> say about daily life at an address.
-          </h2>
-          <p className="search__sub">
-            Real train times, not distance to the platform. Noise complaints, tree counts,
-            nearby crime, and a building's safety record — every number sourced, none of it
-            opinion.
-          </p>
-        </div>
-      )}
-
+    <section className="search">
       <form className="search__form" onSubmit={handleSubmit} role="search">
         <label className="sr-only" htmlFor={inputId}>
           NYC address
