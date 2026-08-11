@@ -389,23 +389,15 @@ export default function App() {
                 never given. */}
             {!showDisclosure && cellReport && searchedAddress && (
               <div className="record">
-                {/* UX-FIX 2026-08-03 (audit finding #7, "search input and
-                    report heading show two different renderings of the
-                    address at once"): WAVE 6b (2026-08-11) closed that gap
-                    at the source -- handleSearch now canonicalizes the
-                    input to the same resolved label this heading shows (see
-                    that function's own comment) -- but the two still read
-                    as independent facts to a sighted user without this
-                    kicker explicitly saying "these agree," so it stays.
-                    `aria-hidden`: the heading's own accessible name must
-                    stay exactly the address text (App.test.tsx pins
-                    `getByRole("heading", { name: GEOCODE_RESULT.label })`)
-                    -- a sighted-only affordance, not new information a
-                    screen-reader user is missing (the heading already
-                    states the real confirmed address either way). */}
-                <p className="record-line__kicker mono" aria-hidden="true">
-                  Confirmed as
-                </p>
+                {/* WAVE 6e (2026-08-11, Noah live-use: "no need to write
+                    confirmed as"). The "Confirmed as" kicker (UX-FIX
+                    2026-08-03 finding #7) is gone -- it existed to visually
+                    bridge the search field and this heading when the two
+                    could show different text; WAVE 6b (2026-08-11) already
+                    closed that gap at the source (handleSearch
+                    canonicalizes the input to this same resolved label, see
+                    that function's own comment), so the bridge itself is no
+                    longer needed. */}
                 <h2 className="record-line mono" id="report-heading">
                   {searchedAddress}
                 </h2>
