@@ -70,13 +70,73 @@ describe("buildMapStyle (basemap)", () => {
     }
   });
 
-  it("paints nj-mask-fill after (on top of) the base earth/water/roads layers", () => {
+  // LAYOUT-V3 WAVE 1f item 1 (2026-08-11): re-specified from "mask paints
+  // over water too" to "mask paints over roads/earth, but the real water
+  // shape always repaints on top of the mask" -- Noah's "the river stays
+  // unfaded" requirement. mask no longer needs to out-rank "water" itself
+  // (it doesn't -- see the new water-unmasked assertion below), only the
+  // earth/open-space/road layers it's actually meant to hide.
+  it("paints nj-mask-fill after (on top of) earth/open-space/roads, but a real water layer repaints on top of the mask", () => {
     const style = buildMapStyle("https://example.com/tiles/nyc-basemap.pmtiles");
     const ids = style.layers.map((l) => l.id);
     const maskIdx = ids.indexOf("nj-mask-fill");
     expect(maskIdx).toBeGreaterThan(ids.indexOf("earth"));
-    expect(maskIdx).toBeGreaterThan(ids.indexOf("water"));
+    expect(maskIdx).toBeGreaterThan(ids.indexOf("open-space"));
+    expect(maskIdx).toBeGreaterThan(ids.indexOf("roads-minor"));
     expect(maskIdx).toBeGreaterThan(ids.indexOf("roads-major"));
+
+    // The river-preserving fix itself: a second real "water" source-layer
+    // fill, painted strictly after nj-mask-fill, with the exact same
+    // fill-color/fill-opacity as the base "water" layer -- so wherever the
+    // mask's hand-plotted polygon happens to overlap real water, the actual
+    // vector water shape wins the last paint and reads unfaded.
+    const waterUnmasked = style.layers.find((l) => l.id === "water-unmasked") as
+      | { source: string; "source-layer"?: string; paint: { "fill-color": string; "fill-opacity": number } }
+      | undefined;
+    const baseWater = style.layers.find((l) => l.id === "water") as
+      | { paint: { "fill-color": string; "fill-opacity": number } }
+      | undefined;
+    expect(waterUnmasked).toBeDefined();
+    expect(waterUnmasked?.source).toBe("basemap");
+    expect(waterUnmasked?.["source-layer"]).toBe("water");
+    expect(waterUnmasked?.paint["fill-color"]).toBe(baseWater?.paint["fill-color"]);
+    expect(waterUnmasked?.paint["fill-opacity"]).toBe(baseWater?.paint["fill-opacity"]);
+    expect(ids.indexOf("water-unmasked")).toBeGreaterThan(maskIdx);
+  });
+
+  // LAYOUT-V3 WAVE 1f item 1: the load-bearing regression this wave fixes --
+  // real published shoreline longitudes (not guessed) confirm the PRE-1f
+  // polygon crossed onto actual Manhattan/Bronx land at several latitudes
+  // (see mapStyle.ts's own NJ_MASK_POLYGON comment for the exact
+  // measurements). Every east-edge vertex must now sit measurably WEST of
+  // the real Manhattan/Bronx shore at its own latitude -- a hard numeric
+  // guard so this regression can't silently reappear on a future edit.
+  it("never crosses onto real Manhattan/Bronx land -- every east-edge vertex sits west of the real shore at its own latitude", () => {
+    const style = buildMapStyle("https://example.com/tiles/nyc-basemap.pmtiles");
+    const source = style.sources["nj-mask"] as {
+      type: string;
+      data: { geometry: { type: string; coordinates: [number, number][][] } };
+    };
+    const ring = source.data.geometry.coordinates[0];
+    // Real, published west-shore longitudes for Manhattan/the Bronx at
+    // representative latitudes along the Hudson (Battery Park, Chelsea
+    // Piers, Midtown/Javits, Riverside Park/UWS, Washington Heights/GWB,
+    // Inwood/Riverdale) -- every mask vertex at a nearby latitude must stay
+    // west (more negative) than these, with real margin, never approaching
+    // or crossing them.
+    const REAL_SHORE_BY_LAT: [number, number][] = [
+      [40.71, -74.019], // Battery Park / Tribeca
+      [40.75, -74.005], // Chelsea / Midtown west side
+      [40.8, -73.98], // Riverside Park / Upper West Side
+      [40.85, -73.94], // Washington Heights / GW Bridge (Manhattan side)
+      [40.87, -73.925], // Inwood / Riverdale transition
+    ];
+    for (const [lat, realShoreLng] of REAL_SHORE_BY_LAT) {
+      const nearest = ring.reduce((best, pt) =>
+        Math.abs(pt[1] - lat) < Math.abs(best[1] - lat) ? pt : best,
+      );
+      expect(nearest[0]).toBeLessThan(realShoreLng);
+    }
   });
 });
 
