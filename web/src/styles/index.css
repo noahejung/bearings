@@ -2062,11 +2062,18 @@ button.search__pin:disabled {
 }
 
 /* ---------- preference bar (SPEC-lens-report.md §2) ---------- */
+/* WAVE 5 (2026-08-11, Noah: "get rid of these line dividers... they don't
+   make sense in this usecase"): the top+bottom hairlines that used to
+   bracket this bar are gone. Both failed the "does this separate contexts
+   that would otherwise blur?" test -- the chip row already reads as its
+   own thing (buttons, not prose) between AddressSearch above and the map
+   below, and `.mapfield` (the map's own card) supplies a real border of
+   its own a beat later, so the pair of rules here were decorating an
+   already-clear boundary, not creating one -- exactly the redundant case
+   the divider audit specifically targeted. */
 .prefbar {
   margin-top: var(--space-6);
-  padding: var(--space-5) 0;
-  border-top: 1px solid var(--ink);
-  border-bottom: 1px solid var(--ink);
+  padding: var(--space-4) 0;
   display: flex;
   flex-direction: column;
   gap: var(--space-3);
