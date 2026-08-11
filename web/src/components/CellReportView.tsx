@@ -260,7 +260,18 @@ export function GettingAroundField({
   // Deliberately session-scoped, NOT reset when `cell` changes -- hiding
   // "Newport, NJ (PATH)" is a preference about what the user wants to see
   // across every block they browse, not a fact about one specific block.
-  const [hiddenAnchors, setHiddenAnchors] = useState<Set<AnchorKey>>(new Set());
+  //
+  // WAVE 6b (2026-08-11, SPEC-layout-v3.md §8, Noah: "can you remove NJ
+  // from locations default"). Newport, NJ (PATH) starts hidden -- a
+  // display-level default only, exactly the same "deletable from view, the
+  // baked data path stays" mechanism a manual delete already uses (this is
+  // literally the initial value hideAnchor() would otherwise produce after
+  // one click). cell.transit.to_anchors.newport_path is never read
+  // differently, never dropped from the API contract, and the row remains
+  // reachable the same way any other place is: typed into "Add a
+  // destination" below, which resolves it through the live GET /api/commute
+  // path as an ordinary custom row.
+  const [hiddenAnchors, setHiddenAnchors] = useState<Set<AnchorKey>>(new Set(["newport_path"]));
   const [customDestinations, setCustomDestinations] = useState<CustomDestination[]>([]);
   // Same session-scoped reasoning as hiddenAnchors -- a user's added
   // destinations (and which one they're currently looking at) survive a
