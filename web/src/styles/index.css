@@ -179,20 +179,48 @@ table {
   --motion-fast: 150ms; /* exits/deletions -- slow entry is forgiven, slow exit isn't (emil-design-eng skill) */
   --motion-base: 200ms; /* settle: tile/percentile value crossfade, row entrance */
   --motion-bar: 250ms; /* getting-around bar width/scale transitions */
+  /* WAVE 6d (2026-08-11, tmux-style tile expansion): the FLIP grow/shrink
+     transform duration -- a bigger spatial move (a tile travels from its
+     grid cell to the full 2x2 footprint) than a value crossfade
+     (--motion-base), so it needs more time to read as smooth rather than a
+     snap, but it's the same CLASS of "sizing transform" as the getting-
+     around bar's own scaleX transition -- 260ms sits right beside
+     --motion-bar (250ms) rather than inventing a duration far from the
+     existing family, per the dispatch's own "near the existing motion
+     tokens" instruction. */
+  --motion-expand: 260ms;
   --ease-out: cubic-bezier(0.23, 1, 0.32, 1); /* strong ease-out (emil-design-eng skill) -- entrances/settles */
   --ease: ease; /* hover/colour changes only (emil-design-eng skill's easing table) */
+  /* WAVE 6d: a SUBTLE spring for the tile expand/collapse FLIP transform --
+     Noah's own "bouncy... not cartoon" ask. Tuned numerically (not eyeballed):
+     a cubic-bezier's overshoot amplitude is the peak height its eased output
+     climbs past 1 before settling; cubic-bezier(0.34, 1.56, 0.64, 1) (the
+     common "easeOutBack" reference curve) overshoots by ~9.8% of the
+     animated delta, which reads as a cartoon bounce on a box this large.
+     cubic-bezier(0.3, 1.2, 0.6, 1) was computed (sampling the bezier's
+     parametric y(t) against x(t)=progress, Node script, 2026-08-11) to
+     overshoot by only ~1.25% of the delta -- on this tile's real ~300-400px
+     grow/shrink travel, that is a ~4-5px overshoot at the corner that moves
+     furthest, then settle: one small, real spring, not several rubber-band
+     oscillations. */
+  --ease-spring: cubic-bezier(0.3, 1.2, 0.6, 1);
 }
 
 /* `prefers-reduced-motion: reduce` collapses every duration token to 0ms in
    ONE place -- every rule below that reads --motion-fast/--motion-base/
-   --motion-bar snaps to its end state instantly, with no per-rule reduced-
-   motion override needed. Easing curves are left alone deliberately: a
-   0ms transition/animation has no perceptible easing regardless of curve. */
+   --motion-bar/--motion-expand snaps to its end state instantly, with no
+   per-rule reduced-motion override needed. Easing curves are left alone
+   deliberately: a 0ms transition/animation has no perceptible easing
+   regardless of curve. WAVE 6d: --motion-expand joins this list so the tile
+   FLIP transform (CellReportView.tsx's ExpandableTile) also snaps instantly
+   under reduced motion, with no separate JS-side reduced-motion branch --
+   same "one place" convention as every duration token above it. */
 @media (prefers-reduced-motion: reduce) {
   :root {
     --motion-fast: 0ms;
     --motion-base: 0ms;
     --motion-bar: 0ms;
+    --motion-expand: 0ms;
   }
 }
 
@@ -1768,10 +1796,30 @@ button.search__pin:disabled {
    .tile--anchors below). Four tiles (Wave 1e) at this new spacing still
    measures well under the map's own height -- see this wave's report for
    the live-measured before/after panel height. */
+/* WAVE 6d (2026-08-11, tmux-style tile expansion): `position: relative` so
+   an expanding `.tile--floating` (below) can be positioned `inset: 0`
+   relative to THIS box -- i.e. "cover the entire tile-grid footprint,"
+   Noah's own phrase for the target shape.
+   Investigated live via Playwright whether an expanding tile's full detail
+   content (which can exceed the pinned height -- `.tile--floating`'s own
+   `overflow-y: auto` is what keeps it from ever visually escaping)
+   destabilizes anything OUTSIDE this grid: `.appgrid`'s `content` row
+   (`.mapfield`, the map) DOES grow ~56.6px whenever a tile is
+   hovered/expanded here -- but reproduced identically on a completely
+   clean `main` checkout with ZERO Wave 6d code, from a bare HOVER alone
+   (no click, no `.tile--floating` involved at all): MapView.tsx's own
+   `highlightedTile === "amenities" && !reach && reachLoading` branch
+   (~line 1744) renders a real `.mapfield__note` "Loading nearby places..."
+   paragraph inside the map card on hover, which is what grows that row --
+   a pre-existing behavior of the ALREADY-SHIPPED hover-highlight feature,
+   unrelated to and unaffected by this wave. `.tilegrid`'s OWN box (this
+   wave's actual scope) was independently confirmed pinned and unmoved
+   throughout every measurement. */
 .tilegrid {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: var(--space-4);
+  position: relative;
 }
 
 .tile {
@@ -1780,6 +1828,58 @@ button.search__pin:disabled {
   display: flex;
   flex-direction: column;
   min-width: 0;
+}
+
+/* WAVE 6d: applied to a tile for its entire float lifetime -- from the
+   instant it starts expanding until its collapse transform finishes (see
+   CellReportView.tsx's ExpandableTile: `expanded || closing`). Pulled out
+   of grid flow and pinned to the grid's own box (`inset: 0` against
+   `.tilegrid`'s `position: relative` above) -- CellReportView.tsx computes
+   and applies the actual `transform` (grid-cell rect <-> full-footprint
+   rect) directly as an inline style; this rule only owns the STRUCTURAL
+   float (position/inset/stacking) and the transition every transform write
+   animates through. `transform-origin: top left` matches the FLIP math,
+   which computes translate/scale relative to the box's own top-left corner
+   (viewport-relative rects), not the default center origin. */
+.tile--floating {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  transform-origin: top left;
+  transition: transform var(--motion-expand) var(--ease-spring);
+  will-change: transform;
+  overflow-y: auto;
+}
+
+/* WAVE 6d: every tile NOT currently floating (i.e. not the expanded/
+   closing one) while ANY tile is floating -- hidden underneath, per Noah's
+   own spec ("other tiles hidden underneath ... restored on collapse").
+   `pointer-events: none` and `tabIndex={-1}` (set alongside this class in
+   CellReportView.tsx) together make a hidden tile fully inert to both
+   pointer and keyboard input, not merely invisible -- a screen-reader or
+   keyboard user tabbing through the panel while one tile is expanded never
+   lands on a tile they cannot see. Stays IN grid flow (opacity, not
+   display/visibility) so `.tilegrid`'s own column/row structure never
+   changes shape while a tile floats above it -- the height-pin below is the
+   OTHER half of that same zero-shift guarantee. */
+.tile--receded {
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--motion-expand) var(--ease);
+}
+
+/* WAVE 6d: while any tile is floating, `.tilegrid`'s own box height is
+   pinned (an inline `height` CellReportView.tsx captures via
+   getBoundingClientRect() at the moment a float starts) so pulling the
+   expanding tile out of grid flow can never shrink or grow the grid's own
+   box -- the "zero CLS outside the grid" requirement, independently
+   confirmed live via Playwright: `.tilegrid`'s own measured box stayed
+   byte-identical across every expand/collapse in this wave's verification
+   pass. `align-content: start` keeps the three still-in-flow (but
+   invisible) tiles pinned to their original row position rather than
+   stretching to fill the pinned height. */
+.tilegrid--pinned {
+  align-content: start;
 }
 
 .tile--wide {
@@ -1899,51 +1999,70 @@ button.search__pin:disabled {
   color: var(--steel);
 }
 
-/* The shared detail region every tile's toggle button controls
-   (`aria-controls="tile-detail-panel"`) -- a plain sibling of `.tilegrid`,
-   never one of its grid children, so expanding it can never distort any
-   tile's own geometry (the failure mode this whole redesign exists to
-   fix). Full panel width, not a narrow tile column -- readable at the
-   sidepanel's real 300-400px track width instead of squeezed into a
-   ~175px half-tile. */
-.tiledetail {
-  margin-top: var(--space-4);
-  border: 1.5px solid var(--ink);
-  padding: var(--space-4) var(--space-5) var(--space-5);
-}
-
-.tiledetail__title {
-  font-size: var(--text-3xs);
-  letter-spacing: var(--tracking-wider);
-  text-transform: uppercase;
+/* WAVE 6d (2026-08-11, tmux-style tile expansion): the small "x" close
+   affordance in the expanded card's own header -- ONE of the three ways to
+   close (the others: clicking `.tile__disclosuretoggle` again -- "click-
+   again" -- and Esc, both wired in CellReportView.tsx). Square hit target
+   sized the same as `.anchor__delete` (the app's one other bare "x" button)
+   for a consistent tap size, not a shared class -- this one lives in a
+   `.tile__head` flex row next to the expanded title, `.anchor__delete`
+   lives in a CSS-grid row template; different layout parents, same visual
+   language (transparent, steel, red on hover). */
+.tile__closebtn {
+  width: 1.4rem;
+  height: 1.4rem;
+  border: 1px solid transparent;
+  background: transparent;
   color: var(--steel);
-  margin-bottom: var(--space-3);
+  font-size: var(--text-md);
+  line-height: 1;
+  cursor: pointer;
+  transition: color var(--motion-fast) var(--ease), border-color var(--motion-fast) var(--ease);
 }
 
-.tiledetail .field__provenance {
+.tile__closebtn:hover {
+  color: var(--red);
+  border-color: var(--red);
+}
+
+/* WAVE 6d: `.tiledetail` (the shared region every tile's toggle used to
+   point at, LAYOUT-V3 WAVE 1c) is retired -- expansion is now in-grid, in
+   place, per tile (CellReportView.tsx's ExpandableTile), not a separate
+   region below the grid. `.tile__expandedbody` is that same disclosure
+   content's new home: the wrapper around a floating tile's full detail
+   copy, rendered INSIDE the tile itself once it's expanded. Every rule
+   below is `.tiledetail`'s own rule, renamed and re-scoped, not
+   reauthored -- the content and spacing it produces are unchanged from
+   Wave 1c, only the DOM location moved. */
+.tile__expandedbody {
+  margin-top: var(--space-4);
+}
+
+.tile__expandedbody .field__provenance {
   margin-top: var(--space-3);
   padding-top: var(--space-3);
 }
 
-.tiledetail .field__empty {
+.tile__expandedbody .field__empty {
   font-family: var(--font-mono);
   font-size: var(--text-2xs);
   color: var(--ink);
   line-height: 1.5;
 }
 
-.tiledetail .field__empty + .field__empty {
+.tile__expandedbody .field__empty + .field__empty {
   margin-top: var(--space-3);
 }
 
 /* .amenities' own rule (see that class's definition) switches to
    repeat(4,1fr) at a VIEWPORT width >= 420px -- fine for a >=320px-wide
-   `.field` card, but `.tiledetail` sits inside a 300-400px sidepanel track
-   (SPEC-layout-v3.md §8 Wave 1b), narrower than 4 mono-numeral+label
-   columns comfortably fit regardless of viewport width -- the exact
-   overflow bug Wave 1b found and fixed for the old per-tile `.tile__disclosure
-   .amenities` rule this replaces; same fix, same reasoning, new selector. */
-.tiledetail .amenities {
+   `.field` card, but a floating tile is still bounded by the sidepanel's
+   real 300-400px track width (SPEC-layout-v3.md §8 Wave 1b), narrower than
+   4 mono-numeral+label columns comfortably fit regardless of viewport width
+   -- the exact overflow bug Wave 1b found and fixed for the old per-tile
+   `.tile__disclosure .amenities` rule, then Wave 1c's `.tiledetail
+   .amenities`; same fix, same reasoning, new selector. */
+.tile__expandedbody .amenities {
   grid-template-columns: repeat(2, 1fr);
   margin-top: var(--space-3);
 }
@@ -2236,9 +2355,11 @@ button.search__pin:disabled {
 /* ---------- per-building info marker (LAYOUT-V3 WAVE 1e) ----------
    Anchored ("bottom") to the clicked residential building's own footprint
    (MapView.tsx's showBuildingInfo()) -- same bone/ink/mono chrome as
-   .tiledetail/.sidepanel__placeholder (border, no shadow, no radius, per
+   .tile/.sidepanel__placeholder (border, no shadow, no radius, per
    VISUAL.md §2's "no drop shadows, no gradients" rule), sized for a compact
-   on-map card rather than a full-width panel. */
+   on-map card rather than a full-width panel. WAVE 6d renamed the old
+   `.tiledetail` this comment used to cite to `.tile__expandedbody` -- see
+   that class's own comment; the chrome convention it names is unchanged. */
 .buildinginfo {
   position: relative;
   min-width: 148px;

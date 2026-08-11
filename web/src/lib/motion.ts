@@ -11,6 +11,16 @@
 
 export const MOTION_FAST_MS = 150; // exits/deletions -- "users forgive slow entry; they do not forgive slow exit" (emil-design-eng skill)
 export const MOTION_BASE_MS = 200; // settle: tile/percentile value crossfade, row entrance
+// WAVE 6d (2026-08-11, tmux-style tile expansion) -- mirrors index.css's
+// --motion-expand exactly, same reasoning as MOTION_FAST_MS/MOTION_BASE_MS
+// above: CellReportView.tsx's ExpandableTile needs this as a real JS value
+// (a `window.setTimeout` marking a FLIP grow/shrink as "settled," not a CSS
+// `transitionend` listener -- jsdom never fires CSS transition events at
+// all, so a transitionend-only implementation would never settle in this
+// project's own vitest suite; a plain timer works identically in a real
+// browser and in jsdom, matching GettingAroundField's own established
+// setTimeout-based exit-animation pattern in this same file).
+export const MOTION_EXPAND_MS = 260;
 
 // Matches App.tsx's own scrollToId() convention exactly -- window.matchMedia
 // called directly, no feature-detect wrapper, since that's this project's

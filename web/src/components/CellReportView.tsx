@@ -1,8 +1,18 @@
-import { useEffect, useId, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
+import {
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type FormEvent,
+  type KeyboardEvent,
+  type ReactNode,
+  type RefObject,
+} from "react";
 import { ApiError, getCommute, getRoute } from "../api";
 import { ANCHOR_COORDS } from "../lib/anchors";
 import { crimeRelativeLabel, formatPercentile, ordinalSuffix } from "../lib/crime";
-import { motionDelay, MOTION_FAST_MS } from "../lib/motion";
+import { motionDelay, MOTION_EXPAND_MS, MOTION_FAST_MS } from "../lib/motion";
 import { unreachableReasonSentence, unreachableReasonShortLabel } from "../lib/transit";
 import { useAutocomplete } from "../lib/useAutocomplete";
 import type { AutocompleteResult, CellProfile, RouteResult, RouteStep, UnreachableReason } from "../types";
@@ -832,6 +842,154 @@ const TILE_TITLES: Record<TileHighlightKey, string> = {
   trees: "Living street trees",
 };
 
+// WAVE 6d (2026-08-11, tmux-style tile expansion, Noah: "when i click the
+// detail boxes, instead of placing the expanded details below the full
+// grid, i say we animate it expanding to cover the full 2x2 ... think about
+// tmux or something"). Owns ONLY the float mechanics of one tile -- FLIP
+// (First/Last/Invert/Play) measuring, inverting, and animating a single
+// tile between its grid cell and the full grid footprint. CellReportView
+// below owns WHICH tile is expanded/closing, WHEN a float has settled (a
+// `window.setTimeout` mirroring --motion-expand, not a `transitionend`
+// listener here -- see lib/motion.ts's own MOTION_EXPAND_MS comment for why
+// a timer, not a CSS event, is this project's established pattern), and
+// what content to render inside a tile (compact vs full detail); every
+// tile's own copy is unchanged, just relocated from the old shared
+// `.tiledetail` region (LAYOUT-V3 WAVE 1c, see CellReportView's own comment
+// further down) into the tile itself.
+//
+// THE FLIP MATH: "First" is the tile's own real getBoundingClientRect() in
+// its normal grid cell -- captured by the PARENT (CellReportView's
+// toggle()) at CLICK time, before React ever re-renders the tile as
+// floating, because by the time this component's own effect below runs,
+// the tile has ALREADY re-rendered with `position: absolute; inset: 0`
+// (index.css's `.tile--floating` rule) and its original grid-cell rect no
+// longer exists to measure. "Last" is `.tilegrid`'s own box (the `inset: 0`
+// target -- "cover the entire tile-grid footprint", Noah's own phrase). The
+// transform that makes the FULL box LOOK like the small First box is
+// `translate(First.left - Last.left, First.top - Last.top) scale
+// (First.width / Last.width, First.height / Last.height)` -- applied
+// instantly (no transition) the moment a tile starts floating for the
+// FIRST time, then cleared (transform: none, WITH a transition) to grow
+// into place -- standard FLIP "invert, then play". Collapsing reuses the
+// exact same formula as its animation TARGET rather than its start point --
+// this is what makes an interrupted retarget (re-clicking mid-animation, or
+// clicking a different tile before this one settles) continue smoothly
+// with no snap: the browser's own CSS transition interpolates from
+// whatever transform is CURRENTLY rendered (mid-flight or fully settled)
+// to the newly-set target on its own; nothing here re-captures or replays
+// a "current value" in JS. `expanded` always wins over a stale `closing`
+// (the branch order below checks it FIRST) -- a tile can be re-opened
+// before its own prior close finishes (CellReportView's `closingKeys` isn't
+// necessarily cleared yet when that happens), and in that case the target
+// must still be "grow to full," not "keep shrinking," regardless of the
+// leftover close bookkeeping.
+function ExpandableTile({
+  tileKey,
+  expanded,
+  closing,
+  gridRef,
+  tileRefs,
+  originRects,
+  articleProps,
+  children,
+}: {
+  tileKey: TileHighlightKey;
+  expanded: boolean;
+  closing: boolean;
+  gridRef: RefObject<HTMLDivElement | null>;
+  tileRefs: RefObject<Partial<Record<TileHighlightKey, HTMLElement | null>>>;
+  originRects: RefObject<Partial<Record<TileHighlightKey, DOMRect>>>;
+  articleProps: Record<string, unknown>;
+  children: ReactNode;
+}) {
+  const wasFloatingRef = useRef(false);
+  const floating = expanded || closing;
+
+  useLayoutEffect(() => {
+    const el = tileRefs.current?.[tileKey];
+    if (!el) {
+      wasFloatingRef.current = floating;
+      return;
+    }
+
+    if (!floating) {
+      // Fully at rest (never floated, or a prior close just settled and
+      // `.tile--floating` was just removed, returning the tile to normal
+      // grid flow). Any inline `transform`/`transition` this effect wrote
+      // during that close is INDEPENDENT of `position` -- a `transform`
+      // keeps applying to a statically positioned element exactly the same
+      // as an absolutely positioned one -- so it MUST be cleared here, or a
+      // tile that just finished shrinking back into its grid cell stays
+      // visibly shrunk/offset by its own last close transform forever
+      // (reproduced live via Playwright, 2026-08-11: a collapsed tile
+      // measured at roughly half its real grid-cell size after Esc).
+      if (wasFloatingRef.current) {
+        el.style.transition = "none";
+        el.style.transform = "";
+        void el.offsetHeight;
+        el.style.transition = "";
+      }
+      wasFloatingRef.current = floating;
+      return;
+    }
+
+    const gridEl = gridRef.current;
+    const origin = originRects.current?.[tileKey];
+    if (!gridEl || !origin) {
+      wasFloatingRef.current = floating;
+      return;
+    }
+    const gridRect = gridEl.getBoundingClientRect();
+    const homeTransform =
+      `translate(${(origin.left - gridRect.left).toFixed(2)}px, ${(origin.top - gridRect.top).toFixed(2)}px) ` +
+      `scale(${(origin.width / gridRect.width).toFixed(4)}, ${(origin.height / gridRect.height).toFixed(4)})`;
+
+    if (expanded) {
+      if (!wasFloatingRef.current) {
+        // Freshly opening (never floating before): snap to First (the
+        // small grid-cell rect) with no transition, force a layout flush
+        // so the browser actually commits that as the current rendered
+        // state, then release to Last (`none` -- the full `inset: 0` box)
+        // WITH the transition -- FLIP's own "invert, then play".
+        el.style.transition = "none";
+        el.style.transform = homeTransform;
+        void el.offsetHeight; // force reflow -- flush the instant jump above
+        el.style.transition = "";
+        el.style.transform = "none";
+      } else {
+        // Already floating (fully open, or re-opened before a prior close
+        // settled) -- just (re)assert the target. The transition is
+        // already live, so if this tile is mid-shrink, it smoothly
+        // reverses direction back up to full instead of snapping.
+        el.style.transform = "none";
+      }
+    } else if (closing) {
+      // Retarget toward the origin rect from wherever the tile is
+      // CURRENTLY rendered (settled open, or mid-flight on an
+      // interruption). `.tile--floating`'s own `transition` rule is never
+      // cleared, so this is a plain value change the browser interpolates
+      // on its own -- no manual invert step needed for closing.
+      el.style.transition = "";
+      el.style.transform = homeTransform;
+    }
+
+    wasFloatingRef.current = floating;
+  }, [expanded, closing, tileKey, gridRef, tileRefs, originRects, floating]);
+
+  const existingClassName = typeof articleProps.className === "string" ? articleProps.className : "";
+  return (
+    <article
+      {...articleProps}
+      ref={(el: HTMLElement | null) => {
+        if (tileRefs.current) tileRefs.current[tileKey] = el;
+      }}
+      className={`${existingClassName}${floating ? " tile--floating" : ""}`}
+    >
+      {children}
+    </article>
+  );
+}
+
 // The four non-transit fields -- grocery/amenities, crime, noise, trees --
 // rendered beside the map in the side panel (SPEC-layout-v3.md §3/§4).
 // Building age and open housing hazards used to be a fifth tile here
@@ -879,6 +1037,29 @@ const TILE_TITLES: Record<TileHighlightKey, string> = {
 // This same click-to-expand state also doubles as the map-highlight
 // trigger for SPEC-layout-v3.md §8 Wave 1c item 4 ("hovered/expanded tile"),
 // via `onTileHighlight` below -- see that prop's own comment.
+//
+// WAVE 6d (2026-08-11, tmux-style tile expansion, Noah: "when i click the
+// detail boxes, instead of placing the expanded details below the full
+// grid, i say we animate it expanding to cover the full 2x2 i.e. think
+// about tmux ... i click on top right details for expansion, the bottom
+// left has a bouncy animation outwards to the bottom left corner of the
+// bottom left box"). The shared `.tiledetail` region above (Wave 1c's own
+// fix for the per-tile-<details> row-stretch bug) is RETIRED -- not because
+// the row-stretch bug came back, but because Noah's ask replaces "one
+// region below the grid" outright with "the clicked tile itself grows to
+// cover the grid." A tile's own disclosure content (every string Wave 1c
+// moved into the branches below) is unchanged and still renders from this
+// same `expandedKey` state; only WHERE it renders changed -- inline inside
+// the tile itself (`ExpandableTile`, above), not a separate DOM location a
+// moment away. `aria-controls`, which existed specifically because the
+// button and its content used to live in two different places, is dropped
+// for the same reason it's no longer needed: the content is now a direct
+// descendant of the same disclosure widget. Getting Around (the
+// `.tile--anchors` card + `GettingAroundField`, rendered by App.tsx as a
+// sibling AFTER this component, not one of `.tilegrid`'s children) does
+// NOT participate in this animation at all -- it was never a `.tile` grid
+// cell, so it has no "grid cell to grow from" in the first place; this
+// wave leaves it completely untouched.
 export function CellReportView({
   cell,
   onTileHighlight,
@@ -896,6 +1077,67 @@ export function CellReportView({
 
   const [hoveredKey, setHoveredKey] = useState<TileHighlightKey | null>(null);
   const [expandedKey, setExpandedKey] = useState<TileHighlightKey | null>(null);
+  // Always-current mirror of `expandedKey`, read (never set) inside a
+  // scheduled settle callback below -- same "stale closure" reasoning
+  // GettingAroundField's own `customDestinationsRef` documents elsewhere in
+  // this file. Needed so an open-settle timer can check "is `key` STILL
+  // the logical target" without calling a second setState from inside a
+  // `setExpandedKey` updater function, which would work but isn't a pure
+  // updater.
+  const expandedKeyRef = useRef<TileHighlightKey | null>(null);
+  expandedKeyRef.current = expandedKey;
+  // WAVE 6d: the set of tiles currently animating BACK toward their grid
+  // cell -- a tile leaves `expandedKey` the instant a close/retarget
+  // starts (so its content reverts to compact immediately, and so its
+  // former siblings can start reappearing immediately, see `receded`
+  // below), but stays in THIS set -- and therefore stays `position:
+  // absolute` and floating (ExpandableTile's own `floating = expanded ||
+  // closing`) -- until its shrink transform has had time to actually
+  // finish. Can hold more than one key at once: retargeting from tile A to
+  // tile B adds A here while B becomes the new `expandedKey`, so both
+  // float and animate simultaneously (A shrinking home, B growing to
+  // full) -- see `toggle()` below.
+  const [closingKeys, setClosingKeys] = useState<Set<TileHighlightKey>>(new Set());
+  // WAVE 6d: which tile, if any, has FULLY finished growing to cover the
+  // grid -- distinct from `expandedKey` (the logical target, set the
+  // instant a click happens) specifically so the other three tiles stay
+  // visible and clickable throughout the grow animation itself (real
+  // pointer interruption -- clicking a different tile before the first one
+  // finishes growing -- has to actually be reachable, not just handled in
+  // theory), and only become hidden/inert once one tile has genuinely,
+  // visibly finished covering them. Cleared the instant a NEW toggle fires
+  // (open or close) -- see `toggle()` -- so a retarget or a close never
+  // leaves stale siblings hidden behind a tile that's no longer settled.
+  const [settledExpandedKey, setSettledExpandedKey] = useState<TileHighlightKey | null>(null);
+
+  const gridRef = useRef<HTMLDivElement | null>(null);
+  const tileRefs = useRef<Partial<Record<TileHighlightKey, HTMLElement | null>>>({});
+  // The tile's own real grid-cell rect, captured at the MOMENT a click
+  // starts an open (see `toggle()`) -- reused, unchanged, as the animation
+  // target for that same tile's eventual close too (ExpandableTile's own
+  // comment explains why both directions share one formula). Cleared on a
+  // cell swap (below) since a stale rect from the PREVIOUS cell's layout
+  // could otherwise be reused for the new cell's tiles.
+  const originRects = useRef<Partial<Record<TileHighlightKey, DOMRect>>>({});
+  // `.tilegrid`'s own box height, captured once at the start of a float
+  // (never re-measured mid-float) and applied back as an inline style
+  // while ANY tile floats -- see index.css's `.tilegrid--pinned` comment
+  // for why this is what guarantees zero layout shift outside the grid.
+  const pinnedHeightRef = useRef<number | null>(null);
+  // Every `window.setTimeout` id this component has scheduled to mark a
+  // float "settled" (open) or fully closed -- tracked so unmounting mid-
+  // animation (a cell swap while a tile is still floating, or the whole
+  // side panel disappearing) can cancel them, matching
+  // GettingAroundField's own `pendingRemovalsRef` convention in this same
+  // file for the identical reason (never call a state setter after unmount).
+  const pendingTimersRef = useRef<number[]>([]);
+
+  useEffect(() => {
+    return () => {
+      pendingTimersRef.current.forEach((id) => window.clearTimeout(id));
+      pendingTimersRef.current = [];
+    };
+  }, []);
 
   // LAYOUT-V3 WAVE 1d item 13 (2026-08-03, "why are the hexagons back" --
   // diagnosed live, not guessed: a real H3 cell polygon at 0.26 fill-
@@ -929,18 +1171,108 @@ export function CellReportView({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeHighlight]);
 
-  // A new block's report swaps in -- clear whatever hover/expand state the
-  // PREVIOUS cell's tiles were in, so neither a stale highlight nor an
-  // already-open disclosure (now showing the wrong block's numbers) can
-  // survive the swap silently.
+  // A new block's report swaps in -- clear whatever hover/expand/float
+  // state the PREVIOUS cell's tiles were in, so neither a stale highlight
+  // nor an already-open disclosure (now showing the wrong block's numbers)
+  // can survive the swap silently. WAVE 6d: this reset is a hard SNAP, not
+  // an animated close -- animating a tile's own detail content shrinking
+  // away while it's already showing a DIFFERENT (stale) cell's numbers
+  // would be its own small honesty gap, so every float-related ref and
+  // inline style is cleared directly here, bypassing `toggle()` entirely.
   useEffect(() => {
     setHoveredKey(null);
     setExpandedKey(null);
+    setClosingKeys(new Set());
+    setSettledExpandedKey(null);
+    originRects.current = {};
+    pinnedHeightRef.current = null;
+    pendingTimersRef.current.forEach((id) => window.clearTimeout(id));
+    pendingTimersRef.current = [];
+    Object.values(tileRefs.current).forEach((el) => {
+      if (!el) return;
+      el.style.transition = "none";
+      el.style.transform = "";
+      void el.offsetHeight;
+      el.style.transition = "";
+    });
   }, [cell.h3]);
 
-  function toggle(key: TileHighlightKey) {
-    setExpandedKey((prev) => (prev === key ? null : key));
+  function scheduleSettle(fn: () => void) {
+    const id = window.setTimeout(fn, motionDelay(MOTION_EXPAND_MS));
+    pendingTimersRef.current.push(id);
   }
+
+  // WAVE 6d: opens `key` (growing it to cover the grid), or closes it if
+  // it's already the expanded one -- the SAME control click-again-to-close
+  // relied on before this wave, unchanged. Handles retargeting (opening a
+  // DIFFERENT tile while one is already expanded or still settling) by
+  // treating it as "close the old one, open the new one" simultaneously --
+  // see `closingKeys`'s own comment for why both can float at once.
+  function toggle(key: TileHighlightKey) {
+    const gridEl = gridRef.current;
+    const tileEl = tileRefs.current[key];
+
+    if (expandedKey === key) {
+      setSettledExpandedKey(null);
+      setExpandedKey(null);
+      setClosingKeys((prev) => new Set(prev).add(key));
+      scheduleSettle(() => {
+        setClosingKeys((prev) => {
+          if (!prev.has(key)) return prev;
+          const next = new Set(prev);
+          next.delete(key);
+          return next;
+        });
+      });
+      return;
+    }
+
+    const wasFloating = expandedKey !== null || closingKeys.size > 0;
+    if (expandedKey) {
+      const closingAway = expandedKey;
+      setClosingKeys((prev) => new Set(prev).add(closingAway));
+      scheduleSettle(() => {
+        setClosingKeys((prev) => {
+          if (!prev.has(closingAway)) return prev;
+          const next = new Set(prev);
+          next.delete(closingAway);
+          return next;
+        });
+      });
+    }
+    if (tileEl && gridEl) {
+      // First (the FLIP starting rect) -- the tile's own real grid-cell
+      // box, measured NOW, before this click's state update ever re-renders
+      // it as floating.
+      originRects.current[key] = tileEl.getBoundingClientRect();
+      if (!wasFloating) {
+        // Nothing was floating a moment ago -- pin `.tilegrid`'s current,
+        // still-natural height so pulling `key` out of grid flow can never
+        // change the grid's own box size (index.css's `.tilegrid--pinned`).
+        pinnedHeightRef.current = gridEl.getBoundingClientRect().height;
+      }
+    }
+    setSettledExpandedKey(null);
+    setExpandedKey(key);
+    scheduleSettle(() => {
+      // Guard against a stale settle: if the user retargeted away from
+      // `key` before this timer fired, `key` is no longer the logical
+      // target and must not be marked settled.
+      if (expandedKeyRef.current === key) setSettledExpandedKey(key);
+    });
+  }
+
+  useEffect(() => {
+    if (!expandedKey) return;
+    function onKeyDown(e: globalThis.KeyboardEvent) {
+      if (e.key === "Escape") toggle(expandedKey as TileHighlightKey);
+    }
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [expandedKey]);
+
+  const floatingAny = expandedKey !== null || closingKeys.size > 0;
 
   function hoverHandlers(key: TileHighlightKey) {
     return {
@@ -949,14 +1281,14 @@ export function CellReportView({
     };
   }
 
-  function disclosureToggle(key: TileHighlightKey) {
+  function disclosureToggle(key: TileHighlightKey, receded: boolean) {
     const open = expandedKey === key;
     return (
       <button
         type="button"
         className="tile__disclosuretoggle"
         aria-expanded={open}
-        aria-controls="tile-detail-panel"
+        tabIndex={receded ? -1 : undefined}
         onClick={() => toggle(key)}
       >
         {open ? "− details" : "+ details"}
@@ -964,14 +1296,67 @@ export function CellReportView({
     );
   }
 
+  // WAVE 6d: the small "x" in an expanded tile's own header -- one of the
+  // three ways to close (the others: `disclosureToggle` again -- "click-
+  // again" -- and Esc, wired above).
+  function closeButton(key: TileHighlightKey) {
+    return (
+      <button
+        type="button"
+        className="tile__closebtn"
+        // Deliberately does NOT end in the word "details" -- both this
+        // button and the bottom `disclosureToggle` sit inside the same
+        // accessible name space, and a query for the OTHER tiles' "+
+        // details" buttons (this file's own established
+        // `getAllByRole("button", { name: /details/i })` test pattern)
+        // must not also match this close control.
+        aria-label={`Close ${TILE_TITLES[key]}`}
+        onClick={() => toggle(key)}
+      >
+        ×
+      </button>
+    );
+  }
+
+  // WAVE 6d: props shared by every `<ExpandableTile>` below -- the article
+  // itself becomes fully inert (invisible, unclickable, untabbable) while a
+  // DIFFERENT tile has genuinely, visibly finished covering the grid; real
+  // hover reporting (`onTileHighlight`) is skipped in that state too, for
+  // the same reason skipping it avoids a stuck highlight (Wave 1d item 13,
+  // above) -- an element that can never receive a real mouseleave while
+  // it's hidden underneath another tile must never be allowed to set
+  // `hoveredKey` in the first place.
+  function articleProps(key: TileHighlightKey, headingId: string) {
+    const receded = settledExpandedKey !== null && settledExpandedKey !== key;
+    return {
+      className: `tile${receded ? " tile--receded" : ""}`,
+      "aria-labelledby": headingId,
+      "aria-hidden": receded || undefined,
+      ...(receded ? {} : hoverHandlers(key)),
+    };
+  }
+
   return (
     <div className="sidepanel__report">
-      <div className="tilegrid">
-        <article className="tile" aria-labelledby="cell-amenities-heading" {...hoverHandlers("amenities")}>
+      <div
+        className={`tilegrid${floatingAny ? " tilegrid--pinned" : ""}`}
+        style={floatingAny && pinnedHeightRef.current != null ? { height: pinnedHeightRef.current } : undefined}
+        ref={gridRef}
+      >
+        <ExpandableTile
+          tileKey="amenities"
+          expanded={expandedKey === "amenities"}
+          closing={closingKeys.has("amenities")}
+          gridRef={gridRef}
+          tileRefs={tileRefs}
+          originRects={originRects}
+          articleProps={articleProps("amenities", "cell-amenities-heading")}
+        >
           <header className="tile__head">
             <h2 className="tile__title" id="cell-amenities-heading">
               Grocery &amp; everyday places
             </h2>
+            {expandedKey === "amenities" && closeButton("amenities")}
           </header>
           <p className="tile__value">
             <Settle settleKey={totalAmenities}>
@@ -979,10 +1364,44 @@ export function CellReportView({
             </Settle>
           </p>
           <p className="tile__sub">place{totalAmenities === 1 ? "" : "s"} counted nearby</p>
-          {disclosureToggle("amenities")}
-        </article>
+          {/* LAYOUT-V3 WAVE 1d item 10 (2026-08-03, Noah: "tile disclosures
+              say WHAT the data is, not HOW it's acquired"). The full
+              acquisition/methodology text every tile used to carry inline
+              moved verbatim to the disclosure page (App.tsx's
+              DisclosurePage, item 14) -- unchanged by WAVE 6d, which only
+              relocated the shorter WHAT-scoped detail below from the old
+              shared `.tiledetail` region into the tile itself. */}
+          {expandedKey === "amenities" && (
+            <div className="tile__expandedbody" role="region" aria-label={`${TILE_TITLES.amenities} — more detail`}>
+              <ul className="amenities">
+                {CATEGORY_LABELS.map(([key, label]) => (
+                  <li className="amenity" key={key}>
+                    <span className="amenity__count">
+                      <Stat value={cell.amenities.counts[key]} />
+                    </span>
+                    <span className="amenity__label">{label}</span>
+                  </li>
+                ))}
+              </ul>
+              <p className="field__provenance">
+                Real, named places in this block only.
+                <br />
+                <SourceTag source={cell.amenities.source} />
+              </p>
+            </div>
+          )}
+          {disclosureToggle("amenities", settledExpandedKey !== null && settledExpandedKey !== "amenities")}
+        </ExpandableTile>
 
-        <article className="tile" aria-labelledby="cell-safety-heading" {...hoverHandlers("crime")}>
+        <ExpandableTile
+          tileKey="crime"
+          expanded={expandedKey === "crime"}
+          closing={closingKeys.has("crime")}
+          gridRef={gridRef}
+          tileRefs={tileRefs}
+          originRects={originRects}
+          articleProps={articleProps("crime", "cell-safety-heading")}
+        >
           <header className="tile__head">
             <h2 className="tile__title" id="cell-safety-heading">
               Crime near here
@@ -997,6 +1416,7 @@ export function CellReportView({
                 this project's own None-vs-0 invariant), so it renders only
                 in that branch below, never the confirmed one. */}
             {!crime && <Stamp variant="no_data" compact />}
+            {expandedKey === "crime" && crime && closeButton("crime")}
           </header>
           {!crime ? (
             <p className="tile__value tile__value--empty">We don&rsquo;t have crime data for this block yet.</p>
@@ -1020,16 +1440,35 @@ export function CellReportView({
                 </Settle>
               </p>
               <p className="tile__sub">{crimeRelativeLabel(crime.crime_percentile)}</p>
-              {disclosureToggle("crime")}
+              {expandedKey === "crime" && (
+                <div className="tile__expandedbody" role="region" aria-label={`${TILE_TITLES.crime} — more detail`}>
+                  <p className="field__provenance">
+                    Ranks {formatPercentile(crime.crime_percentile)} for reported major crime, compared
+                    with the rest of New York City.
+                    <br />
+                    <SourceTag source={cell.safety.source} />
+                  </p>
+                </div>
+              )}
+              {disclosureToggle("crime", settledExpandedKey !== null && settledExpandedKey !== "crime")}
             </>
           )}
-        </article>
+        </ExpandableTile>
 
-        <article className="tile" aria-labelledby="cell-quiet-heading" {...hoverHandlers("noise")}>
+        <ExpandableTile
+          tileKey="noise"
+          expanded={expandedKey === "noise"}
+          closing={closingKeys.has("noise")}
+          gridRef={gridRef}
+          tileRefs={tileRefs}
+          originRects={originRects}
+          articleProps={articleProps("noise", "cell-quiet-heading")}
+        >
           <header className="tile__head">
             <h2 className="tile__title" id="cell-quiet-heading">
               Noise complaints
             </h2>
+            {expandedKey === "noise" && closeButton("noise")}
           </header>
           <p className="tile__value">
             <Settle settleKey={cell.noise.complaints_12mo}>
@@ -1054,14 +1493,32 @@ export function CellReportView({
             reports, trailing 12mo ·{" "}
             <Settle settleKey={cell.noise.percentile}>{formatPercentile(cell.noise.percentile)}</Settle> citywide
           </p>
-          {disclosureToggle("noise")}
-        </article>
+          {expandedKey === "noise" && (
+            <div className="tile__expandedbody" role="region" aria-label={`${TILE_TITLES.noise} — more detail`}>
+              <p className="field__provenance">
+                Noise complaints neighbors reported to the city, trailing 12 months · in this block.
+                <br />
+                <SourceTag source={cell.noise.source} />
+              </p>
+            </div>
+          )}
+          {disclosureToggle("noise", settledExpandedKey !== null && settledExpandedKey !== "noise")}
+        </ExpandableTile>
 
-        <article className="tile" aria-labelledby="cell-green-heading" {...hoverHandlers("trees")}>
+        <ExpandableTile
+          tileKey="trees"
+          expanded={expandedKey === "trees"}
+          closing={closingKeys.has("trees")}
+          gridRef={gridRef}
+          tileRefs={tileRefs}
+          originRects={originRects}
+          articleProps={articleProps("trees", "cell-green-heading")}
+        >
           <header className="tile__head">
             <h2 className="tile__title" id="cell-green-heading">
               Living street trees
             </h2>
+            {expandedKey === "trees" && closeButton("trees")}
           </header>
           <p className="tile__value">
             <Settle settleKey={cell.trees.street_trees}>
@@ -1069,8 +1526,17 @@ export function CellReportView({
             </Settle>
           </p>
           <p className="tile__sub">counted in 2015</p>
-          {disclosureToggle("trees")}
-        </article>
+          {expandedKey === "trees" && (
+            <div className="tile__expandedbody" role="region" aria-label={`${TILE_TITLES.trees} — more detail`}>
+              <p className="field__provenance">
+                From the city's last street-tree count, 2015 · in this block.
+                <br />
+                <SourceTag source={cell.trees.source} />
+              </p>
+            </div>
+          )}
+          {disclosureToggle("trees", settledExpandedKey !== null && settledExpandedKey !== "trees")}
+        </ExpandableTile>
 
         {/* LAYOUT-V3 WAVE 1e (2026-08-03, SPEC-layout-v3.md §8, Noah:
             "what's stopping us from searching up every livable building and
@@ -1086,75 +1552,6 @@ export function CellReportView({
             works" disclosure page, whose "Building age & serious hazards"
             section now describes the map interaction directly. */}
       </div>
-
-      {/* The one shared detail region every tile's toggle button controls
-          (SPEC-layout-v3.md §8 Wave 1c item 5, option (c)) -- a plain block
-          BELOW `.tilegrid`, not one of its grid children, so it can never
-          distort any tile's own geometry. Renders only the currently-
-          expanded tile's content; every string below is byte-identical to
-          what Wave 1b's per-tile <details> held (moved, not reworded). */}
-      {expandedKey && (
-        <div className="tiledetail" id="tile-detail-panel" role="region" aria-label={`${TILE_TITLES[expandedKey]} — more detail`}>
-          <p className="tiledetail__title mono">{TILE_TITLES[expandedKey]}</p>
-
-          {/* LAYOUT-V3 WAVE 1d item 10 (2026-08-03, Noah: "tile disclosures
-              say WHAT the data is, not HOW it's acquired"). Every branch
-              below now states exactly what the tile's own number means
-              (the WHAT) plus its source name -- the full acquisition/
-              methodology text each branch used to carry inline (how
-              amenities are measured, noise/crime's citywide-percentile
-              caveats, the tree count's "since 2015" gap, the HPD
-              inspection note) moves verbatim to the disclosure page
-              (App.tsx's DisclosurePage, item 14) rather than being deleted
-              -- the app-level honesty inventory in the wave report tracks
-              every one of those strings by its new home. */}
-          {expandedKey === "amenities" && (
-            <>
-              <ul className="amenities">
-                {CATEGORY_LABELS.map(([key, label]) => (
-                  <li className="amenity" key={key}>
-                    <span className="amenity__count">
-                      <Stat value={cell.amenities.counts[key]} />
-                    </span>
-                    <span className="amenity__label">{label}</span>
-                  </li>
-                ))}
-              </ul>
-              <p className="field__provenance">
-                Real, named places in this block only.
-                <br />
-                <SourceTag source={cell.amenities.source} />
-              </p>
-            </>
-          )}
-
-          {expandedKey === "crime" && crime && (
-            <p className="field__provenance">
-              Ranks {formatPercentile(crime.crime_percentile)} for reported major crime, compared
-              with the rest of New York City.
-              <br />
-              <SourceTag source={cell.safety.source} />
-            </p>
-          )}
-
-          {expandedKey === "noise" && (
-            <p className="field__provenance">
-              Noise complaints neighbors reported to the city, trailing 12 months · in this block.
-              <br />
-              <SourceTag source={cell.noise.source} />
-            </p>
-          )}
-
-          {expandedKey === "trees" && (
-            <p className="field__provenance">
-              From the city's last street-tree count, 2015 · in this block.
-              <br />
-              <SourceTag source={cell.trees.source} />
-            </p>
-          )}
-
-        </div>
-      )}
     </div>
   );
 }
