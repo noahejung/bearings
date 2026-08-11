@@ -276,18 +276,29 @@ body {
 /* ---------- persistent app shell (LAYOUT-V3 WAVE 6, 2026-08-11) ----------
    SPEC-layout-v3.md §8 Wave 6, Noah: "a more consistent home page/navbar
    stuff -- it feels confusing that things change a lot depending on where
-   i click." `.shell` (App.tsx) wraps the app's one persistent anchor (the
-   search bar, `.search`, unchanged in markup) plus its two quiet links --
-   mounted ONCE, above the report/disclosure branch, so it renders the exact
-   same DOM in every one of the five views. No border, no background, no
-   title of its own: "the search bar IS the identity" (spec's own words),
-   not a decorative bar framing it. `.shell__link` uses a constant font-
-   weight between its active/inactive states (colour + underline only) so
-   toggling `aria-current` never changes the shell's own measured width. */
+   i click." `.shell` (App.tsx) is the app's one persistent "app bar," mounted
+   ONCE, above the report/disclosure branch, so it renders the exact same DOM
+   in every one of the five views.
+
+   WAVE 6b (2026-08-11, SPEC-layout-v3.md §8, Noah: "why is the app bar below
+   the search bar ... can you refer to a normal data map reference?"). `.shell`
+   used to also carry the search bar (`.search`), stacked above this nav in
+   normal document flow -- which put the nav visually BELOW the search bar,
+   backwards from every mainstream data-map reference (nav/chrome sits above
+   or beside the search field, never under it). The search bar moved out
+   (App.tsx's own comment, now a `.appgrid` grid item below) -- `.shell` is
+   now nav-only, a real full-width bar, always the first thing on the page.
+   `margin-top: 0` replaces the old `var(--space-3)` (that spacing used to
+   separate the nav from the search bar sitting immediately above it in the
+   same box; with nothing above it any more, that gap would just be dead
+   space under `.wrap`'s own top padding). `.shell__link` still uses a
+   constant font-weight between its active/inactive states (colour +
+   underline only) so toggling `aria-current` never changes the shell's own
+   measured width. */
 .shell__nav {
   display: flex;
   gap: var(--space-5);
-  margin-top: var(--space-3);
+  margin-top: 0;
 }
 
 .shell__link {
@@ -324,8 +335,13 @@ body {
    that changes height on first report load cannot satisfy. See
    AddressSearch.tsx's own comment for why the hero copy itself was cut
    outright rather than relocated. */
+/* WAVE 6b (2026-08-11): `padding-top` drops to 0 -- this used to be the
+   gap between `.shell`'s own top and the search bar when the bar was `.shell`'s
+   first child; now the bar lives in `.appgrid__search` (App.tsx's own
+   comment), and `.appgrid`'s own `margin-top` (below) already supplies the
+   gap between the nav bar above and this grid. Keeping both would double it. */
 .search {
-  padding-top: var(--space-6);
+  padding-top: 0;
 }
 
 .search__form {
@@ -413,6 +429,28 @@ button.search__pin:disabled {
   background: transparent;
   color: var(--steel);
   cursor: not-allowed;
+}
+
+/* WAVE 6b (2026-08-11, SPEC-layout-v3.md §8): the clear-X (AddressSearch.tsx's
+   own comment on when it renders). `.search__field .search__clear` (two
+   classes) deliberately outweighs `.search__field button` above (one class +
+   one element) so this button's own transparent/steel treatment always wins,
+   regardless of source order -- the ink-filled default button styling would
+   otherwise turn a small "clear" affordance into a second bold black button. */
+.search__field .search__clear {
+  flex-shrink: 0;
+  border: none;
+  border-left: 1.5px solid var(--ink);
+  background: transparent;
+  color: var(--steel);
+  padding: var(--space-4);
+  font-size: var(--text-md);
+  line-height: 1;
+  transition: color 0.12s var(--ease);
+}
+
+.search__field .search__clear:hover {
+  color: var(--red);
 }
 
 /* LAYOUT-V3 WAVE 1d item 11 -- the debounced typeahead's own dropdown.
@@ -1398,6 +1436,7 @@ button.search__pin:disabled {
    frame reads as a rendering bug, not a border) -- see the report for the
    exact measured numbers this round produced. */
 .mapfield {
+  grid-area: content;
   border-top: 1px solid var(--ink);
   border-bottom: 1px solid var(--ink);
   padding: 0 0 var(--space-6);
@@ -1591,33 +1630,91 @@ button.search__pin:disabled {
    legend (`.mapfield__legend*`) is gone -- see MapView.tsx's own item-3
    comment. Removed here rather than left as dead CSS. */
 
-/* ---------- map + side-panel grid ----------
+/* ---------- app grid (LAYOUT-V3 WAVE 6b, 2026-08-11) ----------
    LAYOUT-V3 WAVE 1 (2026-08-02, SPEC-layout-v3.md §3) established the
-   page-level two-column grid: MapView on the left, the side panel on the
-   right, both inside .wrap's margins.
+   original page-level two-column grid (`.mapgrid`): MapView left, the side
+   panel right.
 
    LAYOUT-V3 WAVE 1b (2026-08-02, SPEC-layout-v3.md §8 Wave 1b, corrective):
-   the panel track shrinks from 420px to 360px (spec's amended "300-400px
+   the panel track shrank from 420px to 360px (spec's amended "300-400px
    column" range) now that CellReportView renders dense .tile cards instead
    of full .field cards -- a 420px column sized for full provenance
    paragraphs was itself part of why Wave 1 read as "a long vertical column
    next to the map"; a narrower track gives the map more of the reclaimed
-   width from the .wrap fix above, which is the actual point of this wave. */
-.mapgrid {
+   width. 360px carries forward unchanged below.
+
+   WAVE 6b (2026-08-11, SPEC-layout-v3.md §8, Noah's explicit target grid:
+   "app bar on top. search bar and right column of data on the next row
+   vertically aligned. then map sits right below search bar and right below
+   that is the groceries, cafes, etc. tags. these bottom tags should align
+   with the bottom of the rightside data sidebar"). `.mapgrid` (search bar
+   living outside it, in `.shell`, map+sidepanel as its only two items) is
+   replaced by `.appgrid`, a 3-row x 2-column named-area grid: the sidebar
+   (`.sidepanel`, `grid-area: sidebar`) spans all 3 left-column rows
+   (search/content/chips), while the search bar (`.appgrid__search`), the
+   map or disclosure content (`.mapfield`/`.disclosure`, `grid-area:
+   content`), and the category chips (`.prefbar`, `grid-area: chips`) each
+   take one. Two alignments fall out of this structurally, not by manual
+   pixel-matching:
+     - search-bar top == sidebar top: both are the FIRST thing placed in
+       grid row 1, which by definition starts both boxes at the same
+       row-start line.
+     - chips bottom == sidebar bottom: `.sidepanel` spans rows 1-3, so its
+       own bottom edge IS row 3's bottom edge; `chips` occupies row 3 alone,
+       so its bottom edge is that exact same line. Grid's default
+       `align-items: stretch` (unset here on purpose -- Wave 1's old
+       `align-items: start` doesn't carry over) makes `.sidepanel`'s own box
+       fill the full spanned height rather than sitting short of it, which
+       is what makes this hold even when the sidebar's own content (tiles +
+       getting-around) is shorter than the map+chips column, exactly the
+       Wave 1e/1f-measured case (panel ~400-450px vs. map's fixed 560px
+       canvas) -- see the Wave 6b report for the live-measured numbers this
+       produces. Live-measured (getBoundingClientRect) at 1366/1920px, not
+       eyeballed, per this project's own standing convention. */
+.appgrid {
   display: grid;
   grid-template-columns: 1fr 360px;
-  gap: var(--space-5);
-  align-items: start;
+  grid-template-areas:
+    "search  sidebar"
+    "content sidebar"
+    "chips   sidebar";
+  column-gap: var(--space-5);
+  row-gap: var(--space-5);
   margin-top: var(--space-6);
 }
 
+.appgrid__search {
+  grid-area: search;
+}
+
+/* The disclosure (methodology) view has no sidebar/chips at all -- one
+   column, two rows. `.appgrid.appgrid--disclosure` (two classes) outweighs
+   the bare `.appgrid` grid-template-areas above regardless of source order
+   or the mobile media query below, so this always wins when both classes
+   are present, at any width. */
+.appgrid.appgrid--disclosure {
+  grid-template-columns: 1fr;
+  grid-template-areas:
+    "search"
+    "content";
+}
+
 @media (max-width: 900px) {
-  .mapgrid {
+  /* Mobile stacks sensibly, top to bottom: search, map/disclosure content,
+     chips, sidebar (tiles + getting-around) last -- the sidebar no longer
+     spans anything at this width, it's simply the last stacked block. */
+  .appgrid {
     grid-template-columns: 1fr;
+    grid-template-areas:
+      "search"
+      "content"
+      "chips"
+      "sidebar";
   }
 }
 
 .sidepanel {
+  grid-area: sidebar;
   min-width: 0; /* grid blowout guard -- a long unbroken token inside a tile must not force the column wider than its 360px track */
 }
 
@@ -1883,7 +1980,13 @@ button.search__pin:disabled {
    bookends) rather than inventing a second grid language for what is,
    structurally, the same "one card per metric" shape. */
 .disclosure {
-  margin-top: var(--space-5);
+  grid-area: content;
+  /* WAVE 6b (2026-08-11): margin-top drops to 0 -- this page now lives
+     inside `.appgrid--disclosure` (App.tsx's own comment), whose row-gap
+     already supplies the space below the search bar; keeping both would
+     double it, the same reasoning `.search`'s own padding-top removal
+     above applies. */
+  margin-top: 0;
 }
 
 .disclosure__head {
@@ -2014,8 +2117,15 @@ button.search__pin:disabled {
    its own a beat later, so the pair of rules here were decorating an
    already-clear boundary, not creating one -- exactly the redundant case
    the divider audit specifically targeted. */
+/* WAVE 6b (2026-08-11, SPEC-layout-v3.md §8): moved below the map, per
+   Noah's explicit target grid ("right below [the map] is the groceries,
+   cafes, etc. tags") -- `margin-top` drops to 0 since `.appgrid`'s own
+   row-gap (between the "content"/map row and this "chips" row) already
+   supplies the gap this rule used to add above itself when it sat directly
+   under AddressSearch in normal document flow. */
 .prefbar {
-  margin-top: var(--space-6);
+  grid-area: chips;
+  margin-top: 0;
   padding: var(--space-4) 0;
   display: flex;
   flex-direction: column;
@@ -2215,6 +2325,15 @@ button.search__pin:disabled {
     min-width: 100%;
   }
   .search__field button {
+    flex: 1;
+    border-left: none;
+    border-top: 1.5px solid var(--ink);
+  }
+  /* Same stack-instead-of-squeeze treatment as the other two buttons above
+     -- `.search__field .search__clear` (two classes) is needed again here
+     to keep outweighing `.search__field button`'s own border-left, matching
+     this rule's own specificity trick where it's first declared. */
+  .search__field .search__clear {
     flex: 1;
     border-left: none;
     border-top: 1.5px solid var(--ink);

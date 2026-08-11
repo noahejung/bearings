@@ -196,6 +196,27 @@ export default function App() {
     await loadCell(h3);
   }
 
+  // WAVE 6b (2026-08-11, SPEC-layout-v3.md §8, Noah: "why is the app bar
+  // below the search bar. also search bar preview text should reflect the
+  // actual current street?"). The clear-X's own handler (AddressSearch.tsx)
+  // -- empties the field AND every piece of state a real selection touches,
+  // together, so the field can never sit "cleared" while the panel/map
+  // still show a stale record (the same coherence handleCellClick/
+  // handleSearch's own failure paths already enforce for their own resets).
+  // Deliberately does NOT touch `showDisclosure` -- clearing is about the
+  // loaded record, not which view is open.
+  function clearSelection() {
+    setAddressInput("");
+    setSearchedAddress(null);
+    setSelectedCell(null);
+    setCellReport(null);
+    setReportError(null);
+    resetFactcheck();
+    setHighlightedTile(null);
+    setDestinationHighlight(null);
+    setRouteHighlight(null);
+  }
+
   // The fast search path: geocode (a single GeoSearch call, not a live
   // profile compute) -> the containing cell -> the same instant
   // GET /api/cell/{h3} lookup a click uses.
@@ -212,6 +233,16 @@ export default function App() {
     try {
       const geo = await getGeocode(address);
       setSearchedAddress(geo.label);
+      // WAVE 6b (2026-08-11, SPEC-layout-v3.md §8, Noah: "search bar preview
+      // text should reflect the actual current street"). The field used to
+      // keep whatever the user TYPED (e.g. a partial/differently-formatted
+      // address) even after a real geocode resolved a canonical label for
+      // it -- two different renderings of the same address on screen at
+      // once, the exact tension the "Confirmed as" kicker below (UX-FIX
+      // 2026-08-03 finding #7) was built to visually bridge. The field now
+      // canonicalizes to the SAME resolved label the panel heading shows,
+      // so it needs no visual bridge -- the two already agree.
+      setAddressInput(geo.label);
       setSelectedCell(geo.cell);
       const report = await getCell(geo.cell);
       setCellReport(report);
@@ -273,34 +304,27 @@ export default function App() {
           change a lot depending on where i click"). Root cause named in the
           spec: 1d/1f removed the masthead and per-region headers without
           replacing them with any persistent chrome, so each view improvised
-          its own top edge. `.shell` is the fix -- mounted here, ONCE,
-          outside the showDisclosure branch below, so it renders identically
-          (same DOM, same size) whether the report view or the disclosure
-          view is showing. It carries the app's one search-bar anchor (no
-          `compact` prop any more -- see AddressSearch.tsx's own comment)
-          plus the two links the spec allows ("Methodology"; "Map", the
-          spec's "back-to-map when off the map view" link, kept always
-          mounted with an active/inactive colour state rather than
-          conditionally rendered so the shell's own bounding box never
-          changes size by view -- a link that appears/disappears would
-          re-introduce the exact drift this wave removes). Former per-view
-          entry points to the same disclosure page (MapView.tsx's own
-          scoped-to-a-loaded-report "ⓘ How this map is made" link,
-          DisclosurePage.tsx's own local "← Back" button, the footer's
-          `footer__disclosurelink` button below) are all retired in favour
-          of this one, always-present pair -- one navigation surface, not
-          three that only sometimes show up. */}
+          its own top edge.
+
+          LAYOUT-V3 WAVE 6b (2026-08-11, SPEC-layout-v3.md §8, Noah: "why is
+          the app bar below the search bar ... can you refer to a normal
+          data map reference?"). `.shell` used to carry BOTH the search bar
+          and the nav stacked in one box -- normal document flow put the nav
+          visually BELOW the search bar (Wave 6's own DOM order), which is
+          backwards from every mainstream data-map product (Google Maps,
+          Zillow, Redfin: chrome/nav sits above or beside the search field,
+          never under it). `.shell` now carries ONLY the nav -- a real full-
+          width "app bar," always first, in every view. The search bar
+          itself moves down into `.appgrid` below (its own comment) as a
+          grid item sharing a row with the data sidebar, per Noah's explicit
+          target grid ("search bar and right column of data on the next row
+          vertically aligned"). Former per-view entry points to the
+          disclosure page (MapView.tsx's own scoped-to-a-loaded-report "ⓘ
+          How this map is made" link, DisclosurePage.tsx's own local "←
+          Back" button, the footer's `footer__disclosurelink` button below)
+          stay retired in favour of this nav's "Methodology" link -- one
+          navigation surface, not three that only sometimes show up. */}
       <div className="shell">
-        <AddressSearch
-          value={addressInput}
-          onChange={setAddressInput}
-          onSubmit={handleSearch}
-          onPin={pinAddress}
-          pinLoading={pinLoading}
-          pinError={pinError}
-          loading={reportLoading}
-          error={reportError}
-        />
         <nav className="shell__nav" aria-label="App">
           <button
             type="button"
@@ -322,46 +346,61 @@ export default function App() {
       </div>
 
       <main>
-        {showDisclosure ? (
-          <DisclosurePage cell={cellReport} />
-        ) : (
-          <>
-            {/* Slim bar above the map (SPEC-lens-report.md §2) -- category
-                chips + the pinned-places list, session-only. */}
-            <PreferenceBar
-              activeCategories={activeCategories}
-              onToggleCategory={toggleCategory}
-              pins={pins}
-              onRemovePin={removePin}
+        {/* LAYOUT-V3 WAVE 6b (2026-08-11, SPEC-layout-v3.md §8): the page
+            grid Noah's explicit target names -- row 1 (this element's own
+            top) is the search bar, sharing a row with the data sidebar
+            (which spans every row below it via CSS grid areas, see
+            index.css's own `.appgrid` comment for the alignment mechanics);
+            row 2 is the map (or, on the disclosure view, the methodology
+            content, replacing map+chips+sidebar entirely -- `.appgrid--
+            disclosure` collapses to one column); row 3 is the category-chip
+            bar. `.appgrid__search` is the one real wrapper div this
+            restructure needs (AddressSearch plus the conditional `.record`
+            line both belong in the same grid cell, stacked) -- every other
+            area is just an existing component's own root class
+            (`.mapfield`/`.disclosure`, `.prefbar`, `.sidepanel`) claimed
+            directly via `grid-area` in CSS, no extra wrapper. */}
+        <div className={`appgrid${showDisclosure ? " appgrid--disclosure" : ""}`} id="report">
+          <div className="appgrid__search">
+            <AddressSearch
+              value={addressInput}
+              onChange={setAddressInput}
+              onSubmit={handleSearch}
+              onPin={pinAddress}
+              onClear={clearSelection}
+              pinLoading={pinLoading}
+              pinError={pinError}
+              loading={reportLoading}
+              error={reportError}
             />
 
             {/* LAYOUT-V3 WAVE 1d item 2 (2026-08-03, Noah: the "this block"
                 identity framing goes -- "the line where it sits becomes the
                 plain address/area label itself, no framing word"). Renders
-                ONLY when a real address was actually searched: the old
-                `?? "This block"` fallback for a bare grid click invented a
-                framing label this project has no real area name to back
-                (a cell carries no neighbourhood/borough name of its own --
-                see types.ts's CellProfile) -- inventing one would fabricate
-                an identity the data doesn't have, and the tiles below are
-                already the honest record either way. A bare click's side
-                panel therefore starts directly at the tile grid, with
-                nothing standing in for an address that was never given. */}
-            {cellReport && searchedAddress && (
+                ONLY when a real address was actually searched, and only on
+                the map view: the old `?? "This block"` fallback for a bare
+                grid click invented a framing label this project has no real
+                area name to back (a cell carries no neighbourhood/borough
+                name of its own -- see types.ts's CellProfile) -- inventing
+                one would fabricate an identity the data doesn't have, and
+                the tiles below are already the honest record either way. A
+                bare click's side panel therefore starts directly at the
+                tile grid, with nothing standing in for an address that was
+                never given. */}
+            {!showDisclosure && cellReport && searchedAddress && (
               <div className="record">
                 {/* UX-FIX 2026-08-03 (audit finding #7, "search input and
                     report heading show two different renderings of the
-                    address at once"): both are still correct and still
-                    shown (the input keeps exactly what was typed; this
-                    heading keeps the geocoder's own canonical form -- see
-                    this file's own item-2 comment above for why that's
-                    deliberate) -- this kicker is the missing visual link
-                    between them, so two real addresses on screen read as
-                    "the same one, confirmed" rather than "which one is
-                    right?". `aria-hidden`: the heading's own accessible
-                    name must stay exactly the address text (App.test.tsx
-                    pins `getByRole("heading", { name: GEOCODE_RESULT.label
-                    })`) -- a sighted-only affordance, not new information a
+                    address at once"): WAVE 6b (2026-08-11) closed that gap
+                    at the source -- handleSearch now canonicalizes the
+                    input to the same resolved label this heading shows (see
+                    that function's own comment) -- but the two still read
+                    as independent facts to a sighted user without this
+                    kicker explicitly saying "these agree," so it stays.
+                    `aria-hidden`: the heading's own accessible name must
+                    stay exactly the address text (App.test.tsx pins
+                    `getByRole("heading", { name: GEOCODE_RESULT.label })`)
+                    -- a sighted-only affordance, not new information a
                     screen-reader user is missing (the heading already
                     states the real confirmed address either way). */}
                 <p className="record-line__kicker mono" aria-hidden="true">
@@ -372,18 +411,20 @@ export default function App() {
                 </h2>
               </div>
             )}
+          </div>
 
-            {/* LAYOUT-V3 WAVE 1 (2026-08-02, SPEC-layout-v3.md §3): the
-                "answer to what's here" now lives BESIDE the map, not below
-                a scroll-jump. .mapgrid is the page-level two-column grid
-                (map | side panel); MapView mounts unconditionally inside it
-                either way (Task 4/VISUAL.md §5 -- it fetches the citywide
-                grid on its own and is interactive before any report has
-                ever loaded), while the side panel's own content depends on
-                report state: loading, empty (nothing clicked/searched yet),
-                or the five real non-transit stat cards from
-                CellReportView. */}
-            <div className="mapgrid" id="report">
+          {showDisclosure ? (
+            <DisclosurePage cell={cellReport} />
+          ) : (
+            <>
+              {/* LAYOUT-V3 WAVE 1 (2026-08-02, SPEC-layout-v3.md §3): the
+                  "answer to what's here" lives BESIDE the map, not below a
+                  scroll-jump. MapView mounts unconditionally either way
+                  (Task 4/VISUAL.md §5 -- it fetches the citywide grid on its
+                  own and is interactive before any report has ever loaded),
+                  while the side panel's own content depends on report
+                  state: loading, empty (nothing clicked/searched yet), or
+                  the four real non-transit stat tiles from CellReportView. */}
               <MapView
                 address={searchedAddress}
                 selectedCell={selectedCell}
@@ -394,6 +435,17 @@ export default function App() {
                 crimePrecinct={cellReport?.safety.precinct ?? null}
                 destinationHighlight={destinationHighlight}
                 routeHighlight={routeHighlight}
+              />
+
+              {/* Category chips + the pinned-places list, session-only
+                  (SPEC-lens-report.md §2) -- moved below the map (Wave 6b
+                  item 1, Noah's explicit target grid: "right below [the
+                  map] is the groceries, cafes, etc. tags"). */}
+              <PreferenceBar
+                activeCategories={activeCategories}
+                onToggleCategory={toggleCategory}
+                pins={pins}
+                onRemovePin={removePin}
               />
 
               <aside className="sidepanel" aria-label="Block record">
@@ -428,21 +480,21 @@ export default function App() {
                   </>
                 )}
               </aside>
-            </div>
+            </>
+          )}
+        </div>
 
-            {cellReport && searchedAddress && (
-              <FactCheckView
-                address={searchedAddress}
-                listingText={listingText}
-                onListingTextChange={setListingText}
-                onSubmit={submitFactcheck}
-                onLoadExample={loadExampleListing}
-                loading={factcheckLoading}
-                error={factcheckError}
-                result={factcheckResult}
-              />
-            )}
-          </>
+        {!showDisclosure && cellReport && searchedAddress && (
+          <FactCheckView
+            address={searchedAddress}
+            listingText={listingText}
+            onListingTextChange={setListingText}
+            onSubmit={submitFactcheck}
+            onLoadExample={loadExampleListing}
+            loading={factcheckLoading}
+            error={factcheckError}
+            result={factcheckResult}
+          />
         )}
       </main>
 

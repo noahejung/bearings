@@ -131,14 +131,17 @@ const CONTROL_CELL: CellProfile = {
 // copy only, so they now render GettingAroundField directly; the fixtures
 // and assertions themselves are unchanged.
 describe("GettingAroundField -- transit unreachable-reason copy", () => {
-  it("shows real ride minutes and no explanation paragraph when every anchor is reachable", () => {
+  // WAVE 6b (2026-08-11, SPEC-layout-v3.md §8): Newport, NJ (PATH) now
+  // starts hidden by default (GettingAroundField's own comment on
+  // `hiddenAnchors`'s initial value) -- its real 27-minute bar is no
+  // longer one of the three still-visible defaults' assertions below.
+  it("shows real ride minutes and no explanation paragraph when every visible anchor is reachable", () => {
     render(<GettingAroundField cell={CONTROL_CELL} />);
     expect(screen.getByText("10 min")).toBeInTheDocument();
     // wtc and downtown_brooklyn are both real 23-minute rides here --
     // two distinct rows legitimately share a value, so this asserts the
     // count rather than using getByText (which throws on >1 match).
     expect(screen.queryAllByText("23 min")).toHaveLength(2);
-    expect(screen.getByText("27 min")).toBeInTheDocument();
     expect(screen.queryByText(/no rail link/)).not.toBeInTheDocument();
     expect(screen.queryByText(/no station nearby/)).not.toBeInTheDocument();
     expect(screen.queryByText(/Staten Island Railway/)).not.toBeInTheDocument();
@@ -146,8 +149,9 @@ describe("GettingAroundField -- transit unreachable-reason copy", () => {
 
   it("names Staten Island Railway and the ferry gap, not a generic 'no route found', for a real SIR-only cell", () => {
     render(<GettingAroundField cell={SIR_CELL} />);
-    // Four anchors, four short "no rail link" value slots.
-    expect(screen.getAllByText("no rail link")).toHaveLength(4);
+    // Three VISIBLE anchors (Newport, NJ (PATH) hidden by default -- Wave
+    // 6b), three short "no rail link" value slots.
+    expect(screen.getAllByText("no rail link")).toHaveLength(3);
     expect(screen.queryByText(/no route found/)).not.toBeInTheDocument();
     expect(
       screen.getByText(/Staten Island Railway.*no rail connection to the rest/)
@@ -160,12 +164,29 @@ describe("GettingAroundField -- transit unreachable-reason copy", () => {
 
   it("states the real search radius and the subway/PATH-only feed gap for a real no-station cell", () => {
     render(<GettingAroundField cell={NO_STATION_CELL} />);
-    expect(screen.getAllByText("no station nearby")).toHaveLength(4);
+    // Three VISIBLE anchors (Newport, NJ (PATH) hidden by default -- Wave 6b).
+    expect(screen.getAllByText("no station nearby")).toHaveLength(3);
     expect(screen.queryByText(/no route found/)).not.toBeInTheDocument();
     expect(screen.getByText(/about a 15-minute walk/)).toBeInTheDocument();
     // Must not imply the neighborhood has no transit at all -- only that
     // this report's subway+PATH-only feed found nothing within range.
     expect(screen.getByText(/doesn't check bus routes/)).toBeInTheDocument();
+  });
+});
+
+// WAVE 6b (2026-08-11, SPEC-layout-v3.md §8, Noah: "can you remove NJ from
+// locations default") -- Newport, NJ (PATH) is a display-level default only
+// (see GettingAroundField's own `hiddenAnchors` comment): the baked
+// `cell.transit.to_anchors.newport_path` value is untouched, only its
+// default visibility changed.
+describe("GettingAroundField -- Wave 6b Newport, NJ default visibility", () => {
+  it("hides Newport, NJ (PATH) by default, though its baked minute value is untouched", () => {
+    render(<GettingAroundField cell={CONTROL_CELL} />);
+    expect(screen.queryByText("Newport, NJ (PATH)")).not.toBeInTheDocument();
+    expect(screen.queryByText("27 min")).not.toBeInTheDocument();
+    // The three still-visible defaults are unaffected.
+    expect(screen.getByText("Midtown")).toBeInTheDocument();
+    expect(screen.getByText("10 min")).toBeInTheDocument();
   });
 });
 
@@ -387,16 +408,20 @@ describe("GettingAroundField -- Wave 3 editable destinations", () => {
   // trusted) for MOTION_FAST_MS first, matching the actual shipped
   // behaviour rather than the pre-animation instant-removal this test used
   // to assert.
+  // WAVE 6b (2026-08-11): Newport, NJ (PATH) is hidden by default now (its
+  // own describe block above covers that), so this test deletes a
+  // still-visible default -- Midtown -- to prove the same exit/removal
+  // mechanism still works for an ordinary default row.
   it("deleting a default anchor exits (not pops), then removes it from view; others stay, and the baked minute values are untouched", async () => {
     render(<GettingAroundField cell={CONTROL_CELL} />);
-    expect(screen.getByText("Newport, NJ (PATH)")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: /remove newport, nj \(path\) from this list/i }));
-    // Still present, mid-exit, with the real exiting class -- not gone yet.
-    const row = screen.getByText("Newport, NJ (PATH)").closest(".anchor") as HTMLElement;
-    expect(row).toHaveClass("anchor--exiting");
-    await waitFor(() => expect(screen.queryByText("Newport, NJ (PATH)")).not.toBeInTheDocument());
     expect(screen.getByText("Midtown")).toBeInTheDocument();
-    expect(screen.getByText("10 min")).toBeInTheDocument(); // midtown's own baked value, unaffected
+    fireEvent.click(screen.getByRole("button", { name: /remove midtown from this list/i }));
+    // Still present, mid-exit, with the real exiting class -- not gone yet.
+    const row = screen.getByText("Midtown").closest(".anchor") as HTMLElement;
+    expect(row).toHaveClass("anchor--exiting");
+    await waitFor(() => expect(screen.queryByText("Midtown")).not.toBeInTheDocument());
+    // wtc/downtown_brooklyn's own baked values, unaffected.
+    expect(screen.queryAllByText("23 min")).toHaveLength(2);
   });
 
   it("hovering a default anchor reports its real coordinates up, and null once the cursor leaves", () => {

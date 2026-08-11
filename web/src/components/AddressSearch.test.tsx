@@ -54,6 +54,7 @@ function baseProps(overrides?: Partial<Parameters<typeof AddressSearch>[0]>) {
     onChange: vi.fn(),
     onSubmit: vi.fn(),
     onPin: vi.fn(),
+    onClear: vi.fn(),
     pinLoading: false,
     pinError: null,
     loading: false,
@@ -148,6 +149,19 @@ describe("AddressSearch", () => {
     // debounce window plenty of time to have fired again if it were going to.
     await new Promise((r) => setTimeout(r, 500));
     expect(screen.queryByRole("option")).not.toBeInTheDocument();
+  });
+
+  // WAVE 6b (2026-08-11, SPEC-layout-v3.md §8): the clear-X only appears
+  // once there's real text to clear, and resets the field+selection
+  // together via onClear -- never just the input alone.
+  it("shows no clear-X on an empty field, a real one once there's text, and calls onClear on click", () => {
+    const { rerender } = render(<AddressSearch {...baseProps({ value: "" })} />);
+    expect(screen.queryByRole("button", { name: /clear search/i })).not.toBeInTheDocument();
+
+    const onClear = vi.fn();
+    rerender(<AddressSearch {...baseProps({ value: "350 5th Ave, Manhattan", onClear })} />);
+    fireEvent.click(screen.getByRole("button", { name: /clear search/i }));
+    expect(onClear).toHaveBeenCalled();
   });
 
   it("a failed autocomplete call is non-fatal -- the form still works as a plain search", async () => {
