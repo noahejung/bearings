@@ -412,6 +412,17 @@ const MAP_GEOMETRY = {
   },
 };
 
+// Wave 6c item 7's own regression test needs a subway_lines entry that
+// actually carries a real `shape_id` (Wave 4's own join key for the
+// route-line preview, MapLine.shape_id in types.ts) -- MAP_GEOMETRY above
+// predates that field and every other existing test only needs the line to
+// render, never to be matched by shape_id, so it's left alone rather than
+// widening a fixture every other test also shares.
+const MAP_GEOMETRY_WITH_SHAPE_ID = {
+  ...MAP_GEOMETRY,
+  subway_lines: [{ ...MAP_GEOMETRY.subway_lines[0], shape_id: "B..N65R" }],
+};
+
 const CITYWIDE = {
   neighborhoods: [
     { nta2020: "MN0502", name: "Chelsea-Hudson Yards", borough: "Manhattan", lat: 40.7508, lng: -73.9975 },
@@ -713,5 +724,113 @@ describe("App (full mount)", () => {
     // The fact-check section requires a real address -- it must not render
     // for an addressless block click.
     expect(screen.queryByRole("heading", { name: /check a listing/i })).not.toBeInTheDocument();
+  });
+});
+
+// WAVE 6c item 7 (2026-08-11, Noah: "route lines don't preview"). REPRODUCED
+// live via Playwright before writing this test, then root-caused: the
+// toggle -> hover -> GET /api/route -> onRouteHighlight -> MapView's own
+// route-line effect wiring is entirely correct (GettingAroundField's own
+// existing tests already cover that half). The real gap is that
+// routeLineGeoJSON() also needs `geo` (GET /api/map's building/street/subway
+// overlay, fetched independently and separately timed) to resolve a
+// shape_id into real coordinates -- and GET /api/route can genuinely
+// resolve BEFORE GET /api/map does (measured live: GET /api/map took a
+// consistent ~4-5s server-side on this exact machine, GET /api/route
+// resolves fast, no shared latency). Before this wave, that window drew
+// nothing with zero explanation. This test reproduces the exact race (a
+// deliberately never-resolving-until-told-to /api/map fetch, standing in
+// for that real multi-second gap) and proves the new feature-specific
+// loading note (MapView.tsx, next to the amenities-tile note it copies the
+// pattern from) appears during the gap and clears once `geo` actually
+// lands -- not just that the final state is eventually correct.
+describe("Route line preview during the real GET /api/map latency window (Wave 6c item 7)", () => {
+  it("shows a route-specific loading note while /api/map is still in flight, then clears it once the real line can draw", async () => {
+    let resolveMapGeometry: (value: Response) => void = () => {};
+    const pendingMapGeometry = new Promise<Response>((resolve) => {
+      resolveMapGeometry = resolve;
+    });
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((url: string) => {
+        if (url.includes("/api/geocode")) {
+          return Promise.resolve(new Response(JSON.stringify(GEOCODE_RESULT), { status: 200 }));
+        }
+        if (url.includes("/api/cells")) {
+          return Promise.resolve(new Response(JSON.stringify(CELLS_INDEX), { status: 200 }));
+        }
+        if (url.includes("/api/cell/")) {
+          const h3id = decodeURIComponent(url.split("/api/cell/")[1] ?? "");
+          const body = CELL_PROFILES[h3id];
+          return body
+            ? Promise.resolve(new Response(JSON.stringify(body), { status: 200 }))
+            : Promise.resolve(new Response("not found", { status: 404 }));
+        }
+        if (url.includes("/api/map")) {
+          // Never resolves until this test explicitly calls resolveMapGeometry() --
+          // standing in for GET /api/map's real, measured multi-second latency.
+          return pendingMapGeometry;
+        }
+        if (url.includes("/api/citywide")) {
+          return Promise.resolve(new Response(JSON.stringify(CITYWIDE), { status: 200 }));
+        }
+        if (url.includes("/api/reach")) {
+          return Promise.resolve(new Response(JSON.stringify(REACH), { status: 200 }));
+        }
+        if (url.includes("/api/route")) {
+          // Resolves immediately -- the real, independent-latency fetch this
+          // whole bug hinges on racing ahead of /api/map.
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({
+                reachable: true,
+                reason: null,
+                minutes: 4,
+                steps: [],
+                shape_ids: ["B..N65R"],
+              }),
+              { status: 200 },
+            ),
+          );
+        }
+        return Promise.reject(new Error(`unexpected fetch: ${url}`));
+      }),
+    );
+
+    render(<App />);
+    fireEvent.change(screen.getByPlaceholderText(/5TH AVE/i), { target: { value: ADDRESS } });
+    fireEvent.click(screen.getByRole("button", { name: /pull the record/i }));
+    await waitFor(() =>
+      expect(screen.getByRole("heading", { name: GEOCODE_RESULT.label })).toBeInTheDocument(),
+    );
+
+    // Turn route lines on and hover the first anchor row -- /api/map is
+    // still pending at this point (deliberately never resolved yet).
+    fireEvent.click(screen.getByRole("button", { name: /route lines/i }));
+    const row = screen.getByText("Midtown").closest('[role="button"]') as HTMLElement;
+    fireEvent.mouseEnter(row);
+
+    // The real route resolves fast (its own fetch branch above), so
+    // MapView receives a real, non-empty routeHighlight while `geo` is
+    // still null -- exactly the reproduced race. The feature-specific note
+    // must appear (not silence, not the generic map-loading text alone).
+    await waitFor(() =>
+      expect(screen.getByText(/finding the real route line/i)).toBeInTheDocument(),
+    );
+
+    // Resolving /api/map now lets the route line actually draw -- the note
+    // must clear once that happens, not linger past the real wait.
+    act(() => {
+      resolveMapGeometry(new Response(JSON.stringify(MAP_GEOMETRY_WITH_SHAPE_ID), { status: 200 }));
+    });
+    await waitFor(() =>
+      expect(screen.queryByText(/finding the real route line/i)).not.toBeInTheDocument(),
+    );
+
+    const map = getLastMap() as unknown as {
+      _sources: Map<string, { data: { features: unknown[] } }>;
+    } | null;
+    expect(map?._sources.get("route-line")?.data.features.length).toBe(1);
   });
 });

@@ -1745,6 +1745,37 @@ export function MapView({
         <p className="mapfield__note mono">Loading nearby places to highlight on the map…</p>
       )}
 
+      {/* WAVE 6c item 7 (2026-08-11, Noah: "route lines don't preview").
+          REPRODUCED, then root-caused: the wiring (toggle -> hover ->
+          GET /api/route -> onRouteHighlight -> this file's own route-line
+          effect) is entirely correct -- confirmed live, the real line
+          DOES draw, every time, once its one real dependency is ready.
+          That dependency is `geo` (GET /api/map, this component's own
+          local building/street/subway overlay -- `routeLineGeoJSON()`
+          needs it to resolve a shape_id into real coordinates), and
+          GET /api/map measured a consistent ~4-5s server-side response
+          time on THIS machine across three repeated direct timed
+          requests -- not a one-time cold-boot cost, a real per-request
+          latency this endpoint has every time. `routeHighlight` itself
+          comes from a SEPARATE, fast fetch (GET /api/route) with no such
+          delay, so it very plausibly resolves to a real, non-empty
+          shape_id array WHILE `geo` is still in flight -- exactly what a
+          user toggling "Route lines: on" and immediately hovering a
+          destination row hits. The existing `loading && "Loading the
+          neighborhood record…"` message above already covers this window
+          in principle, but says nothing about route lines specifically,
+          and sits low in the map card, easy to not connect to a toggle
+          and hover that both happened in the side panel. This note is the
+          same fix precedent as the amenities-tile note just above it
+          (2026-08-03 UX-fix wave, same root-cause SHAPE: a real, already-
+          fetched-elsewhere UI action racing a second, independent,
+          slower fetch) -- feature-specific, not a generic spinner. */}
+      {loading && routeHighlight !== null && routeHighlight.length > 0 && (
+        <p className="mapfield__note mono">
+          Finding the real route line — still loading this address's street/transit detail…
+        </p>
+      )}
+
       {/* LAYOUT-V3 WAVE 1f item 5's own "ⓘ How this map is made" link (which
           used to live here, scoped to `geo || reach`) is gone as of WAVE 6
           (2026-08-11, SPEC-layout-v3.md §8) -- it was itself an instance of
