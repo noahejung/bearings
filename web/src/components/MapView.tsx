@@ -489,7 +489,13 @@ function roughDist(a: { lat: number; lng: number }, b: LngLat): number {
 //     collide with any already-placed box. Zoom band: >= 11 (unchanged --
 //     a finer, more technical label that only resolves once already
 //     zoomed past city scale). Same distance-to-centre ordering within the
-//     tier.
+//     tier. WAVE 6b (2026-08-11, Noah: "i dont need the police area labels
+//     when im not specifically selecting to show it") -- ALSO gated on
+//     `showPoliceLabelsRef.current` (crime tile hover/highlight active),
+//     on top of the zoom band: at rest, precinct labels render never, only
+//     while a real crime-context signal is live. Neighbourhood labels (Tier
+//     1) are unaffected -- they stay the standing city-scale orientation
+//     label this app already shows unconditionally.
 //   Not tiered here, both by explicit invariant elsewhere in this file:
 //   pinned-place badges (effect 11's own comment: "a pinned place is never
 //   silently absent," SPEC-lens-report.md §3) must never be culled by this
@@ -744,6 +750,20 @@ export function MapView({
   const [citywide, setCitywide] = useState<Citywide | null>(null);
   const citywideRef = useRef<Citywide | null>(null);
   citywideRef.current = citywide;
+
+  // WAVE 6b (2026-08-11, SPEC-layout-v3.md §8, Noah: "i dont need the police
+  // area labels when im not specifically selecting to show it"). Whether
+  // crime context is currently active -- a real hover on the side panel's
+  // crime tile, the SAME signal that already drives tileHighlightGeometry()
+  // into drawing the crime tile's own precinct-polygon highlight (see that
+  // function's own "crime" branch above), reused here rather than a second,
+  // independent flag. A ref (not read from `highlightedTile` directly
+  // inside updateLabelMarkers()) because that function is also called from
+  // effect 2's `onMoveEnd` closure, registered ONCE per `mapReady`
+  // transition -- the same stale-closure risk this file's own
+  // onCellClickRef/geoRef/citywideRef already guard against elsewhere.
+  const showPoliceLabelsRef = useRef(false);
+  showPoliceLabelsRef.current = highlightedTile === "crime";
 
   // The citywide grid's own data (GET /api/cells) -- fetched exactly once
   // on mount, independent of `address`/`selectedCell`, so the (invisible)
@@ -1319,6 +1339,13 @@ export function MapView({
     (map.getSource("tile-highlight-points") as maplibregl.GeoJSONSource | undefined)?.setData(
       withFadeFallback(points, lastTilePointsRef),
     );
+    // WAVE 6b (2026-08-11): re-run the label pass immediately on every
+    // highlightedTile change (not just on the next `moveend`) -- entering
+    // or leaving the crime tile's hover must show/hide the police-area
+    // labels (showPoliceLabelsRef, updated above on every render) right
+    // away, not whenever the user next happens to pan or zoom the map.
+    updateLabelMarkers();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [highlightedTile, reach, citywide, selectedCell, crimePrecinct, mapReady]);
 
   // ---- 10c. push the getting-around region's zone preview whenever the
@@ -1528,7 +1555,7 @@ export function MapView({
       }
     }
 
-    if (zoom >= 11) {
+    if (zoom >= 11 && showPoliceLabelsRef.current) {
       const candidates = cw.precincts
         .filter((p) => bounds.contains([p.lng, p.lat]))
         .sort((a, b) => roughDist(a, center) - roughDist(b, center))
