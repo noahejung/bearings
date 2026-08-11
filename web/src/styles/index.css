@@ -125,6 +125,51 @@ table {
      the root, not a second, per-rule opt-in). */
   --font-tabular: "tnum" 1;
 
+  /* ---------- spacing scale (WAVE 5, 2026-08-11) ----------
+     Same problem the type scale (above) already solved for font-size, this
+     time for margin/padding/gap: an audit of every margin/padding/gap
+     declaration in this file found 45 distinct raw rem/px values (0.05rem
+     to 4rem) doing the same handful of jobs -- e.g. "space below a card
+     title" alone showed up as 0.4rem, 0.45rem, and 0.5rem in three
+     different rules with no reason for the difference beyond which wave
+     wrote it. Same fix, same method as the type scale: a small geometric
+     progression (4/8/12/16/24/32/48/64px, i.e. Tailwind's own default
+     scale, plus one micro step below 4px for genuine hairline nudges),
+     every live value snapped to its NEAREST step rather than a fresh
+     top-down scale -- minimizes drift from what's already shipped and
+     measured. Worst-case drift from any snap is <=4px (most are <=2px),
+     well under anything visible at this app's UI scale. Ties snap up.
+     EXCEPTIONS, documented not silent, same convention as the type scale:
+     - `.wrap`'s own padding (both the default rule and its 640px override)
+       is the one Wave 1b live-measured to hit the >=96% viewport-width
+       floor at 1366/1920px (that wave's own report has the exact ratios)
+       -- untouched here, a cosmetic token swap is not worth risking a
+       measured layout invariant.
+     - `.mapfield__frame`'s 8px padding and `.sidepanel__report`'s 9.5px
+       padding-top are the two halves of a Wave 1c live-measured equation
+       (border 1.5px + padding 8px = 9.5px, see `.mapfield__frame`'s own
+       comment) that aligns the map canvas top with the side-panel tiles'
+       top to sub-10px precision -- also untouched.
+     - Map-canvas/DOM-marker chrome (`.mapstation*`, `.pinmarker*`,
+       `.maplabel*`) keeps literal px, matching the type scale's own
+       exception for the identical class list -- these size to fixed-px
+       marker/glyph containers, not reflowable copy.
+     - A handful of single-purpose functional offsets stay literal because
+       they're not spacing RHYTHM at all: `.sr-only`'s -1px (the standard
+       clip-hack reset), `.claim__evidence-number`'s 0.05rem (a kerning-
+       scale nudge on an inline number, not a layout gap), `.provenance-
+       link`'s 1px underline-offset padding, and `.tile__value-ordinal`'s
+       1px superscript nudge. */
+  --space-1: 0.15rem; /* 2.4px -- hairline nudges: icon-button padding, tight title-to-sub gaps */
+  --space-2: 0.25rem; /* 4px -- micro gaps: bullet/dot rows, small kicker/icon margins */
+  --space-3: 0.5rem; /* 8px -- compact padding: buttons/badges, small block gaps */
+  --space-4: 0.75rem; /* 12px -- standard small padding/gap: tile cards, secondary margin-top */
+  --space-5: 1rem; /* 16px -- base unit: kicker margins, input padding */
+  --space-6: 1.5rem; /* 24px -- larger card padding, record/section spacing */
+  --space-7: 2rem; /* 32px -- form-level and inter-section spacing */
+  --space-8: 3rem; /* 48px -- major section margin (report, search hero) */
+  --space-9: 4rem; /* 64px -- largest section break (fact-check) */
+
   /* ---------- motion tokens (data-viz animations wave, 2026-08-03) ----------
      Defined ONCE; every transition/animation this wave adds (and future ones
      should add) reads these instead of a fresh literal duration/curve --
@@ -230,7 +275,7 @@ body {
 
 /* ---------- address search ---------- */
 .search {
-  padding-top: 2.75rem;
+  padding-top: var(--space-8);
 }
 
 .search:not(.search--compact) {
@@ -241,12 +286,12 @@ body {
 }
 
 .search--compact {
-  padding-top: 1.5rem;
+  padding-top: var(--space-6);
 }
 
 .search__intro {
   max-width: 52rem;
-  margin: 0 0 1.75rem;
+  margin: 0 0 var(--space-7);
 }
 
 /* WAVE 4 (2026-08-11): `.search__kicker` removed -- orphaned by Wave 1d
@@ -260,7 +305,7 @@ body {
   line-height: 1.04;
   letter-spacing: var(--tracking-tight);
   text-transform: uppercase;
-  margin-top: 0.7rem;
+  margin-top: var(--space-4);
 }
 
 .search__headline em {
@@ -269,7 +314,7 @@ body {
 }
 
 .search__sub {
-  margin-top: 1rem;
+  margin-top: var(--space-5);
   max-width: 62ch;
   font-size: var(--text-md);
   line-height: 1.6;
@@ -292,7 +337,7 @@ body {
   min-width: 0;
   border: none;
   background: transparent;
-  padding: 0.85rem 1rem;
+  padding: var(--space-4) var(--space-5);
   font-size: var(--text-md);
   font-family: var(--font-mono);
 }
@@ -303,7 +348,7 @@ body {
   border-left: 1.5px solid var(--ink);
   background: var(--ink);
   color: var(--bone);
-  padding: 0.85rem 1.3rem;
+  padding: var(--space-4) var(--space-6);
   font-family: var(--font-mono);
   font-weight: 600;
   font-size: var(--text-sm);
@@ -334,7 +379,7 @@ body {
   border-left: 1.5px solid var(--ink);
   background: transparent;
   color: var(--ink);
-  padding: 0.85rem 1.1rem;
+  padding: var(--space-4) var(--space-5);
   font-family: var(--font-mono);
   font-weight: 600;
   font-size: var(--text-sm);
@@ -389,7 +434,7 @@ button.search__pin:disabled {
   display: block;
   width: 100%;
   text-align: left;
-  padding: 0.6rem 1rem;
+  padding: var(--space-3) var(--space-5);
   font-family: var(--font-mono);
   font-size: var(--text-sm);
   border-bottom: 1px solid rgba(17, 17, 17, 0.12);
@@ -405,8 +450,8 @@ button.search__pin:disabled {
 
 .search__error {
   max-width: 42rem;
-  margin: 0.85rem 0 0;
-  padding: 0.7rem 0.9rem;
+  margin: var(--space-4) 0 0;
+  padding: var(--space-4) var(--space-5);
   border: 1.5px solid var(--red);
   color: var(--red);
   font-family: var(--font-mono);
@@ -419,7 +464,7 @@ button.search__pin:disabled {
 
 /* ---------- loading ---------- */
 .loading {
-  margin-top: 2.5rem;
+  margin-top: var(--space-8);
   font-family: var(--font-mono);
   font-size: var(--text-sm);
   letter-spacing: var(--tracking-wide);
@@ -457,12 +502,12 @@ button.search__pin:disabled {
 
 /* ---------- report ---------- */
 .report {
-  margin-top: 3rem;
+  margin-top: var(--space-8);
 }
 
 .report__head {
   border-top: 1.5px solid var(--ink);
-  padding-top: 1.4rem;
+  padding-top: var(--space-6);
 }
 
 .report__kicker {
@@ -480,7 +525,7 @@ button.search__pin:disabled {
   text-transform: uppercase;
   font-size: var(--text-display-md);
   letter-spacing: var(--tracking-tight);
-  margin-top: 0.45rem;
+  margin-top: var(--space-3);
 }
 
 /* WAVE 4 (2026-08-11): `.report__meta` removed -- orphaned, no element in
@@ -504,8 +549,8 @@ button.search__pin:disabled {
    line can sit above the address without a border rule cutting between
    them -- `.record-line` keeps its own text styling untouched. */
 .record {
-  margin-top: 1.4rem;
-  padding-top: 0.85rem;
+  margin-top: var(--space-6);
+  padding-top: var(--space-4);
   border-top: 1px solid var(--ink);
 }
 
@@ -515,7 +560,7 @@ button.search__pin:disabled {
   letter-spacing: var(--tracking-wider);
   text-transform: uppercase;
   color: var(--steel);
-  margin-bottom: 0.2rem;
+  margin-bottom: var(--space-2);
 }
 
 .record-line {
@@ -568,8 +613,8 @@ button.search__pin:disabled {
 }
 
 .field__provenance {
-  margin-top: 1rem;
-  padding-top: 0.85rem;
+  margin-top: var(--space-5);
+  padding-top: var(--space-4);
   border-top: 1px dashed var(--steel);
   font-family: var(--font-mono);
   font-size: var(--text-2xs);
@@ -578,8 +623,8 @@ button.search__pin:disabled {
 }
 
 .field__caveat {
-  margin-top: 1.1rem;
-  padding: 0.7rem 0.85rem;
+  margin-top: var(--space-5);
+  padding: var(--space-4);
   border: 1px dashed var(--steel);
   font-family: var(--font-mono);
   font-size: var(--text-2xs);
@@ -593,7 +638,7 @@ button.search__pin:disabled {
   letter-spacing: var(--tracking-wider);
   text-transform: uppercase;
   color: var(--steel);
-  margin-bottom: 0.3rem;
+  margin-bottom: var(--space-2);
 }
 
 /* WAVE 4 (2026-08-11): `.stations`/`.station`/`.station__name`/
@@ -603,7 +648,7 @@ button.search__pin:disabled {
    renders route/line bullets independently of that list. */
 .bullets {
   display: inline-flex;
-  gap: 0.28rem;
+  gap: var(--space-2);
   flex-shrink: 0;
 }
 
@@ -627,7 +672,7 @@ button.search__pin:disabled {
 
 .bullet--wide {
   width: auto;
-  padding: 0 0.5rem;
+  padding: 0 var(--space-3);
   border-radius: 999px;
   font-size: var(--text-3xs);
   letter-spacing: var(--tracking-wide);
@@ -636,7 +681,7 @@ button.search__pin:disabled {
 .anchors {
   display: flex;
   flex-direction: column;
-  gap: 0.5rem;
+  gap: var(--space-3);
 }
 
 /* LAYOUT-V3 WAVE 1f item 5 (2026-08-11): the "RIDE TIME TO —" kicker
@@ -669,12 +714,12 @@ button.search__pin:disabled {
     "label delete"
     "track track"
     "value value";
-  gap: 0.28rem;
+  gap: var(--space-2);
   align-items: center;
   cursor: pointer;
   border: 1px solid transparent;
-  padding: 0.2rem 0.3rem;
-  margin: -0.2rem -0.3rem;
+  padding: var(--space-2);
+  margin: calc(var(--space-2) * -1);
   /* Motion wave item 1: a deleted row (`.anchor--exiting`, below) eases
      out on these two GPU-composited properties only -- never `height`/
      `margin` (would reflow every row below it mid-transition, the exact
@@ -816,8 +861,8 @@ button.search__pin:disabled {
 }
 
 .anchor__error {
-  margin-top: 0.6rem;
-  padding: 0.6rem 0.8rem;
+  margin-top: var(--space-3);
+  padding: var(--space-3) var(--space-4);
   border: 1.5px solid var(--red);
   color: var(--red);
   font-family: var(--font-mono);
@@ -832,7 +877,7 @@ button.search__pin:disabled {
 /* ---------- add-destination field (LAYOUT-V3 WAVE 3) ---------- */
 .anchors__add {
   position: relative;
-  margin-top: 0.9rem;
+  margin-top: var(--space-5);
 }
 
 .anchors__addfield {
@@ -846,7 +891,7 @@ button.search__pin:disabled {
   min-width: 0;
   border: none;
   background: transparent;
-  padding: 0.6rem 0.8rem;
+  padding: var(--space-3) var(--space-4);
   font-size: var(--text-sm);
   font-family: var(--font-mono);
   /* UX-FIX 2026-08-03 (audit finding #9, "mobile placeholder truncates
@@ -867,7 +912,7 @@ button.search__pin:disabled {
   border-left: 1.5px solid var(--ink);
   background: var(--ink);
   color: var(--bone);
-  padding: 0.6rem 1rem;
+  padding: var(--space-3) var(--space-5);
   font-family: var(--font-mono);
   font-weight: 600;
   font-size: var(--text-2xs);
@@ -903,7 +948,7 @@ button.search__pin:disabled {
   display: block;
   width: 100%;
   text-align: left;
-  padding: 0.55rem 0.8rem;
+  padding: var(--space-3) var(--space-4);
   font-family: var(--font-mono);
   font-size: var(--text-2xs);
   border-bottom: 1px solid rgba(17, 17, 17, 0.12);
@@ -920,7 +965,7 @@ button.search__pin:disabled {
 /* ---------- route-lines toggle + nav directions (WAVE 4, 2026-08-11,
    SPEC-layout-v3.md Wave 4) ---------- */
 .anchors__routetoggle {
-  margin-bottom: 0.6rem;
+  margin-bottom: var(--space-3);
 }
 
 /* Reuses .directions__caveat/.directions__status/.directions__steps'
@@ -928,8 +973,8 @@ button.search__pin:disabled {
    rather than inventing a new text treatment for one small feature --
    VISUAL.md's "one palette, one era" rule applies to new UI same as old. */
 .directions {
-  margin-top: 0.7rem;
-  padding-top: 0.6rem;
+  margin-top: var(--space-4);
+  padding-top: var(--space-3);
   border-top: 1px dashed var(--steel);
 }
 
@@ -941,16 +986,16 @@ button.search__pin:disabled {
 
 .directions__steps {
   list-style: decimal;
-  padding-left: 1.1rem;
+  padding-left: var(--space-5);
   display: flex;
   flex-direction: column;
-  gap: 0.35rem;
+  gap: var(--space-2);
   font-size: var(--text-sm);
   line-height: 1.4;
 }
 
 .directions__caveat {
-  margin-top: 0.6rem;
+  margin-top: var(--space-3);
   font-family: var(--font-mono);
   font-size: var(--text-3xs);
   color: var(--steel);
@@ -961,7 +1006,7 @@ button.search__pin:disabled {
 .amenities {
   display: grid;
   grid-template-columns: repeat(2, 1fr);
-  gap: 0.9rem 1rem;
+  gap: var(--space-5);
 }
 
 @media (min-width: 420px) {
@@ -973,7 +1018,7 @@ button.search__pin:disabled {
 .amenity {
   display: flex;
   flex-direction: column;
-  gap: 0.15rem;
+  gap: var(--space-1);
 }
 
 .amenity__count {
@@ -1036,7 +1081,7 @@ button.search__pin:disabled {
   font-weight: 400;
   font-size: 0.55em;
   color: var(--steel);
-  margin-left: 0.35rem;
+  margin-left: var(--space-2);
   text-transform: uppercase;
   letter-spacing: var(--tracking-wide);
 }
@@ -1050,7 +1095,7 @@ button.search__pin:disabled {
   font-size: var(--text-3xs);
   letter-spacing: var(--tracking-wide);
   text-transform: uppercase;
-  padding: 0.15rem 0.5rem;
+  padding: var(--space-1) var(--space-3);
   border: 1px solid var(--steel);
   color: var(--ink);
 }
@@ -1062,10 +1107,10 @@ button.search__pin:disabled {
 
 /* ---------- provenance / source line ---------- */
 .provenance-link {
-  margin-top: 0.6rem;
+  margin-top: var(--space-3);
   display: inline-flex;
   align-items: center;
-  gap: 0.35rem;
+  gap: var(--space-2);
   text-decoration: none;
   font-family: var(--font-mono);
   font-size: var(--text-2xs);
@@ -1095,7 +1140,7 @@ button.search__pin:disabled {
   display: inline-flex;
   align-items: center;
   border: 1.5px solid var(--ink);
-  padding: 0.32rem 0.55rem;
+  padding: var(--space-2) var(--space-3);
   font-family: var(--font-mono);
   font-weight: 700;
   font-size: var(--text-3xs);
@@ -1106,7 +1151,7 @@ button.search__pin:disabled {
 }
 
 .stamp--compact {
-  padding: 0.2rem 0.4rem;
+  padding: var(--space-2) var(--space-3);
   font-size: var(--text-3xs);
 }
 
@@ -1137,17 +1182,17 @@ button.search__pin:disabled {
 
 /* ---------- fact-check section ---------- */
 .factcheck {
-  margin-top: 4rem;
+  margin-top: var(--space-9);
 }
 
 .factcheck__lede {
-  margin-top: 0.65rem;
+  margin-top: var(--space-4);
   max-width: 62ch;
   line-height: 1.6;
 }
 
 .factcheck__form {
-  margin-top: 1.75rem;
+  margin-top: var(--space-7);
   max-width: 48rem;
 }
 
@@ -1158,7 +1203,7 @@ button.search__pin:disabled {
   letter-spacing: var(--tracking-wider);
   text-transform: uppercase;
   color: var(--steel);
-  margin-bottom: 0.4rem;
+  margin-bottom: var(--space-3);
 }
 
 .factcheck__form textarea {
@@ -1166,17 +1211,17 @@ button.search__pin:disabled {
   resize: vertical;
   background: transparent;
   border: 1.5px solid var(--ink);
-  padding: 0.85rem 1rem;
+  padding: var(--space-4) var(--space-5);
   font-size: var(--text-md);
   font-family: var(--font-display);
   line-height: 1.55;
 }
 
 .factcheck__actions {
-  margin-top: 0.85rem;
+  margin-top: var(--space-4);
   display: flex;
   align-items: center;
-  gap: 0.75rem;
+  gap: var(--space-4);
   flex-wrap: wrap;
 }
 
@@ -1184,7 +1229,7 @@ button.search__pin:disabled {
   border: 1.5px solid var(--ink);
   background: var(--ink);
   color: var(--bone);
-  padding: 0.65rem 1.2rem;
+  padding: var(--space-4) var(--space-5);
   font-family: var(--font-mono);
   font-weight: 600;
   font-size: var(--text-2xs);
@@ -1216,7 +1261,7 @@ button.search__pin:disabled {
 }
 
 .factcheck__hint {
-  margin-top: 0.6rem;
+  margin-top: var(--space-3);
   font-family: var(--font-mono);
   font-size: var(--text-2xs);
   color: var(--steel);
@@ -1226,15 +1271,15 @@ button.search__pin:disabled {
 .tally {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.6rem;
-  margin: 2rem 0 1.5rem;
+  gap: var(--space-3);
+  margin: var(--space-7) 0 var(--space-6);
 }
 
 .tally__item {
   display: flex;
   align-items: baseline;
-  gap: 0.4rem;
-  padding: 0.4rem 0.75rem;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
   border: 1px solid var(--ink);
   font-family: var(--font-mono);
   font-size: var(--text-2xs);
@@ -1275,7 +1320,7 @@ button.search__pin:disabled {
 .claim {
   border-bottom: 1px solid var(--ink);
   border-left: 4px solid var(--steel);
-  padding: 1.2rem 1.3rem 1.35rem;
+  padding: var(--space-5) var(--space-6) var(--space-6);
 }
 
 .claim--confirmed {
@@ -1295,7 +1340,7 @@ button.search__pin:disabled {
   display: flex;
   justify-content: space-between;
   align-items: flex-start;
-  gap: 0.6rem 1rem;
+  gap: var(--space-3) var(--space-5);
   flex-wrap: wrap;
 }
 
@@ -1311,7 +1356,7 @@ button.search__pin:disabled {
   letter-spacing: var(--tracking-wider);
   text-transform: uppercase;
   color: var(--steel);
-  margin-bottom: 0.3rem;
+  margin-bottom: var(--space-2);
 }
 
 .claim__quote-text {
@@ -1321,8 +1366,8 @@ button.search__pin:disabled {
 }
 
 .claim__evidence {
-  margin-top: 1rem;
-  padding-top: 0.9rem;
+  margin-top: var(--space-5);
+  padding-top: var(--space-5);
   border-top: 1px dashed var(--steel);
 }
 
@@ -1376,12 +1421,12 @@ button.search__pin:disabled {
 .mapfield {
   border-top: 1px solid var(--ink);
   border-bottom: 1px solid var(--ink);
-  padding: 0 0 1.6rem;
+  padding: 0 0 var(--space-6);
 }
 
 .mapfield__note {
-  margin-top: 0.85rem;
-  padding: 0.7rem 0.85rem;
+  margin-top: var(--space-4);
+  padding: var(--space-4);
   border: 1px dashed var(--steel);
   font-family: var(--font-mono);
   font-size: var(--text-2xs);
@@ -1400,7 +1445,7 @@ button.search__pin:disabled {
    reasoning. */
 .mapfield__disclosurelink {
   display: inline-block;
-  margin-top: 0.6rem;
+  margin-top: var(--space-3);
   font-size: var(--text-2xs);
   color: var(--steel);
   text-decoration: underline;
@@ -1428,7 +1473,7 @@ button.search__pin:disabled {
   border: 1.5px solid var(--ink);
   background: transparent;
   color: var(--ink);
-  padding: 0.4rem 0.75rem;
+  padding: var(--space-3) var(--space-4);
   font-family: var(--font-mono);
   font-size: var(--text-2xs);
   letter-spacing: var(--tracking-wide);
@@ -1508,7 +1553,7 @@ button.search__pin:disabled {
 }
 
 .mapfield__status {
-  margin-top: 0.6rem;
+  margin-top: var(--space-3);
   font-size: var(--text-2xs);
   color: var(--steel);
 }
@@ -1596,9 +1641,9 @@ button.search__pin:disabled {
 .mapgrid {
   display: grid;
   grid-template-columns: 1fr 360px;
-  gap: 1.2rem;
+  gap: var(--space-5);
   align-items: start;
-  margin-top: 1.5rem;
+  margin-top: var(--space-6);
 }
 
 @media (max-width: 900px) {
@@ -1634,7 +1679,7 @@ button.search__pin:disabled {
    a block has been clicked or searched. */
 .sidepanel__placeholder {
   border: 1.5px solid var(--ink);
-  padding: 14px;
+  padding: var(--space-5);
   min-height: 200px;
   font-family: var(--font-mono);
   font-size: var(--text-3xs);
@@ -1664,12 +1709,12 @@ button.search__pin:disabled {
 .tilegrid {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 0.7rem;
+  gap: var(--space-4);
 }
 
 .tile {
   border: 1px solid var(--ink);
-  padding: 0.75rem 0.8rem 0.85rem;
+  padding: var(--space-4);
   display: flex;
   flex-direction: column;
   min-width: 0;
@@ -1686,19 +1731,19 @@ button.search__pin:disabled {
    padding) so it reads as one more card in the same column, not a
    foreign element. */
 .sidepanel__anchorswrap {
-  margin-top: 0.7rem;
+  margin-top: var(--space-4);
 }
 
 .tile--anchors {
-  padding: 0.7rem 0.8rem 0.8rem;
+  padding: var(--space-4);
 }
 
 .tile__head {
   display: flex;
   justify-content: space-between;
   align-items: flex-start;
-  gap: 0.4rem;
-  margin-bottom: 0.4rem;
+  gap: var(--space-3);
+  margin-bottom: var(--space-3);
 }
 
 .tile__title {
@@ -1757,7 +1802,7 @@ button.search__pin:disabled {
 /* WAVE 4 (2026-08-11): `.tile__valuerow` removed -- no element in
    CellReportView.tsx has carried this class since before Wave 1e. */
 .tile__sub {
-  margin-top: 0.1rem;
+  margin-top: var(--space-1);
   font-family: var(--font-mono);
   font-size: var(--text-3xs);
   letter-spacing: var(--tracking-wide);
@@ -1765,7 +1810,7 @@ button.search__pin:disabled {
 }
 
 .tile .era {
-  margin-left: 0.4rem;
+  margin-left: var(--space-3);
   font-family: var(--font-mono);
   font-size: var(--text-3xs);
   letter-spacing: var(--tracking-wide);
@@ -1791,7 +1836,7 @@ button.search__pin:disabled {
    <details> was chosen to clear at this app's documented 375px mobile
    constraint (2026-07-28 UX audit finding #3), now met by different DOM. */
 .tile__disclosuretoggle {
-  margin-top: 0.5rem;
+  margin-top: var(--space-3);
   padding: 0;
   border: none;
   background: none;
@@ -1812,9 +1857,9 @@ button.search__pin:disabled {
    sidepanel's real 300-400px track width instead of squeezed into a
    ~175px half-tile. */
 .tiledetail {
-  margin-top: 0.7rem;
+  margin-top: var(--space-4);
   border: 1.5px solid var(--ink);
-  padding: 0.8rem 0.9rem 0.9rem;
+  padding: var(--space-4) var(--space-5) var(--space-5);
 }
 
 .tiledetail__title {
@@ -1822,12 +1867,12 @@ button.search__pin:disabled {
   letter-spacing: var(--tracking-wider);
   text-transform: uppercase;
   color: var(--steel);
-  margin-bottom: 0.5rem;
+  margin-bottom: var(--space-3);
 }
 
 .tiledetail .field__provenance {
-  margin-top: 0.6rem;
-  padding-top: 0.5rem;
+  margin-top: var(--space-3);
+  padding-top: var(--space-3);
 }
 
 .tiledetail .field__empty {
@@ -1838,7 +1883,7 @@ button.search__pin:disabled {
 }
 
 .tiledetail .field__empty + .field__empty {
-  margin-top: 0.5rem;
+  margin-top: var(--space-3);
 }
 
 /* .amenities' own rule (see that class's definition) switches to
@@ -1850,7 +1895,7 @@ button.search__pin:disabled {
    .amenities` rule this replaces; same fix, same reasoning, new selector. */
 .tiledetail .amenities {
   grid-template-columns: repeat(2, 1fr);
-  margin-top: 0.5rem;
+  margin-top: var(--space-3);
 }
 
 @media (max-width: 900px) {
@@ -1891,16 +1936,16 @@ button.search__pin:disabled {
    bookends) rather than inventing a second grid language for what is,
    structurally, the same "one card per metric" shape. */
 .disclosure {
-  margin-top: 1rem;
+  margin-top: var(--space-5);
 }
 
 .disclosure__head {
   border-top: 1.5px solid var(--ink);
-  padding-top: 1.4rem;
+  padding-top: var(--space-6);
 }
 
 .disclosure__back {
-  margin-bottom: 1rem;
+  margin-bottom: var(--space-5);
 }
 
 .disclosure__title {
@@ -1913,7 +1958,7 @@ button.search__pin:disabled {
 }
 
 .disclosure__lede {
-  margin-top: 0.6rem;
+  margin-top: var(--space-3);
   max-width: 62ch;
   font-size: var(--text-md);
   line-height: 1.6;
@@ -1937,7 +1982,7 @@ button.search__pin:disabled {
   display: grid;
   grid-template-columns: 1fr;
   gap: 0;
-  margin-top: 2rem;
+  margin-top: var(--space-7);
   border-top: 1px solid var(--ink);
   border-bottom: 1px solid var(--ink);
 }
@@ -1946,7 +1991,7 @@ button.search__pin:disabled {
   border-bottom: 1px solid var(--ink);
   border-right: 1px solid var(--ink);
   border-left: 1px solid var(--ink);
-  padding: 1.3rem 1.4rem 1.5rem;
+  padding: var(--space-6);
 }
 
 @media (min-width: 640px) {
@@ -1982,13 +2027,13 @@ button.search__pin:disabled {
 }
 
 .disclosure__what {
-  margin-top: 0.6rem;
+  margin-top: var(--space-3);
   font-size: var(--text-sm);
   line-height: 1.5;
 }
 
 .disclosure__how {
-  margin-top: 0.6rem;
+  margin-top: var(--space-3);
   font-family: var(--font-mono);
   font-size: var(--text-2xs);
   line-height: 1.55;
@@ -2004,11 +2049,11 @@ button.search__pin:disabled {
    "Building age & serious hazards" -- PLUTO + HPD) a real visual break,
    and wraps onto its own line at narrow widths rather than overflowing. */
 .disclosure__source {
-  margin-top: 0.8rem;
+  margin-top: var(--space-4);
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 0.4rem 1rem;
+  gap: var(--space-3) var(--space-5);
 }
 
 .disclosure__source--pending {
@@ -2018,26 +2063,26 @@ button.search__pin:disabled {
 
 /* ---------- preference bar (SPEC-lens-report.md §2) ---------- */
 .prefbar {
-  margin-top: 1.5rem;
-  padding: 0.9rem 0;
+  margin-top: var(--space-6);
+  padding: var(--space-5) 0;
   border-top: 1px solid var(--ink);
   border-bottom: 1px solid var(--ink);
   display: flex;
   flex-direction: column;
-  gap: 0.6rem;
+  gap: var(--space-3);
 }
 
 .prefbar__chips {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.5rem;
+  gap: var(--space-3);
 }
 
 .prefbar__chip {
   border: 1.5px solid var(--ink);
   background: transparent;
   color: var(--ink);
-  padding: 0.35rem 0.7rem;
+  padding: var(--space-2) var(--space-4);
   font-family: var(--font-mono);
   font-size: var(--text-2xs);
   letter-spacing: var(--tracking-wide);
@@ -2056,7 +2101,7 @@ button.search__pin:disabled {
 .prefbar__pins {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.4rem;
+  gap: var(--space-3);
   list-style: none;
   margin: 0;
   padding: 0;
@@ -2065,9 +2110,9 @@ button.search__pin:disabled {
 .prefbar__pinitem {
   display: inline-flex;
   align-items: center;
-  gap: 0.35rem;
+  gap: var(--space-2);
   border: 1px dashed var(--steel);
-  padding: 0.25rem 0.3rem 0.25rem 0.55rem;
+  padding: var(--space-2) var(--space-2) var(--space-2) var(--space-3);
   font-family: var(--font-mono);
   font-size: var(--text-3xs);
   color: var(--ink);
@@ -2080,7 +2125,7 @@ button.search__pin:disabled {
   font-size: var(--text-sm);
   line-height: 1;
   cursor: pointer;
-  padding: 0 0.15rem;
+  padding: 0 var(--space-1);
 }
 
 .prefbar__pinremove:hover {
@@ -2138,7 +2183,7 @@ button.search__pin:disabled {
   position: relative;
   min-width: 148px;
   max-width: 200px;
-  padding: 0.5rem 0.6rem 0.55rem;
+  padding: var(--space-3);
   border: 1.5px solid var(--ink);
   background: var(--bone);
   font-family: var(--font-mono);
@@ -2154,7 +2199,7 @@ button.search__pin:disabled {
   font-size: var(--text-md);
   line-height: 1;
   cursor: pointer;
-  padding: 0.1rem 0.2rem;
+  padding: var(--space-1) var(--space-2);
 }
 
 .buildinginfo__close:hover {
@@ -2166,11 +2211,11 @@ button.search__pin:disabled {
   font-weight: 700;
   color: var(--ink);
   line-height: 1.3;
-  margin: 0 1.1rem 0.15rem 0;
+  margin: 0 var(--space-5) var(--space-1) 0;
 }
 
 .buildinginfo__value .era {
-  margin-left: 0.35rem;
+  margin-left: var(--space-2);
   font-size: var(--text-3xs);
   font-weight: 400;
   letter-spacing: var(--tracking-wide);
@@ -2188,8 +2233,8 @@ button.search__pin:disabled {
 }
 
 .buildinginfo__source {
-  margin-top: 0.35rem;
-  padding-top: 0.3rem;
+  margin-top: var(--space-2);
+  padding-top: var(--space-2);
   border-top: 1px solid var(--steel);
   font-size: var(--text-3xs);
   letter-spacing: var(--tracking-wide);
