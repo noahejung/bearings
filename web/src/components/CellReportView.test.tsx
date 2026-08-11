@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { CellReportView, GettingAroundField } from "./CellReportView";
-import type { CellProfile, CommuteResult } from "../types";
+import type { CellProfile, CommuteResult, RouteResult } from "../types";
 
 // Real shapes, live-captured 2026-07-18 from `bearings.cellprofile.
 // profile_for()` against the real, currently-baked shard data -- per this
@@ -312,7 +312,36 @@ const COMMUTE_UNREACHABLE: CommuteResult = {
   reason: "no_station_in_range",
 };
 
-function stubCommuteFetch(overrides?: { fails?: boolean; result?: CommuteResult }) {
+// WAVE 4 (2026-08-11, SPEC-layout-v3.md Wave 4): a real-shaped GET
+// /api/route result -- one walk-to-station step, one real ride, one
+// walk-to-destination step, matching profile.route_for()'s own contract
+// exactly (types.ts's RouteResult/RouteStep).
+const ROUTE_RESULT: RouteResult = {
+  reachable: true,
+  reason: null,
+  minutes: 10,
+  steps: [
+    { type: "walk_to_station", to: "34 St-Herald Sq", minutes: 4 },
+    { type: "ride", route: "B", headsign: "Manhattan", from: "34 St-Herald Sq", to: "42 St-Times Sq", shape_ids: ["B_shape_1"], minutes: 4 },
+    { type: "walk_to_destination", minutes: 2, estimated: true },
+  ],
+  shape_ids: ["B_shape_1"],
+};
+
+const ROUTE_UNREACHABLE: RouteResult = {
+  reachable: false,
+  reason: "no_station_in_range",
+  minutes: -1,
+  steps: null,
+  shape_ids: [],
+};
+
+function stubCommuteFetch(overrides?: {
+  fails?: boolean;
+  result?: CommuteResult;
+  route?: RouteResult;
+  routeFails?: boolean;
+}) {
   vi.stubGlobal(
     "fetch",
     vi.fn((url: string) => {
@@ -329,6 +358,12 @@ function stubCommuteFetch(overrides?: { fails?: boolean; result?: CommuteResult 
           );
         }
         return Promise.resolve(new Response(JSON.stringify(overrides?.result ?? COMMUTE_RESULT), { status: 200 }));
+      }
+      if (url.includes("/api/route")) {
+        if (overrides?.routeFails) {
+          return Promise.resolve(new Response(JSON.stringify({ detail: "boom" }), { status: 500 }));
+        }
+        return Promise.resolve(new Response(JSON.stringify(overrides?.route ?? ROUTE_RESULT), { status: 200 }));
       }
       return Promise.reject(new Error(`unexpected fetch: ${url}`));
     }),
@@ -374,13 +409,19 @@ describe("GettingAroundField -- Wave 3 editable destinations", () => {
     expect(onDestinationHighlight).toHaveBeenLastCalledWith(null);
   });
 
-  it("clicking a default anchor selects it (the preview persists after the cursor leaves); clicking again deselects", () => {
+  it("clicking a default anchor selects it (the preview persists after the cursor leaves); clicking again deselects", async () => {
+    // WAVE 4: selecting a row also fires GET /api/route (for the directions
+    // panel), independent of the route-lines toggle -- stub it, and let it
+    // settle before the test ends, so that fetch has a real, awaited
+    // response instead of an unstubbed global left dangling past act().
+    stubCommuteFetch();
     const onDestinationHighlight = vi.fn();
     render(<GettingAroundField cell={CONTROL_CELL} onDestinationHighlight={onDestinationHighlight} />);
     const row = screen.getByText("Midtown").closest('[role="button"]') as HTMLElement;
     fireEvent.click(row);
     expect(row).toHaveAttribute("aria-pressed", "true");
     expect(onDestinationHighlight).toHaveBeenLastCalledWith({ lat: 40.7549, lng: -73.984 });
+    await screen.findByText(/Walk to 34 St-Herald Sq/);
     fireEvent.click(row);
     expect(row).toHaveAttribute("aria-pressed", "false");
     expect(onDestinationHighlight).toHaveBeenLastCalledWith(null);
@@ -465,5 +506,129 @@ describe("GettingAroundField -- Wave 3 editable destinations", () => {
       .map((c) => String(c[0]))
       .filter((u) => u.includes("/api/commute"));
     expect(commuteUrls.some((u) => u.includes(`cell=${SIR_CELL.h3}`))).toBe(true);
+  });
+});
+
+describe("GettingAroundField -- Wave 4 route-lines toggle + nav directions", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("the route-lines toggle starts off and flips on click", () => {
+    render(<GettingAroundField cell={CONTROL_CELL} />);
+    const toggle = screen.getByRole("button", { name: /route lines/i });
+    expect(toggle).toHaveAttribute("aria-pressed", "false");
+    fireEvent.click(toggle);
+    expect(toggle).toHaveAttribute("aria-pressed", "true");
+    expect(toggle).toHaveTextContent(/on/i);
+  });
+
+  it("merely hovering a row never calls GET /api/route while the toggle is off", () => {
+    stubCommuteFetch();
+    render(<GettingAroundField cell={CONTROL_CELL} />);
+    const row = screen.getByText("Midtown").closest('[role="button"]') as HTMLElement;
+    fireEvent.mouseEnter(row);
+    expect(fetch).not.toHaveBeenCalledWith(expect.stringContaining("/api/route"), expect.anything());
+  });
+
+  it("hovering a row while the toggle is on fetches the real route and reports its shape_ids up", async () => {
+    stubCommuteFetch();
+    const onRouteHighlight = vi.fn();
+    render(<GettingAroundField cell={CONTROL_CELL} onRouteHighlight={onRouteHighlight} />);
+    fireEvent.click(screen.getByRole("button", { name: /route lines/i }));
+    const row = screen.getByText("Midtown").closest('[role="button"]') as HTMLElement;
+    fireEvent.mouseEnter(row);
+    await waitFor(() => expect(onRouteHighlight).toHaveBeenCalledWith(ROUTE_RESULT.shape_ids));
+    expect(fetch).toHaveBeenCalledWith(
+      expect.stringContaining(`/api/route?cell=${CONTROL_CELL.h3}&anchor=midtown`),
+      expect.anything(),
+    );
+  });
+
+  it("an unreachable destination never reports shape_ids, even with the toggle on", async () => {
+    stubCommuteFetch({ route: ROUTE_UNREACHABLE });
+    const onRouteHighlight = vi.fn();
+    render(<GettingAroundField cell={CONTROL_CELL} onRouteHighlight={onRouteHighlight} />);
+    fireEvent.click(screen.getByRole("button", { name: /route lines/i }));
+    const row = screen.getByText("Midtown").closest('[role="button"]') as HTMLElement;
+    fireEvent.mouseEnter(row);
+    await waitFor(() => expect(fetch).toHaveBeenCalledWith(expect.stringContaining("/api/route"), expect.anything()));
+    expect(onRouteHighlight).not.toHaveBeenCalledWith(ROUTE_RESULT.shape_ids);
+    expect(onRouteHighlight).toHaveBeenLastCalledWith(null);
+  });
+
+  it("clicking (selecting) a row shows real nav-directions steps, toggle off or on", async () => {
+    stubCommuteFetch();
+    render(<GettingAroundField cell={CONTROL_CELL} />);
+    const row = screen.getByText("Midtown").closest('[role="button"]') as HTMLElement;
+    fireEvent.click(row);
+    expect(await screen.findByText(/Walk to 34 St-Herald Sq/)).toBeInTheDocument();
+    expect(screen.getByText(/Take the B toward Manhattan/)).toBeInTheDocument();
+    expect(screen.getByText(/Walk toward the destination/)).toBeInTheDocument();
+    expect(screen.getByText(/straight-line estimates/)).toBeInTheDocument();
+    expect(fetch).toHaveBeenCalledWith(
+      expect.stringContaining(`/api/route?cell=${CONTROL_CELL.h3}&anchor=midtown`),
+      expect.anything(),
+    );
+  });
+
+  it("selecting an unreachable destination shows the real honest reason, not fabricated steps", async () => {
+    stubCommuteFetch({ route: ROUTE_UNREACHABLE });
+    render(<GettingAroundField cell={CONTROL_CELL} />);
+    const row = screen.getByText("Midtown").closest('[role="button"]') as HTMLElement;
+    fireEvent.click(row);
+    expect(await screen.findByText(/about a 15-minute walk/)).toBeInTheDocument();
+  });
+
+  it("a failed route lookup shows a real error, not a silently swallowed failure", async () => {
+    stubCommuteFetch({ routeFails: true });
+    render(<GettingAroundField cell={CONTROL_CELL} />);
+    const row = screen.getByText("Midtown").closest('[role="button"]') as HTMLElement;
+    fireEvent.click(row);
+    expect(await screen.findByText(/Could not compute directions/)).toBeInTheDocument();
+  });
+
+  // REGRESSION (found live via Playwright during Wave 4's own verification,
+  // 2026-08-11): a brand-new custom destination's own GET /api/commute call
+  // (which resolves its real lat/lng) can still be in flight at the exact
+  // moment a user selects it -- the route-fetch effect's guard (`custom.lat
+  // !== null`) correctly skipped the very first attempt, but the effect's
+  // own dependency array was only `[fetchKey, cell.h3]`; since `fetchKey`
+  // never changed value across that resolution (the same row stayed
+  // selected the whole time), the effect never got a second chance to run
+  // once lat/lng actually resolved -- the directions panel was stuck on
+  // "Finding the real route…" forever. Fixed by adding `customDestinations`
+  // itself to the dependency array. This test reproduces the exact race: a
+  // deliberately delayed /api/commute response that resolves AFTER the row
+  // is already selected.
+  it("selecting a custom destination before its own commute lookup resolves still gets real directions once it does", async () => {
+    let resolveCommute: (value: Response) => void = () => {};
+    const commutePromise = new Promise<Response>((resolve) => {
+      resolveCommute = resolve;
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((url: string) => {
+        if (url.includes("/api/geocode/autocomplete")) {
+          return Promise.resolve(new Response(JSON.stringify({ results: [] }), { status: 200 }));
+        }
+        if (url.includes("/api/commute")) return commutePromise;
+        if (url.includes("/api/route")) {
+          return Promise.resolve(new Response(JSON.stringify(ROUTE_RESULT), { status: 200 }));
+        }
+        return Promise.reject(new Error(`unexpected fetch: ${url}`));
+      }),
+    );
+
+    render(<GettingAroundField cell={CONTROL_CELL} />);
+    addViaField("60 West 36 St, Manhattan");
+    // Select it WHILE the commute lookup is still in flight (lat/lng null).
+    const row = screen.getByText("computing…").closest('[role="button"]') as HTMLElement;
+    fireEvent.click(row);
+    expect(screen.getByText("Finding the real route…")).toBeInTheDocument();
+
+    resolveCommute(new Response(JSON.stringify(COMMUTE_RESULT), { status: 200 }));
+
+    expect(await screen.findByText(/Walk to 34 St-Herald Sq/)).toBeInTheDocument();
   });
 });

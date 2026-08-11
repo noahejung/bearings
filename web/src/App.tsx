@@ -83,6 +83,15 @@ export default function App() {
     null,
   );
 
+  // WAVE 4 (2026-08-11, SPEC-layout-v3.md Wave 4): the real GTFS shape_id(s)
+  // for whichever destination's route-lines preview is currently showing --
+  // same "child owns it, parent relays a value to MapView" shape as
+  // destinationHighlight above. null whenever there's nothing to draw as a
+  // real line (toggle off, nothing active, or the active destination has no
+  // real transit component) -- MapView falls back to the existing zone
+  // preview (destinationHighlight, unchanged) in every one of those cases.
+  const [routeHighlight, setRouteHighlight] = useState<string[] | null>(null);
+
   function toggleCategory(key: string) {
     setActiveCategories((prev) => {
       const next = new Set(prev);
@@ -330,6 +339,7 @@ export default function App() {
                 highlightedTile={highlightedTile}
                 crimePrecinct={cellReport?.safety.precinct ?? null}
                 destinationHighlight={destinationHighlight}
+                routeHighlight={routeHighlight}
                 onOpenDisclosure={() => setShowDisclosure(true)}
               />
 
@@ -357,7 +367,11 @@ export default function App() {
                 {cellReport && (
                   <>
                     <CellReportView cell={cellReport} onTileHighlight={setHighlightedTile} />
-                    <GettingAroundField cell={cellReport} onDestinationHighlight={setDestinationHighlight} />
+                    <GettingAroundField
+                      cell={cellReport}
+                      onDestinationHighlight={setDestinationHighlight}
+                      onRouteHighlight={setRouteHighlight}
+                    />
                   </>
                 )}
               </aside>

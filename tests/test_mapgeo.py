@@ -113,6 +113,15 @@ def test_subway_lines_carry_a_real_route_label(geo):
     assert {"B", "D", "F", "M"} & all_labels
 
 
+def test_subway_lines_carry_a_real_shape_id(geo):
+    # WAVE 4 (SPEC-layout-v3.md Wave 4): the route-line preview's join key --
+    # GET /api/route returns the real shape_id(s) a computed commute rode,
+    # and the frontend filters this already-loaded array by shape_id rather
+    # than fetching geometry a second time. Must be present and non-blank
+    # on every line, same bar as the route label above.
+    assert all(line["shape_id"] for line in geo["subway_lines"])
+
+
 def test_finds_real_stations_near_a_dense_transit_address(geo):
     assert len(geo["stations"]) > 0
     names = {s["name"] for s in geo["stations"]}

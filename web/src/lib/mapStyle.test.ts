@@ -247,6 +247,25 @@ describe("buildOverlayLayers (MapView's own app layers)", () => {
     expect(layers).toHaveLength(1);
     expect(layers[0].id).toBe("citywide-cells-fill");
   });
+
+  // WAVE 4 (2026-08-11, SPEC-layout-v3.md Wave 4): the route-line preview
+  // -- must read visually distinct from the always-on "subway-line"
+  // backdrop it's drawn over (VISUAL.md's four-colour rule: distinct by
+  // width/opacity, never a new colour).
+  it("route-line-highlight is sourced from route-line and reads visually distinct from the backdrop subway-line", () => {
+    const layers = buildOverlayLayers();
+    const highlight = layers.find((l) => l.id === "route-line-highlight") as {
+      source: string;
+      paint: { "line-width": number; "line-opacity": number; "line-color": string };
+    };
+    const backdrop = layers.find((l) => l.id === "subway-line") as {
+      paint: { "line-width": number; "line-opacity": number; "line-color": string };
+    };
+    expect(highlight).toBeDefined();
+    expect(highlight.source).toBe("route-line");
+    expect(highlight.paint["line-width"]).toBeGreaterThan(backdrop.paint["line-width"]);
+    expect(highlight.paint["line-color"]).toBe(backdrop.paint["line-color"]); // no new colour
+  });
 });
 
 describe("buildReachLayers (5/10/15-minute walk rings + amenity/station dots)", () => {

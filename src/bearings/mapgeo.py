@@ -166,7 +166,15 @@ def _subway_lines(bbox: dict) -> list[dict]:
     drawn in full -- not clipped to the box, matching the prototype's own
     approach of letting the map frame do the clipping. Each line carries a
     real `route` label (e.g. "B/D/F/M", "PATH") via gtfs.shape_routes() --
-    VISUAL.md's map wants subway lines "labelled by route", not just drawn."""
+    VISUAL.md's map wants subway lines "labelled by route", not just drawn.
+
+    `shape_id` (WAVE 4, 2026-08-11) is the join key the route-line preview
+    needs: GET /api/route returns the real shape_id(s) a computed commute
+    actually rode, and the frontend already has every shape's full
+    coordinates loaded right here (the whole subway layer is fetched once
+    per address) -- filtering this existing array client-side by shape_id
+    means the highlighted-route feature needs no second geometry endpoint.
+    """
     lines: list[dict] = []
     for feed in gtfs.FEEDS:
         routes = gtfs.shape_routes(feed)
@@ -176,6 +184,7 @@ def _subway_lines(bbox: dict) -> list[dict]:
                     {
                         "coords": [[lat, lng] for lat, lng in row.coords],
                         "route": routes.get(row.shape_id, ""),
+                        "shape_id": row.shape_id,
                     }
                 )
     return lines

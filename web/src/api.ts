@@ -9,6 +9,7 @@ import type {
   MapGeometry,
   Profile,
   Reach,
+  RouteResult,
 } from "./types";
 
 // Empty string -> relative "/api/..." paths, which the Vite dev proxy (vite.config.ts)
@@ -133,6 +134,28 @@ export function getCommute(cell: string, destination: string): Promise<CommuteRe
   return request<CommuteResult>(
     `/api/commute?cell=${encodeURIComponent(cell)}&destination=${encodeURIComponent(destination)}`,
   );
+}
+
+// WAVE 4 (2026-08-11, SPEC-layout-v3.md Wave 4): the real station-by-station
+// route + GTFS shape_id(s) a computed commute actually rode -- either one of
+// the 4 baked anchors (anchorKey) or a custom destination already resolved
+// to a point (destLat/destLng, e.g. from a getCommute()/getAutocomplete()
+// result -- never re-geocodes a raw string, unlike getCommute()). Computed
+// live on demand (bearings/api.py's get_route() docstring): only called when
+// the route-lines toggle is on AND a bar is hovered/selected, never on every
+// render, so this never runs on the hot cell-click path.
+export function getRoute(
+  cell: string,
+  destination: { anchorKey: string } | { destLat: number; destLng: number },
+): Promise<RouteResult> {
+  const params = new URLSearchParams({ cell });
+  if ("anchorKey" in destination) {
+    params.set("anchor", destination.anchorKey);
+  } else {
+    params.set("dest_lat", String(destination.destLat));
+    params.set("dest_lng", String(destination.destLng));
+  }
+  return request<RouteResult>(`/api/route?${params.toString()}`);
 }
 
 // The 5/10/15-minute reach rings for a searched address (SPEC-lens-report.md

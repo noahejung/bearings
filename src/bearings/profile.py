@@ -305,6 +305,28 @@ def _nearby_stations(lat: float, lng: float) -> list[dict]:
     return out[:NEAREST_STATION_COUNT]
 
 
+def _best_candidate(
+    candidates: list[tuple[str, int]], by_stop: dict[str, int]
+) -> tuple[str, int, int, int] | None:
+    """(stop_id, walk_minutes, ride_seconds, total_minutes) for the single
+    winning candidate station -- the one scan `_anchor_result()` (which
+    only needs the total) and Wave 4's `route_for()` (which also needs to
+    know WHICH station won, to reconstruct a real path from it) both run.
+    Factored out so they share one scan rather than two independently
+    re-picking a minimum that could in principle disagree. None if no
+    candidate has a real ride time (mirrors `_anchor_result()`'s own
+    NO_RAIL_CONNECTION case)."""
+    best: tuple[str, int, int, int] | None = None
+    for stop_id, walk_minutes in candidates:
+        ride_s = by_stop.get(stop_id)
+        if ride_s is None:
+            continue
+        total = walk_minutes + int(round(ride_s / 60))
+        if best is None or total < best[3]:
+            best = (stop_id, walk_minutes, ride_s, total)
+    return best
+
+
 def _anchor_result(
     candidates: list[tuple[str, int]], by_stop: dict[str, int]
 ) -> tuple[int, str | None]:
@@ -337,17 +359,9 @@ def _anchor_result(
     if not candidates:
         return -1, NO_STATION_IN_RANGE
 
-    best: int | None = None
-    for stop_id, walk_minutes in candidates:
-        ride_s = by_stop.get(stop_id)
-        if ride_s is None:
-            continue
-        total = walk_minutes + int(round(ride_s / 60))
-        if best is None or total < best:
-            best = total
-
+    best = _best_candidate(candidates, by_stop)
     if best is not None:
-        return best, None
+        return best[3], None
 
     _disconnected_stop_ids()  # validates every candidate above, or raises
     return -1, NO_RAIL_CONNECTION
@@ -436,6 +450,180 @@ def commute_to_point(cell: str, dest_lat: float, dest_lng: float) -> tuple[int, 
         return -1, NO_STATION_IN_RANGE
 
     return _anchor_result(candidates, by_stop)
+
+
+# ---------------------------------------------------------------------------
+# WAVE 4 (SPEC-layout-v3.md Wave 4): route-line preview + nav directions.
+# Computed live, on demand, for BOTH the 4 baked ANCHORS and a custom
+# destination -- unlike GET /api/cell/{h3}'s baked to_anchors minutes, no
+# path/step data is baked (would bloat the citywide bake for a feature only
+# requested when a user actually asks to see it -- toggling route lines on,
+# or hovering/selecting a bar). Reuses `_best_candidate()`'s own scan (the
+# SAME winning station `_anchor_result()`/`commute_to_point()` already
+# picked) so the minutes this returns can never disagree with the minutes
+# already shown on the bar -- both are the same one scan, not two.
+# ---------------------------------------------------------------------------
+
+
+@lru_cache(maxsize=1)
+def _station_index() -> dict[str, dict]:
+    st = _stations()
+    return {
+        row.stop_id: {"name": row.name, "lat": row.lat, "lng": row.lng}
+        for row in st.itertuples()
+    }
+
+
+def _station_name(stop_id: str) -> str:
+    return _station_index().get(stop_id, {}).get("name", stop_id)
+
+
+@lru_cache(maxsize=None)
+def _anchor_stop_id(anchor: str) -> str:
+    """The same station `times_from_anchors()` snapped this anchor to at
+    bake time (`AnchorSnapTooFar`'s own guard already proved it's within
+    MAX_ANCHOR_SNAP_M) -- times_from_anchors() never exposes the stop_id
+    itself, only the resulting ride-time dict, so this recomputes the
+    identical snap (cheap: a linear scan over ~500 graph nodes, not a
+    Dijkstra run) rather than changing that function's return shape."""
+    lat, lng = config.ANCHORS[anchor]
+    return transit.nearest_stop(lat, lng)
+
+
+def _steps_from_hops(hops: list[dict]) -> list[dict]:
+    """transit.path_between()'s flat hop list -> the step sequence a rider
+    actually experiences: consecutive "ride" hops that resolve to the SAME
+    real GTFS route collapse into one "take this route" step (a rider does
+    not re-board between two stops on the same train); a "transfer" hop, or
+    a route change with no formal transfer edge between it (rare -- see
+    gtfs.route_for_hop()'s own docstring on why two adjacent "ride" hops
+    could in principle resolve to different routes), becomes its own step.
+    Every route/shape_id/headsign named here comes from a real GTFS trip
+    that actually makes that exact adjacent hop (gtfs.route_for_hop()) --
+    never fabricated, never interpolated."""
+    steps: list[dict] = []
+    i, n = 0, len(hops)
+    while i < n:
+        hop = hops[i]
+        if hop["kind"] == "transfer":
+            steps.append(
+                {"type": "transfer", "at": _station_name(hop["to"]), "minutes": _minutes_from_seconds(hop["seconds"])}
+            )
+            i += 1
+            continue
+
+        j = i
+        seconds = 0.0
+        shape_ids: set[str] = set()
+        route: str | None = None
+        headsign: str | None = None
+        while j < n and hops[j]["kind"] == "ride":
+            hj = hops[j]
+            feed = gtfs.feed_for_stop(hj["from"])
+            info = gtfs.route_for_hop(feed, hj["from"], hj["to"])
+            hj_route = info["route"] if info else None
+            if j == i:
+                route = hj_route
+                headsign = info["headsign"] if info else None
+            elif hj_route != route:
+                break
+            seconds += hj["seconds"]
+            if info and info["shape_id"]:
+                shape_ids.add(info["shape_id"])
+            j += 1
+
+        steps.append(
+            {
+                "type": "ride",
+                "route": route,
+                "headsign": headsign,
+                "from": _station_name(hops[i]["from"]),
+                "to": _station_name(hops[j - 1]["to"]),
+                "shape_ids": sorted(shape_ids),
+                "minutes": _minutes_from_seconds(seconds),
+            }
+        )
+        i = j
+    return steps
+
+
+def _minutes_from_seconds(seconds: float) -> int:
+    return int(round(seconds / 60))
+
+
+def route_for(
+    cell: str,
+    anchor: str | None = None,
+    dest_lat: float | None = None,
+    dest_lng: float | None = None,
+) -> dict:
+    """The real station-by-station steps + the GTFS shape_id(s) actually
+    ridden, for either one of the 4 baked ANCHORS (`anchor=`) or a
+    live-computed custom destination (`dest_lat=`/`dest_lng=`).
+
+    Reachability (and `minutes`) is decided by the exact same
+    `_best_candidate()` scan `_anchor_result()`/`commute_to_point()` use --
+    this can never report "reachable" when the bar next to it says
+    NO_STATION_IN_RANGE/NO_RAIL_CONNECTION, or vice versa, because both
+    read the same one scan. `steps` is None whenever `reachable` is False:
+    an honest "no route to describe" (matching the existing two-reason
+    split), never a fabricated one.
+    """
+    lat, lng = cells.centroid(cell)
+    nearby = _nearby_stations(lat, lng)
+    candidates = [(s["stop_id"], s["walk_minutes"]) for s in nearby]
+
+    if anchor is not None:
+        by_stop = _anchor_times()[anchor]
+        dest_stop_id = _anchor_stop_id(anchor)
+        dest_point = config.ANCHORS[anchor]
+    else:
+        by_stop = transit.destination_times(dest_lat, dest_lng, STATION_SEARCH_M)
+        dest_point = (dest_lat, dest_lng)
+        if by_stop is None:
+            return {"reachable": False, "reason": NO_STATION_IN_RANGE, "minutes": -1, "steps": None, "shape_ids": []}
+        dest_stop_id = transit.nearest_stop(dest_lat, dest_lng)
+
+    if not candidates:
+        return {"reachable": False, "reason": NO_STATION_IN_RANGE, "minutes": -1, "steps": None, "shape_ids": []}
+
+    best = _best_candidate(candidates, by_stop)
+    if best is None:
+        _disconnected_stop_ids()  # validates, or raises -- same guard _anchor_result() runs
+        return {"reachable": False, "reason": NO_RAIL_CONNECTION, "minutes": -1, "steps": None, "shape_ids": []}
+
+    origin_stop_id, walk_minutes, _ride_s, total_minutes = best
+    hops = transit.path_between(origin_stop_id, dest_stop_id)
+    if hops is None:
+        # _best_candidate() found a real ride time, so this "should" never
+        # happen -- but a route request is a caveat feature layered on top
+        # of the existing minutes, never a reason to fabricate a path if
+        # the two disagree. Surface it as unreachable, honestly, not a 500.
+        return {"reachable": False, "reason": NO_RAIL_CONNECTION, "minutes": -1, "steps": None, "shape_ids": []}
+
+    steps = [{"type": "walk_to_station", "to": _station_name(origin_stop_id), "minutes": walk_minutes}]
+    steps += _steps_from_hops(hops)
+
+    last_stop_id = hops[-1]["to"] if hops else origin_stop_id
+    last_station = _station_index().get(last_stop_id, {})
+    last_ll = (last_station.get("lat", dest_point[0]), last_station.get("lng", dest_point[1]))
+    walk_out_m = _haversine_m(last_ll, dest_point)
+    steps.append(
+        {
+            "type": "walk_to_destination",
+            "minutes": _walk_minutes(walk_out_m),
+            "estimated": True,
+        }
+    )
+
+    shape_ids = sorted({sid for step in steps if step["type"] == "ride" for sid in step["shape_ids"]})
+    return {
+        "reachable": True,
+        "reason": None,
+        "minutes": total_minutes,
+        "steps": steps,
+        "shape_ids": shape_ids,
+    }
 
 
 def _amenities(cell: str) -> dict[str, int]:

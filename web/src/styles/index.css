@@ -917,6 +917,46 @@ button.search__pin:disabled {
   background: rgba(17, 17, 17, 0.06);
 }
 
+/* ---------- route-lines toggle + nav directions (WAVE 4, 2026-08-11,
+   SPEC-layout-v3.md Wave 4) ---------- */
+.anchors__routetoggle {
+  margin-bottom: 0.6rem;
+}
+
+/* Reuses .directions__caveat/.directions__status/.directions__steps'
+   sibling .field__caveat/.field__provenance register (mono, steel, small)
+   rather than inventing a new text treatment for one small feature --
+   VISUAL.md's "one palette, one era" rule applies to new UI same as old. */
+.directions {
+  margin-top: 0.7rem;
+  padding-top: 0.6rem;
+  border-top: 1px dashed var(--steel);
+}
+
+.directions__status {
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  color: var(--steel);
+}
+
+.directions__steps {
+  list-style: decimal;
+  padding-left: 1.1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  font-size: var(--text-sm);
+  line-height: 1.4;
+}
+
+.directions__caveat {
+  margin-top: 0.6rem;
+  font-family: var(--font-mono);
+  font-size: var(--text-3xs);
+  color: var(--steel);
+  line-height: 1.5;
+}
+
 /* ---------- amenities field ---------- */
 .amenities {
   display: grid;

@@ -166,6 +166,76 @@ def test_commute_to_point_is_session_cached_a_repeat_call_is_a_cache_hit(empire_
     assert hits_after_second == hits_after_first + 1
 
 
+# ---------------------------------------------------------------------------
+# WAVE 4 (SPEC-layout-v3.md Wave 4): route_for() -- route-line preview +
+# nav-directions steps, for both a baked ANCHOR and a live custom
+# destination. Reachability/minutes must always agree with commute_to_point()
+# /the baked to_anchors value, since both read the same _best_candidate() scan.
+# ---------------------------------------------------------------------------
+
+
+def test_route_for_anchor_minutes_matches_the_baked_value(empire_state):
+    cell = cells.cell_for(empire_state["location"]["lat"], empire_state["location"]["lng"])
+    baked = cellprofile.profile_for(cell)
+    assert baked is not None
+    for name in config.ANCHORS:
+        result = profile.route_for(cell, anchor=name)
+        assert result["reachable"] is (baked["transit"]["unreachable_reason"][name] is None)
+        assert result["minutes"] == baked["transit"]["to_anchors"][name]
+
+
+def test_route_for_anchor_has_real_walk_and_ride_steps(empire_state):
+    cell = cells.cell_for(empire_state["location"]["lat"], empire_state["location"]["lng"])
+    result = profile.route_for(cell, anchor="midtown")
+    assert result["reachable"] is True
+    steps = result["steps"]
+    assert steps[0]["type"] == "walk_to_station" and steps[0]["to"]
+    assert steps[-1]["type"] == "walk_to_destination"
+    ride_steps = [s for s in steps if s["type"] == "ride"]
+    assert ride_steps, "a real Empire State -> Midtown commute has at least one ride step"
+    for step in ride_steps:
+        assert step["route"]
+        assert step["from"] and step["to"]
+        assert step["shape_ids"]
+    # Every real shape_id named in a step must also be in the flattened list.
+    all_shapes = {sid for s in ride_steps for sid in s["shape_ids"]}
+    assert set(result["shape_ids"]) == all_shapes
+
+
+def test_route_for_custom_destination_reachable(empire_state):
+    cell = cells.cell_for(empire_state["location"]["lat"], empire_state["location"]["lng"])
+    dest = profile.geocode.geocode("60 West 36 St, Manhattan")
+    result = profile.route_for(cell, dest_lat=dest.lat, dest_lng=dest.lng)
+    assert result["reachable"] is True
+    assert result["steps"]
+
+
+def test_route_for_no_rail_connection_is_honest_not_fabricated(empire_state):
+    cell = cells.cell_for(empire_state["location"]["lat"], empire_state["location"]["lng"])
+    dest = profile.geocode.geocode("43 Foster Rd, Staten Island")
+    result = profile.route_for(cell, dest_lat=dest.lat, dest_lng=dest.lng)
+    assert result == {
+        "reachable": False,
+        "reason": "no_rail_connection",
+        "minutes": -1,
+        "steps": None,
+        "shape_ids": [],
+    }
+
+
+def test_route_for_no_station_in_range_is_honest_not_fabricated(empire_state):
+    cell = cells.cell_for(empire_state["location"]["lat"], empire_state["location"]["lng"])
+    dest = profile.geocode.geocode("131 Huguenot Ave, Staten Island")
+    result = profile.route_for(cell, dest_lat=dest.lat, dest_lng=dest.lng)
+    assert result == {
+        "reachable": False,
+        "reason": "no_station_in_range",
+        "minutes": -1,
+        "steps": None,
+        "shape_ids": [],
+    }
+
+
 def test_midtown_is_dense_with_amenities(empire_state):
     a = empire_state["amenities"]
     assert a["restaurant"] > 10

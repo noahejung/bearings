@@ -1,11 +1,11 @@
 import { useEffect, useId, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
-import { ApiError, getCommute } from "../api";
+import { ApiError, getCommute, getRoute } from "../api";
 import { ANCHOR_COORDS } from "../lib/anchors";
 import { crimeRelativeLabel, formatPercentile, ordinalSuffix } from "../lib/crime";
 import { motionDelay, MOTION_FAST_MS } from "../lib/motion";
 import { unreachableReasonSentence, unreachableReasonShortLabel } from "../lib/transit";
 import { useAutocomplete } from "../lib/useAutocomplete";
-import type { AutocompleteResult, CellProfile, UnreachableReason } from "../types";
+import type { AutocompleteResult, CellProfile, RouteResult, RouteStep, UnreachableReason } from "../types";
 import { Settle } from "./Settle";
 import { SourceTag } from "./SourceTag";
 import { Stamp } from "./Stamp";
@@ -108,6 +108,25 @@ interface CustomDestination {
 
 function newDestinationId(): string {
   return `dest-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
+// WAVE 4 (2026-08-11, SPEC-layout-v3.md Wave 4): one line of plain-language
+// nav-directions copy per real RouteStep -- every number/name here comes
+// straight from GET /api/route (a real Dijkstra path + real GTFS trips),
+// never fabricated. A ride's "toward" falls back to its own destination
+// station name when GTFS carries no trip_headsign for that trip (a real
+// gap, not hidden -- still names a real place either way).
+function stepLabel(step: RouteStep): string {
+  switch (step.type) {
+    case "walk_to_station":
+      return `Walk to ${step.to} (~${step.minutes} min)`;
+    case "ride":
+      return `Take the ${step.route ?? "train"} toward ${step.headsign ?? step.to} (${step.minutes} min)`;
+    case "transfer":
+      return `Transfer at ${step.at} (~${step.minutes} min)`;
+    case "walk_to_destination":
+      return `Walk toward the destination (~${step.minutes} min)`;
+  }
 }
 
 // LAYOUT-V3 WAVE 3 item: the add-destination field -- reuses
@@ -220,9 +239,19 @@ function AddDestinationField({ onAdd }: { onAdd: (query: string) => void }) {
 export function GettingAroundField({
   cell,
   onDestinationHighlight,
+  onRouteHighlight,
 }: {
   cell: CellProfile;
   onDestinationHighlight?: (point: { lat: number; lng: number } | null) => void;
+  // WAVE 4 (2026-08-11, SPEC-layout-v3.md Wave 4): the real GTFS shape_id(s)
+  // for the currently active (hovered/selected) destination's actual ridden
+  // line(s) -- MapView.tsx draws these instead of the straight-line zone
+  // preview when the route-lines toggle is on and a real route exists.
+  // `null` whenever there's nothing to highlight (toggle off, no active
+  // destination, or the active one has no real transit component) --
+  // MapView falls back to the existing zone preview in every one of those
+  // cases, never a blank map.
+  onRouteHighlight?: (shapeIds: string[] | null) => void;
 }) {
   const anchorEntries = Object.entries(cell.transit.to_anchors) as [AnchorKey, number][];
 
@@ -239,6 +268,20 @@ export function GettingAroundField({
   // cell (see the recompute effect below).
   const [hoveredKey, setHoveredKey] = useState<string | null>(null);
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
+
+  // WAVE 4 (2026-08-11, SPEC-layout-v3.md Wave 4): zone-only vs route-lines,
+  // session-scoped like hiddenAnchors above -- a display preference about
+  // how this user wants to see previews across every block, not a fact
+  // about one specific block. Defaults off: the straight-line zone preview
+  // is the existing, already-shipped behavior; route lines are the new,
+  // opt-in view.
+  const [routeLinesOn, setRouteLinesOn] = useState(false);
+  // (cell.h3, activeKey) -> the real GET /api/route result, "loading", or
+  // "error". Fetched lazily, once per pair, the first time that pair
+  // becomes active (hovered or selected) -- never on every render, and
+  // never for a row nobody has looked at yet.
+  const [routeCache, setRouteCache] = useState<Record<string, RouteResult | "loading" | "error">>({});
+  const requestedRouteKeysRef = useRef<Set<string>>(new Set());
 
   // Motion wave item 1 ("deleted rows exit fast, ~150ms") -- a row marked
   // here is STILL a real member of `visibleAnchorEntries`/`customDestinations`
@@ -452,6 +495,111 @@ export function GettingAroundField({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // WAVE 4 (2026-08-11, SPEC-layout-v3.md Wave 4): lazily fetch GET
+  // /api/route the first time a (cell, destination) pair genuinely needs
+  // one -- computed live, on demand, per that endpoint's own docstring,
+  // never on a bare hover with the route-lines toggle off (which would
+  // fire a live Dijkstra-adjacent request on every mouse pass for no
+  // visible benefit). `fetchKey` is the active (hover-or-select) key while
+  // the toggle is ON -- so the map line can preview whatever's currently
+  // hovered -- but narrows to the SELECTED key alone while the toggle is
+  // OFF, since the only reason to fetch at all in that state is the
+  // nav-directions panel, which only ever shows a selected (clicked) row.
+  // Powers BOTH the map highlight and the directions panel from this one
+  // shared fetch. `customDestinationsRef` (not `customDestinations` in the
+  // dep array) so this never re-fires from a destination edit alone -- same
+  // stale-closure-avoidance pattern the cell-swap recompute effect above
+  // already established.
+  const fetchKey = routeLinesOn ? activeKey : selectedKey;
+  useEffect(() => {
+    if (!fetchKey) return;
+    const cacheKey = `${cell.h3}:${fetchKey}`;
+    if (requestedRouteKeysRef.current.has(cacheKey)) return;
+
+    const anchorPoint = ANCHOR_COORDS[fetchKey as AnchorKey];
+    let req: Promise<RouteResult> | null = null;
+    if (anchorPoint) {
+      req = getRoute(cell.h3, { anchorKey: fetchKey });
+    } else {
+      // A brand-new custom destination's own commute lookup (GET
+      // /api/commute, the effect above) may still be resolving its real
+      // lat/lng at the exact moment this destination first becomes active
+      // -- `custom.lat`/`lng` are null until that resolves. `customDestinations`
+      // (not just `customDestinationsRef`) is a REAL dependency below
+      // specifically so this effect re-evaluates once that resolution
+      // lands, even when `fetchKey` itself never changes value across that
+      // transition (hovering/selecting the same still-resolving row) --
+      // without it, a destination hovered/selected before its own commute
+      // finished would never get a second chance to fetch its route.
+      const custom = customDestinationsRef.current.find((d) => d.id === fetchKey);
+      if (custom && custom.lat !== null && custom.lng !== null) {
+        req = getRoute(cell.h3, { destLat: custom.lat, destLng: custom.lng });
+      }
+    }
+    if (!req) return;
+
+    // `requestedRouteKeysRef` (not a `cancelled`-flag cleanup like the
+    // custom-destination recompute effect above) is this effect's own
+    // dedup guard -- deliberately NOT paired with a cancel-on-cleanup flag.
+    // React StrictMode's dev-only double-invoke (mount -> cleanup -> mount)
+    // runs this effect twice for the identical `fetchKey`; a `cancelled`
+    // flag on the FIRST closure would be set true by StrictMode's own
+    // cleanup pass before that closure's real, already-in-flight request
+    // resolves -- and since `requestedRouteKeysRef` (a ref, not re-created
+    // by StrictMode's fake remount) already marked the key requested, the
+    // SECOND closure skips dispatching a new one and never registers its
+    // own `.then()` either. Net effect: a real request fires, a real 200
+    // comes back, and no surviving closure is left to write it into
+    // `routeCache` -- the panel is stuck on "Finding the real route…"
+    // forever (found live via Playwright screenshot verification,
+    // 2026-08-11). Writing the result unconditionally is safe here: this
+    // ref already guarantees at most one real request per cacheKey, so
+    // there is no genuinely stale write to guard against, only this
+    // StrictMode artifact to avoid re-introducing.
+    requestedRouteKeysRef.current.add(cacheKey);
+    setRouteCache((prev) => ({ ...prev, [cacheKey]: "loading" }));
+    req
+      .then((result) => {
+        setRouteCache((prev) => ({ ...prev, [cacheKey]: result }));
+      })
+      .catch(() => {
+        setRouteCache((prev) => ({ ...prev, [cacheKey]: "error" }));
+      });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fetchKey, cell.h3, customDestinations]);
+
+  const activeRoute = activeKey ? routeCache[`${cell.h3}:${activeKey}`] : undefined;
+  const selectedRoute = selectedKey ? routeCache[`${cell.h3}:${selectedKey}`] : undefined;
+
+  // WAVE 4: forwards the real shape_id(s) up to MapView ONLY when the
+  // toggle is on and the active destination's route genuinely used a
+  // transit ride -- every other case (toggle off, nothing active, still
+  // loading, or a real "no route" result) reports null so MapView's
+  // existing zone preview (driven by onDestinationHighlight above,
+  // unchanged) is what shows. Never draws a route line from a walk-only or
+  // unreachable destination -- SPEC-layout-v3.md Wave 4's own binding rule.
+  useEffect(() => {
+    if (!onRouteHighlight) return;
+    if (
+      routeLinesOn &&
+      activeRoute &&
+      typeof activeRoute === "object" &&
+      activeRoute.reachable &&
+      activeRoute.shape_ids.length > 0
+    ) {
+      onRouteHighlight(activeRoute.shape_ids);
+    } else {
+      onRouteHighlight(null);
+    }
+  }, [routeLinesOn, activeRoute, onRouteHighlight]);
+
+  useEffect(() => {
+    return () => {
+      onRouteHighlight?.(null);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   function rowHandlers(key: string) {
     return {
       onMouseEnter: () => setHoveredKey(key),
@@ -483,6 +631,21 @@ export function GettingAroundField({
           before, now on the article itself since there's no visible
           heading left for `aria-labelledby` to point at. */}
       <article className="tile tile--anchors" aria-label="Getting around">
+        {/* WAVE 4 (2026-08-11, SPEC-layout-v3.md Wave 4): the route-lines
+            toggle -- reuses .mapfield__toggle (this app's one existing
+            aria-pressed toggle-button idiom, freed up when Wave 1d cut the
+            control row it originally styled) rather than inventing a new
+            control shape. Off by default: the straight-line zone preview
+            (already shipped) stays what a user sees until they explicitly
+            ask for the real line. */}
+        <button
+          type="button"
+          className="mapfield__toggle anchors__routetoggle"
+          aria-pressed={routeLinesOn}
+          onClick={() => setRouteLinesOn((v) => !v)}
+        >
+          {routeLinesOn ? "Route lines: on" : "Route lines: off"}
+        </button>
         <div className="anchors">
           {visibleAnchorEntries.map(([key, minutes]) => {
             const reachable = minutes >= 0;
@@ -571,6 +734,36 @@ export function GettingAroundField({
             );
           })}
         </div>
+
+        {/* WAVE 4 (2026-08-11, SPEC-layout-v3.md Wave 4): nav directions --
+            the real step sequence GET /api/route computed for whichever
+            destination is CLICKED (selectedKey, not merely hovered -- a
+            deliberate action, not something that flashes on every mouse
+            pass). One shared region below the row list, same "shared
+            detail region, not per-row" idiom item 5's tile disclosures
+            already established, for the identical reason: it never
+            distorts any row's own geometry. */}
+        {selectedKey && (
+          <div className="directions">
+            {selectedRoute === "loading" || selectedRoute === undefined ? (
+              <p className="directions__status">Finding the real route…</p>
+            ) : selectedRoute === "error" ? (
+              <p className="directions__status">Could not compute directions for this destination.</p>
+            ) : !selectedRoute.reachable ? (
+              <p className="directions__status">{unreachableReasonSentence(selectedRoute.reason as UnreachableReason)}</p>
+            ) : (
+              <>
+                <ol className="directions__steps">
+                  {selectedRoute.steps?.map((step, i) => <li key={i}>{stepLabel(step)}</li>)}
+                </ol>
+                <p className="directions__caveat">
+                  Walk legs are straight-line estimates, not turn-by-turn street directions — this
+                  codebase has no pedestrian street graph.
+                </p>
+              </>
+            )}
+          </div>
+        )}
 
         {customDestinations.some((d) => d.error) && (
           <p className="anchor__error" role="alert">

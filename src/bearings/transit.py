@@ -227,3 +227,51 @@ def destination_times(lat: float, lng: float, max_snap_m: float) -> dict[str, in
         return None
     lengths = nx.single_source_dijkstra_path_length(_reverse_graph(), stop_id, weight="weight")
     return {stop: int(round(sec)) for stop, sec in lengths.items()}
+
+
+# ---------------------------------------------------------------------------
+# WAVE 4 (SPEC-layout-v3.md Wave 4): route-line preview + nav directions.
+# times_from_anchors()/destination_times() are both BULK single-source
+# sweeps (every station -> one anchor/destination) that deliberately
+# discard which specific path won for any one rider -- correct for baking
+# every station's minutes at once, useless for "what stations did THIS
+# rider's real route actually pass through." The two functions below are
+# the on-demand, single-pair complement: given the one winning origin
+# station profile.py's own _anchor_result()/_best_candidate() scan already
+# picked, reconstruct that rider's real path.
+# ---------------------------------------------------------------------------
+
+
+def nearest_stop(lat: float, lng: float) -> str:
+    """Public wrapper around `_nearest_station(graph(), ...)` -- the same
+    snap times_from_anchors()/destination_times() each already perform
+    internally, exposed here because Wave 4's route reconstruction needs
+    the actual stop_id (to call `path_between()` with), not just the
+    ride-time dict those two functions return."""
+    return _nearest_station(graph(), lat, lng)
+
+
+def path_between(origin_stop_id: str, dest_stop_id: str) -> list[dict] | None:
+    """The real, ordered station-by-station path from one stop to another --
+    a single forward `nx.dijkstra_path` call (one specific pair), not the
+    bulk single-source sweep the bulk functions above use. Cheap enough to
+    run per on-demand request: `graph()` is already memoised in-process, so
+    this pays only the one shortest-path search, not a fresh graph build.
+
+    Returns an ordered list of hops,
+    `[{"from": stop_id, "to": stop_id, "kind": "ride"|"transfer", "seconds": float}, ...]`
+    (empty if origin_stop_id == dest_stop_id -- zero real hops, an honest
+    "you're already there" case, not an error), or None if no path exists
+    at all (the two stops sit in different, disconnected components -- e.g.
+    either end is Staten Island Railway)."""
+    g = graph()
+    if origin_stop_id not in g or dest_stop_id not in g:
+        return None
+    try:
+        nodes = nx.dijkstra_path(g, origin_stop_id, dest_stop_id, weight="weight")
+    except nx.NetworkXNoPath:
+        return None
+    return [
+        {"from": a, "to": b, "kind": g[a][b]["kind"], "seconds": g[a][b]["weight"]}
+        for a, b in zip(nodes, nodes[1:])
+    ]
