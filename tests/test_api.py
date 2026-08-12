@@ -668,6 +668,33 @@ def test_geocode_autocomplete_empty_list_for_short_query_not_an_error(client):
     assert resp.json() == {"results": []}
 
 
+# WAVE 6f item 7 (2026-08-11): GET /api/geocode/reverse -- see config.py's
+# GEOSEARCH_REVERSE_URL comment for the live verification that this
+# endpoint's own underlying route is really `/v2/reverse` (the dispatch's
+# own named `/v1/reverse` is confirmed 410 Gone on this host).
+def test_geocode_reverse_resolves_a_real_point(client):
+    resp = client.get("/api/geocode/reverse", params={"lat": 40.748441, "lng": -73.985656})
+    assert resp.status_code == 200
+    body = resp.json()
+    assert set(body) == {"label", "lat", "lng", "approximate"}
+    assert body["approximate"] is True
+    assert body["label"] and "5" in body["label"]
+
+
+def test_geocode_reverse_never_errors_for_a_point_outside_nyc(client):
+    # A reverse hint always has SOME honest answer -- see get_geocode_
+    # reverse()'s own docstring for why this is never a 4xx/5xx the way
+    # /api/geocode (a real search) is for "no match."
+    resp = client.get("/api/geocode/reverse", params={"lat": 38.8977, "lng": -77.0365})
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["approximate"] is True
+    # Outside NYC entirely -- even the citywide-neighbourhood fallback has
+    # nothing real to offer, so label is honestly null, never a fabricated
+    # NYC-sounding guess.
+    assert body["label"] is None
+
+
 def test_cells_returns_every_real_cell_as_a_flat_citywide_index(client):
     resp = client.get("/api/cells")
     assert resp.status_code == 200

@@ -307,6 +307,20 @@ export interface AutocompleteResult {
   lng: number;
 }
 
+// Mirrors GET /api/geocode/reverse exactly (bearings/api.py's
+// get_geocode_reverse()) -- WAVE 6f item 7. `label` is `null` only in the
+// theoretical case both geocode.reverse_geocode() AND citywide.
+// nearest_neighborhood() come back empty (see that endpoint's own
+// docstring for why the fallback alone should never actually hit this).
+// `approximate` is always `true` -- there is no code path where this
+// endpoint hands back an authoritative geocode.
+export interface ReverseGeocodeResult {
+  label: string | null;
+  lat: number;
+  lng: number;
+  approximate: true;
+}
+
 // Mirrors GET /api/cells exactly (bearings/cellprofile.py's cells_index())
 // -- every real H3 res-9 cell citywide, flattened to just what the map
 // grid needs: an id, a centroid (so a click/hover can report a real

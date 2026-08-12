@@ -1,5 +1,6 @@
 import { useId, type FormEvent } from "react";
 import { useAutocomplete } from "../lib/useAutocomplete";
+import type { SavedPlace } from "../lib/preferences";
 import type { AutocompleteResult } from "../types";
 
 // LAYOUT-V3 WAVE 1d items 5 + 11 (2026-08-03, SPEC-layout-v3.md §8): the
@@ -22,6 +23,16 @@ import type { AutocompleteResult } from "../types";
 // typeahead. Pure extraction -- every test in AddressSearch.test.tsx is
 // unchanged and still green.
 //
+// WAVE 6f item 8 (2026-08-11, Noah: "instead of pin can we just click
+// save"): the button named "pin"/"pin it" throughout the two paragraphs
+// above is now labelled + named "save" everywhere in this file (onSave,
+// handleSaveClick, .search__save) -- the underlying feature (add a badge
+// to the map without loading it as the main record) is unchanged, only the
+// word. It's also no longer session-only: saved places persist via
+// localStorage now (App.tsx's own effect, lib/preferences.ts) and surface
+// as a minimal quick-pick list right in this bar's own dropdown when the
+// field is empty (see showSaved's own comment below).
+//
 // LAYOUT-V3 WAVE 6 (2026-08-11, SPEC-layout-v3.md §8): this bar is now the
 // app's one persistent shell anchor (App.tsx mounts it unconditionally,
 // above the map/disclosure split) -- the former `compact` prop and its
@@ -40,35 +51,80 @@ interface AddressSearchProps {
   value: string;
   onChange: (value: string) => void;
   onSubmit: (address: string) => void;
-  /** Pins the given address (adds a badge on the map) rather than loading it as the main record. */
-  onPin: (address: string) => void;
+  /** Saves the given address (adds a badge on the map) rather than loading
+   * it as the main record. Renamed from `onPin` in WAVE 6f item 8
+   * (2026-08-11, Noah: "instead of pin can we just click save"). */
+  onSave: (address: string) => void;
   /** WAVE 6b (2026-08-11, SPEC-layout-v3.md §8): empties the field AND
    * whatever selection/report it currently reflects -- see App.tsx's own
    * `clearSelection` for what "coherently" resets alongside the text. */
   onClear: () => void;
-  pinLoading: boolean;
-  pinError: string | null;
+  saveLoading: boolean;
+  saveError: string | null;
   loading: boolean;
   error: string | null;
+  /** WAVE 6f item 7 (2026-08-11, Noah: "a bare click cell shows nothing.
+   * we only see 350 5th ave manhattan every time"). A real reverse-geocode
+   * hint for whichever cell was just bare-clicked (App.tsx's own
+   * approxAddress state) -- null the rest of the time (nothing clicked
+   * yet, or a real address is loaded/typed instead). Swaps the field's own
+   * placeholder to name the actual clicked block instead of the old fixed
+   * "350 5TH AVE, MANHATTAN" example, which is exactly the string Noah's
+   * complaint named -- a placeholder that happens to look like a plausible
+   * real address reads as a stuck value on an honestly-empty field. */
+  approxAddress: string | null;
+  /** WAVE 6f item 8 (2026-08-11, Noah: "instead of pin can we just click
+   * save"): the persisted saved-places list (App.tsx owns load/save via
+   * lib/preferences.ts) -- surfaced here as a minimal quick-pick list in
+   * this bar's own dropdown when the field is empty, so a saved place is
+   * reachable from the one search entry point instead of only the sidebar
+   * list below the map. */
+  saved: SavedPlace[];
+  /** Removes one saved place -- the dropdown's own minimal unsave
+   * affordance, mirroring PreferenceBar's sidebar list (same underlying
+   * `removeSaved` in App.tsx, just reachable from a second place). */
+  onUnsave: (label: string) => void;
 }
 
 export function AddressSearch({
   value,
   onChange,
   onSubmit,
-  onPin,
+  onSave,
   onClear,
-  pinLoading,
-  pinError,
+  saveLoading,
+  saveError,
   loading,
   error,
+  approxAddress,
+  saved,
+  onUnsave,
 }: AddressSearchProps) {
   const inputId = useId();
   const errorId = useId();
-  const pinErrorId = useId();
+  const saveErrorId = useId();
+
+  // WAVE 6f item 7's other half: the RESTING placeholder (no cell clicked
+  // yet) used to be a fixed real-looking example ("350 5TH AVE,
+  // MANHATTAN") -- indistinguishable at a glance from a real typed value,
+  // which is the literal shape of Noah's complaint ("we only see 350 5th
+  // ave manhattan every time"). It's now an instruction, not an example --
+  // no house number/street/borough token that could be mistaken for a
+  // resolved address. `approxAddress` overrides it with a real, freshly
+  // reverse-geocoded hint the moment one exists.
+  const placeholder = approxAddress ? `≈ ${approxAddress}` : "SEARCH AN NYC ADDRESS…";
 
   const { suggestions, suggestionsOpen, setSuggestionsOpen, suppress: suppressAutocomplete } =
     useAutocomplete(value);
+
+  // WAVE 6f item 8 (2026-08-11, Noah: "instead of pin can we just click
+  // save"): the dropdown shows saved places INSTEAD of live typeahead
+  // results only when the field is empty (an empty query never has live
+  // suggestions anyway -- useAutocomplete's own >= 3 char gate -- so this
+  // never hides a real GeoSearch candidate). "Minimal": no extra chrome
+  // beyond what the live-suggestions list already has, just a different
+  // source list.
+  const showSaved = value.trim().length === 0 && saved.length > 0;
 
   function handleSubmit(e: FormEvent) {
     e.preventDefault();
@@ -83,9 +139,15 @@ export function AddressSearch({
     onSubmit(s.label);
   }
 
-  function handlePinClick() {
+  function pickSaved(place: SavedPlace) {
+    suppressAutocomplete(place.label.trim());
+    onChange(place.label);
+    onSubmit(place.label);
+  }
+
+  function handleSaveClick() {
     const trimmed = value.trim();
-    if (trimmed) onPin(trimmed);
+    if (trimmed) onSave(trimmed);
     suppressAutocomplete(trimmed);
   }
 
@@ -102,10 +164,10 @@ export function AddressSearch({
             inputMode="text"
             autoComplete="off"
             spellCheck={false}
-            placeholder="350 5TH AVE, MANHATTAN"
+            placeholder={placeholder}
             value={value}
             onChange={(e) => onChange(e.target.value)}
-            onFocus={() => setSuggestionsOpen(suggestions.length > 0)}
+            onFocus={() => setSuggestionsOpen(showSaved || suggestions.length > 0)}
             onBlur={() => {
               // A short delay, not an instant close -- otherwise blur fires
               // before a suggestion's own onClick can register, and a
@@ -144,36 +206,66 @@ export function AddressSearch({
           </button>
           <button
             type="button"
-            className="search__pin"
-            onClick={handlePinClick}
-            disabled={pinLoading || value.trim().length === 0}
-            aria-describedby={pinError ? pinErrorId : undefined}
+            className="search__save"
+            onClick={handleSaveClick}
+            disabled={saveLoading || value.trim().length === 0}
+            aria-describedby={saveError ? saveErrorId : undefined}
           >
-            {pinLoading ? "pinning…" : "pin it"}
+            {saveLoading ? "saving…" : "save"}
           </button>
         </div>
 
         {suggestionsOpen && (
           <ul className="search__suggestions" id={`${inputId}-suggestions`} role="listbox">
-            {suggestions.map((s) => (
-              <li key={`${s.label}-${s.lat}-${s.lng}`}>
-                <button
-                  type="button"
-                  className="search__suggestion"
-                  role="option"
-                  aria-selected={false}
-                  // onMouseDown (not onClick) fires before the input's own
-                  // onBlur, so a suggestion can be picked without the blur
-                  // timeout racing it -- belt-and-suspenders with the delay
-                  // above, not a substitute for it (keyboard/touch users
-                  // still rely on the delay).
-                  onMouseDown={(e) => e.preventDefault()}
-                  onClick={() => pickSuggestion(s)}
-                >
-                  {s.label}
-                </button>
-              </li>
-            ))}
+            {showSaved
+              ? // WAVE 6f item 8: the empty-field state shows saved places
+                // instead of live autocomplete (see showSaved's own comment
+                // above) -- each row picks it the same way a live suggestion
+                // does (fills + submits), plus a minimal unsave "×" so this
+                // list doesn't require a trip to the sidebar just to remove
+                // one.
+                saved.map((place) => (
+                  <li key={place.label} className="search__suggestion--saved">
+                    <button
+                      type="button"
+                      className="search__suggestion"
+                      role="option"
+                      aria-selected={false}
+                      onMouseDown={(e) => e.preventDefault()}
+                      onClick={() => pickSaved(place)}
+                    >
+                      {place.label}
+                    </button>
+                    <button
+                      type="button"
+                      className="search__suggestion-unsave"
+                      aria-label={`Unsave ${place.label}`}
+                      onMouseDown={(e) => e.preventDefault()}
+                      onClick={() => onUnsave(place.label)}
+                    >
+                      ×
+                    </button>
+                  </li>
+                ))
+              : suggestions.map((s) => (
+                  <li key={`${s.label}-${s.lat}-${s.lng}`}>
+                    <button
+                      type="button"
+                      className="search__suggestion"
+                      role="option"
+                      aria-selected={false}
+                      // onMouseDown (not onClick) fires before the input's own
+                      // onBlur, so a suggestion can be picked without the blur
+                      // timeout racing it -- belt-and-suspenders with the delay
+                      // above, not a substitute for it (keyboard/touch users
+                      // still rely on the delay).
+                      onMouseDown={(e) => e.preventDefault()}
+                      onClick={() => pickSuggestion(s)}
+                    >
+                      {s.label}
+                    </button>
+                  </li>
+                ))}
           </ul>
         )}
       </form>
@@ -183,9 +275,9 @@ export function AddressSearch({
           {error}
         </p>
       )}
-      {pinError && (
-        <p className="search__error" role="alert" id={pinErrorId}>
-          {pinError}
+      {saveError && (
+        <p className="search__error" role="alert" id={saveErrorId}>
+          {saveError}
         </p>
       )}
     </section>

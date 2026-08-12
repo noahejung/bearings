@@ -255,6 +255,61 @@ def _geocode_via_geosearch(address: str) -> GeocodeResult:
 # faster than a full geocode() call (~3s median) but NOT sub-100ms -- the
 # frontend (AddressSearch.tsx) debounces and shows a loading state rather
 # than pretending this is instant.
+# ---------------------------------------------------------------------------
+# Reverse geocode (LAYOUT-V3 WAVE 6f item 7, 2026-08-11, Noah: "a bare click
+# cell shows nothing. we only see 350 5th ave manhattan every time"). Root
+# cause of THAT specific complaint was AddressSearch.tsx's own fixed example
+# placeholder ("350 5TH AVE, MANHATTAN") reading as a stuck real value on an
+# honestly-empty field (see that file's own item 7 comment) -- this endpoint
+# is the other half of the fix: instead of leaving a bare cell click's field
+# blank with no clue what block it's even looking at, it resolves the
+# clicked cell's own centre back to a nearest real address, so the frontend
+# can show "≈ <address>" instead of nothing.
+#
+# GEOSEARCH_REVERSE_URL's own comment (config.py) has the live verification
+# that ruled out this wave's own dispatch premise (`/v1/reverse` -- 410 Gone
+# on this host) in favour of the real live route, `/v2/reverse`.
+def reverse_geocode(lat: float, lng: float) -> AutocompleteResult | None:
+    """Nearest real NYC address to (lat, lng), or None if GeoSearch has
+    nothing there (open water, a genuinely upstream failure) -- never an
+    error raised up to the caller. This backs a decorative "≈ <address>"
+    hint, not a fact this project's own fact-check rule governs, so a soft
+    None on any failure (bad response shape, timeout, non-2xx) is the right
+    default -- the caller falls back to an area label, never a blank
+    exception bubbling into a 500 for what is, at most, a missing hint.
+    """
+    try:
+        resp = httpx.get(
+            config.GEOSEARCH_REVERSE_URL,
+            params={"point.lat": lat, "point.lon": lng, "size": 1},
+            timeout=10.0,
+        )
+        resp.raise_for_status()
+        body = resp.json()
+    except (httpx.HTTPError, ValueError) as e:
+        logger.info("reverse_geocode upstream failure at (%s, %s): %s", lat, lng, e)
+        return None
+
+    features = body.get("features", [])
+    if not features:
+        return None
+
+    feat = features[0]
+    try:
+        result_lng, result_lat = feat["geometry"]["coordinates"]
+    except (KeyError, ValueError, TypeError):
+        return None
+
+    if not cells.in_nyc(result_lat, result_lng):
+        return None
+
+    props = feat.get("properties", {})
+    label = props.get("label")
+    if not label:
+        return None
+    return AutocompleteResult(label=label, lat=result_lat, lng=result_lng)
+
+
 def autocomplete(text: str) -> list[AutocompleteResult]:
     """Up to a handful of real NYC address candidates for partial input
     `text` -- empty list for a too-short or empty query (never an error;

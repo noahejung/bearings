@@ -803,9 +803,17 @@ export function GettingAroundField({
           </p>
         )}
 
+        {/* WAVE 6f item 2 (2026-08-11, Noah live-use: this note -> "ONE
+            straight line"). Was the one field__provenance note in this file
+            noticeably longer than its siblings (compare the amenities/
+            crime/noise/trees notes just above/below, each already a single
+            short sentence) -- shortened to match that established length,
+            same fact ("real schedules, not straight-line distance"), the
+            "four key destinations" / "default or added" detail staying on
+            the Methodology page (DisclosurePage.tsx's own transit entry)
+            rather than repeated here. */}
         <p className="field__provenance">
-          Real MTA/PATH schedules · weekday 8am departure · fastest route to every destination in
-          this list, default or added.
+          Real MTA/PATH schedules · weekday 8am departure · fastest route.
           <br />
           <SourceTag source={cell.transit.source} />
         </p>

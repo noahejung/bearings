@@ -122,6 +122,28 @@ def test_crime_percentile_actually_discriminates_real_precincts():
     assert by_precinct[76]["crime_percentile"] < 10
 
 
+# WAVE 6f item 7 (2026-08-11): nearest_neighborhood() -- the bare-cell-click
+# reverse-geocode's fallback when geocode.reverse_geocode() itself comes up
+# empty (open water, or a genuine GeoSearch failure). This bake covers all
+# of NYC, so unlike the live reverse-geocode this can be tested with a
+# plain, offline coordinate lookup.
+def test_nearest_neighborhood_finds_a_real_nearby_area():
+    # Greenpoint's own real centroid-adjacent point (Manhattan Ave/Greenpoint
+    # Ave, per this project's own item 9 diagnosis of the same area).
+    area = citywide.nearest_neighborhood(40.7304, -73.9515)
+    assert area is not None
+    assert area["name"] == "Greenpoint"
+    assert area["borough"] == "Brooklyn"
+
+
+def test_nearest_neighborhood_never_returns_none_for_a_real_nyc_point():
+    # This bake's own 262 NTA points blanket the five boroughs by
+    # construction -- a real in-NYC point must always resolve to SOME
+    # nearest label, unlike geocode.reverse_geocode()'s live upstream call.
+    area = citywide.nearest_neighborhood(40.6924, -73.9875)  # Downtown Brooklyn
+    assert area is not None
+
+
 def test_crime_caveat_is_a_real_plain_sentence():
     data = citywide.get()
     caveat = data["crime_caveat"]
