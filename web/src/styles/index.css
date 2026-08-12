@@ -1630,13 +1630,24 @@ button.search__save:disabled {
   position: relative;
   border: 1.5px solid var(--ink);
   border-radius: var(--radius-sm);
-  padding: 8px;
-  /* WAVE 6e: no `overflow: hidden` here on purpose -- the 8px padding
-     already keeps `.mapfield__map`'s own square canvas corners well clear
-     of this frame's rounded border arc, so nothing needs clipping to look
-     right; adding overflow would risk cutting off a MapLibre popup
-     (`.buildinginfo`) that legitimately extends past the map's edge near a
-     boundary marker. */
+  /* WAVE 6f item 5 (2026-08-11, Noah: "weird white border next to the
+     black border edge"). ROOT CAUSE: this 8px value predates `--radius-sm`
+     (set in Wave 1c round 2, 2026-08-03, as generic breathing room, before
+     any rounded-corner concern existed at all) -- once Wave 6e added
+     `--radius-sm: 3px` here and retroactively justified the SAME 8px as
+     "clears the rounded corner arc," nobody re-checked whether 8px was
+     still the right number for a 3px arc. It wasn't: clearing a 3px radius
+     needs at most 3px of padding, so the other ~5px was pure excess bone-
+     coloured gap between the ink border and the map's own vivid content
+     (water/roads/buildings touch the canvas edge almost everywhere), which
+     is exactly what read as a second, unintended "border." Shrunk to 3px
+     -- the real minimum for this corner-clearance mechanism, not a rounded
+     guess -- so the gap is barely perceptible instead of a visible band.
+     Still no `overflow: hidden` here, on purpose (WAVE 6e's own reasoning
+     still holds): clipping would cut off a MapLibre popup (`.buildinginfo`)
+     that legitimately extends past the map's edge near a boundary marker,
+     so the fix is sizing the padding correctly, not switching mechanisms. */
+  padding: 3px;
 }
 
 /* UX-FIX 2026-08-03 (audit finding #1) -- see MapView.tsx's own comment on
@@ -1663,10 +1674,25 @@ button.search__save:disabled {
 }
 
 /* MapLibre needs an explicit height on its container -- unlike the old
-   viewBox SVG, a GL canvas has no intrinsic aspect ratio to fall back to. */
+   viewBox SVG, a GL canvas has no intrinsic aspect ratio to fall back to.
+   WAVE 6f item 6 (2026-08-11, Noah live-use: "feels too skinny"). 560px was
+   fixed regardless of the map column's own fluid width (`.appgrid`'s `1fr`
+   track) -- at 1366px that column measures ~962px wide (~1.7:1), but at
+   1920px it's ~1506px wide (~2.7:1), an increasingly letterboxed strip as
+   the viewport widens, which is the concrete shape of "skinny." Raised to
+   680px (+21%) -- still a fixed value (unchanged pattern; this map has no
+   intrinsic aspect ratio to preserve responsively, per this comment's own
+   first line), chosen to bring the ratio back closer to ~1.4:1 at 1366px
+   and ~2.2:1 at 1920px. `.appgrid`'s two structural alignments (search-top
+   == sidebar-top, chips-bottom == sidebar-bottom, this file's own
+   `.appgrid` comment) are grid-mechanics-derived, not manually pixel-
+   matched to this height -- `.sidepanel` spans and stretches to whatever
+   the content row's height ends up being, so raising this number cannot
+   desync either alignment; still re-verified live via Playwright per this
+   wave's own report, not assumed from the mechanism alone. */
 .mapfield__map {
   width: 100%;
-  height: 560px;
+  height: 680px;
   background: var(--bone);
 }
 
