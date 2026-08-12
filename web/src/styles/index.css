@@ -94,7 +94,7 @@ table {
      to 2 (`.report__title` and `.disclosure__title` differed only in their
      clamp ceiling, 2.6rem vs 2.4rem -- converged to one shared 2.5rem).
      EXCEPTION, documented not silent: five map-canvas/DOM-marker classes
-     (`.maplabel--neighborhood`, `.maplabel--precinct`, `.pinmarker__badge`,
+     (`.maplabel--neighborhood`, `.maplabel--precinct`, `.savedmarker__badge`,
      `.mapstation__bullet`, and the third-party `.maplibregl-ctrl-attrib`
      override) keep literal px values -- each is sized to fit a specific
      fixed-px marker/glyph container (e.g. a 13px station-bullet circle),
@@ -150,7 +150,7 @@ table {
        (border 1.5px + padding 8px = 9.5px, see `.mapfield__frame`'s own
        comment) that aligns the map canvas top with the side-panel tiles'
        top to sub-10px precision -- also untouched.
-     - Map-canvas/DOM-marker chrome (`.mapstation*`, `.pinmarker*`,
+     - Map-canvas/DOM-marker chrome (`.mapstation*`, `.savedmarker*`,
        `.maplabel*`) keeps literal px, matching the type scale's own
        exception for the identical class list -- these size to fixed-px
        marker/glyph containers, not reflowable copy.
@@ -410,6 +410,22 @@ body {
   font-family: var(--font-mono);
 }
 
+/* WAVE 6f item 7 (2026-08-11, Noah: "we only see 350 5th ave manhattan
+   every time"). Without an explicit rule here, the placeholder inherited
+   this input's own full-strength ink colour in every browser tested live
+   -- a real, felt cause of the complaint: a fixed, address-shaped
+   placeholder rendered in the SAME weight/colour as a real typed value is
+   genuinely hard to tell apart from one at a glance. Steel + italic is
+   this file's own established "this is not confirmed content" treatment
+   (.record-line--approx above uses the identical steel-not-ink demotion) --
+   applied here so the field's resting/hint state is unmistakable purely
+   from styling, independent of AddressSearch.tsx's own wording fix. */
+.search__field input::placeholder {
+  color: var(--steel);
+  font-style: italic;
+  opacity: 1;
+}
+
 .search__field button {
   flex-shrink: 0;
   border: none;
@@ -441,7 +457,7 @@ body {
    like the primary (ink-filled) button -- a ghost/outline treatment marks
    it as the secondary action, matching `.button--ghost`'s own convention
    elsewhere in this file. */
-.search__pin {
+.search__save {
   flex-shrink: 0;
   border: none;
   border-left: 1.5px solid var(--ink);
@@ -457,20 +473,20 @@ body {
   transition: background 0.12s ease, color 0.12s ease;
 }
 
-.search__pin:hover:not(:disabled) {
+.search__save:hover:not(:disabled) {
   background: var(--ink);
   color: var(--bone);
 }
 
-/* `button.search__pin:disabled` (not just `.search__pin:disabled`): the
+/* `button.search__save:disabled` (not just `.search__save:disabled`): the
    extra `button` element selector matches `.search__field button:disabled`
-   above's OWN specificity (0,2,1) exactly -- a plain `.search__pin:disabled`
+   above's OWN specificity (0,2,1) exactly -- a plain `.search__save:disabled`
    is only (0,2,0), so that broader rule's `background: var(--steel)` won
    regardless of source order, combining with this rule's `color:
    var(--steel)` into invisible steel-on-steel text (confirmed live via
    Playwright + getComputedStyle before this fix). At equal specificity,
    source order decides -- this rule is declared later, so it wins. */
-button.search__pin:disabled {
+button.search__save:disabled {
   background: transparent;
   color: var(--steel);
   cursor: not-allowed;
@@ -537,6 +553,45 @@ button.search__pin:disabled {
 
 .search__suggestion:hover {
   background: rgba(17, 17, 17, 0.06);
+}
+
+/* WAVE 6f item 8 (2026-08-11, Noah: "instead of pin can we just click
+   save"): the search dropdown's own saved-places row -- a `.search__suggestion`
+   button (unchanged, same look as a live typeahead row) plus a minimal
+   unsave "×", side by side. The border-bottom/last-child rule moves to
+   this wrapping `<li>` (not the inner button) since a row now has two
+   children, not one -- `.search__suggestion` inside it drops its own
+   border so the two don't double up. */
+.search__suggestion--saved {
+  display: flex;
+  align-items: stretch;
+  border-bottom: 1px solid rgba(17, 17, 17, 0.12);
+}
+
+.search__suggestion--saved:last-child {
+  border-bottom: none;
+}
+
+.search__suggestion--saved .search__suggestion {
+  flex: 1;
+  min-width: 0;
+  border-bottom: none;
+}
+
+.search__suggestion-unsave {
+  flex-shrink: 0;
+  border: none;
+  border-left: 1px solid rgba(17, 17, 17, 0.12);
+  background: transparent;
+  color: var(--steel);
+  padding: 0 var(--space-4);
+  font-size: var(--text-md);
+  line-height: 1;
+  transition: color 0.12s var(--ease);
+}
+
+.search__suggestion-unsave:hover {
+  color: var(--red);
 }
 
 .search__error {
@@ -652,6 +707,18 @@ button.search__pin:disabled {
   font-size: var(--text-sm);
   font-weight: 700;
   color: var(--ink);
+}
+
+/* WAVE 6f item 7 (2026-08-11): a bare-click cell's reverse-geocoded hint
+   heading -- visually distinct from a real confirmed search (the plain
+   .record-line above, full-weight ink) since it names an approximate
+   nearest address, not a resolved search result. Steel (not ink), and
+   NOT bold -- the same "this is a hint, not a confirmed fact" visual
+   demotion `.search__field .search__clear`'s steel-not-ink treatment
+   already establishes elsewhere in this file, no new colour. */
+.record-line--approx {
+  font-weight: 500;
+  color: var(--steel);
 }
 
 /* ---------- field grid & field chrome (the metric rows) ---------- */
@@ -2324,12 +2391,13 @@ button.search__pin:disabled {
   color: var(--bone);
 }
 
-/* LAYOUT-V3 WAVE 1d item 11 (2026-08-03): the pin-a-place form
+/* LAYOUT-V3 WAVE 1d item 11 (2026-08-03): the save-a-place form
    (`.prefbar__pin*`, `.prefbar__error`) is gone from this file --
-   pinning now happens from AddressSearch.tsx's own consolidated bar
-   (`.search__pin`). Removed here rather than left as dead CSS. */
+   saving now happens from AddressSearch.tsx's own consolidated bar
+   (`.search__save`, renamed from `.search__pin` in WAVE 6f item 8,
+   2026-08-11). Removed here rather than left as dead CSS. */
 
-.prefbar__pins {
+.prefbar__saved {
   display: flex;
   flex-wrap: wrap;
   gap: var(--space-3);
@@ -2338,7 +2406,7 @@ button.search__pin:disabled {
   padding: 0;
 }
 
-.prefbar__pinitem {
+.prefbar__saveditem {
   display: inline-flex;
   align-items: center;
   gap: var(--space-2);
@@ -2350,7 +2418,7 @@ button.search__pin:disabled {
   color: var(--ink);
 }
 
-.prefbar__pinremove {
+.prefbar__savedremove {
   border: none;
   background: transparent;
   color: var(--steel);
@@ -2360,7 +2428,7 @@ button.search__pin:disabled {
   padding: 0 var(--space-1);
 }
 
-.prefbar__pinremove:hover {
+.prefbar__savedremove:hover {
   color: var(--red);
 }
 
@@ -2368,7 +2436,7 @@ button.search__pin:disabled {
    is gone along with `.mapfield__controls` above -- see MapView.tsx's own
    item-4 comment. Removed here rather than left as dead CSS. */
 
-/* ---------- subject marker + pinned-place markers ---------- */
+/* ---------- subject marker + saved-place markers ---------- */
 .mapsubject {
   width: 10px;
   height: 10px;
@@ -2378,13 +2446,13 @@ button.search__pin:disabled {
   box-shadow: 0 0 0 1px var(--ink);
 }
 
-.pinmarker {
+.savedmarker {
   display: flex;
   align-items: center;
   gap: 4px;
 }
 
-.pinmarker__dot {
+.savedmarker__dot {
   display: block;
   width: 8px;
   height: 8px;
@@ -2394,7 +2462,7 @@ button.search__pin:disabled {
   flex-shrink: 0;
 }
 
-.pinmarker__badge {
+.savedmarker__badge {
   font-family: var(--font-mono);
   font-size: 9.5px;
   letter-spacing: 0.03em;
