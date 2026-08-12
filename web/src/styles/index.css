@@ -2131,6 +2131,15 @@ button.search__save:disabled {
   color: var(--steel);
 }
 
+/* WAVE 6f item 4 (2026-08-11): tighter margin specifically while floating
+   (expanded) -- part of closing the amenities tile's measured overflow
+   (see `.tile__expandedbody .amenities`'s own comment). Scoped to
+   `.tile--floating` so a tile at REST in the 2x2 grid (plenty of vertical
+   room there) keeps its original, more generous spacing. */
+.tile--floating .tile__disclosuretoggle {
+  margin-top: var(--space-2);
+}
+
 /* WAVE 6d (2026-08-11, tmux-style tile expansion): the small "x" close
    affordance in the expanded card's own header -- ONE of the three ways to
    close (the others: clicking `.tile__disclosuretoggle` again -- "click-
@@ -2168,12 +2177,17 @@ button.search__save:disabled {
    reauthored -- the content and spacing it produces are unchanged from
    Wave 1c, only the DOM location moved. */
 .tile__expandedbody {
-  margin-top: var(--space-4);
+  margin-top: var(--space-3);
 }
 
+/* WAVE 6f item 4 (2026-08-11): tightened alongside the amenities column
+   change above -- see that rule's own comment for the measured overflow
+   this whole block of edits closes. Scoped to `.tile__expandedbody`
+   specifically (not `.field__provenance` globally, which other tiles'
+   non-overflowing detail regions also use unchanged). */
 .tile__expandedbody .field__provenance {
-  margin-top: var(--space-3);
-  padding-top: var(--space-3);
+  margin-top: var(--space-2);
+  padding-top: var(--space-2);
 }
 
 .tile__expandedbody .field__empty {
@@ -2194,10 +2208,32 @@ button.search__save:disabled {
    4 mono-numeral+label columns comfortably fit regardless of viewport width
    -- the exact overflow bug Wave 1b found and fixed for the old per-tile
    `.tile__disclosure .amenities` rule, then Wave 1c's `.tiledetail
-   .amenities`; same fix, same reasoning, new selector. */
+   .amenities`; same fix, same reasoning, new selector.
+   WAVE 6f item 4 (2026-08-11, Noah: "remove the inner scroll bar"). ROOT
+   CAUSE, measured live via Playwright (`.tile--floating`'s own
+   clientHeight vs. scrollHeight, not eyeballed): this was the ONLY one of
+   the four expanded tiles that actually overflowed its pinned floating
+   footprint -- crime/noise/trees each measured exactly clientHeight===
+   scrollHeight (296px, no overflow); this one measured scrollHeight 465px
+   against the same 296px budget, a real 169px shortfall. Two things
+   changed together to close it, both measured after each step, not
+   assumed: (1) this rule -- 2 columns x 4 rows of "count + label" (all 8
+   real Overture categories: grocery/cafe/restaurant/bar/pharmacy/gym/
+   park/laundry, same data, nothing dropped) closed most of the gap at 4
+   columns x 2 rows; (2) the surrounding chrome (`.tile__expandedbody`'s
+   own top margin, `.tile__expandedbody .field__provenance`'s margin+
+   padding, `.tile--floating .tile__disclosuretoggle`'s margin, all just
+   below/nearby) tightened to close the last 22px. Confirmed live with
+   ZERO overflow (clientHeight === scrollHeight exactly) on all four tiles
+   at 1366px, 1920px, AND 375px mobile (`.tilegrid` already stays 2 cols
+   at every width per the media query below, and this rule carries no
+   width-gated override of its own -- one layout, verified to fit at
+   every width this app ships, not a desktop-only fix with mobile left
+   unchecked). */
 .tile__expandedbody .amenities {
-  grid-template-columns: repeat(2, 1fr);
-  margin-top: var(--space-3);
+  grid-template-columns: repeat(4, 1fr);
+  gap: var(--space-2);
+  margin-top: var(--space-2);
 }
 
 @media (max-width: 900px) {
