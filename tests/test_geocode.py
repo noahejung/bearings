@@ -138,6 +138,25 @@ def test_autocomplete_returns_empty_list_for_too_short_a_query():
     assert geocode.autocomplete("35") == []
 
 
+# WAVE 6f item 7 (2026-08-11): reverse_geocode() -- see config.py's
+# GEOSEARCH_REVERSE_URL comment for the live verification that ruled out
+# this wave's own dispatch premise (`/v1/reverse`, confirmed 410 Gone) in
+# favour of the real live route this hits, `/v2/reverse`.
+def test_reverse_geocode_resolves_a_known_point_to_a_real_nearby_address():
+    # 350 5th Ave, Manhattan's own real coordinates (this module's own
+    # test_geocodes_a_known_address above).
+    r = geocode.reverse_geocode(40.748441, -73.985656)
+    assert r is not None
+    assert "5" in r.label
+    assert 40.74 < r.lat < 40.76
+    assert -73.99 < r.lng < -73.98
+
+
+def test_reverse_geocode_returns_none_for_a_point_outside_nyc():
+    r = geocode.reverse_geocode(38.8977, -77.0365)  # the White House
+    assert r is None
+
+
 @requires_geosupport_engine
 def test_geocode_rejects_the_regression_case_via_geosupport_without_falling_back():
     """The direct, public-API-level assertion of requirement 3's hardest

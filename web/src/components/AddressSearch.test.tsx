@@ -53,12 +53,15 @@ function baseProps(overrides?: Partial<Parameters<typeof AddressSearch>[0]>) {
     value: "",
     onChange: vi.fn(),
     onSubmit: vi.fn(),
-    onPin: vi.fn(),
+    onSave: vi.fn(),
     onClear: vi.fn(),
-    pinLoading: false,
-    pinError: null,
+    saveLoading: false,
+    saveError: null,
     loading: false,
     error: null,
+    approxAddress: null,
+    saved: [],
+    onUnsave: vi.fn(),
     ...overrides,
   };
 }
@@ -110,16 +113,68 @@ describe("AddressSearch", () => {
     expect(onSubmit).toHaveBeenCalledWith(AUTOCOMPLETE_RESULTS.results[0].label);
   });
 
-  it("the pin button pins whatever address is currently typed, via onPin", () => {
-    const onPin = vi.fn();
-    render(<AddressSearch {...baseProps({ value: "350 5th Ave, Manhattan", onPin })} />);
-    fireEvent.click(screen.getByRole("button", { name: /pin it/i }));
-    expect(onPin).toHaveBeenCalledWith("350 5th Ave, Manhattan");
+  it("the save button saves whatever address is currently typed, via onSave", () => {
+    const onSave = vi.fn();
+    render(<AddressSearch {...baseProps({ value: "350 5th Ave, Manhattan", onSave })} />);
+    fireEvent.click(screen.getByRole("button", { name: /^save$/i }));
+    expect(onSave).toHaveBeenCalledWith("350 5th Ave, Manhattan");
   });
 
-  it("shows the caller's own pin error, never silently swallowing a failed pin", () => {
-    render(<AddressSearch {...baseProps({ value: "x", pinError: "We couldn't find that address in New York City." })} />);
+  it("shows the caller's own save error, never silently swallowing a failed save", () => {
+    render(<AddressSearch {...baseProps({ value: "x", saveError: "We couldn't find that address in New York City." })} />);
     expect(screen.getByText(/We couldn.t find that address/i)).toBeInTheDocument();
+  });
+
+  // WAVE 6f item 8 (2026-08-11, Noah: "instead of pin can we just click
+  // save"): the search dropdown's own minimal saved-places quick-pick.
+  it("shows saved places in the dropdown when the field is empty, and picking one submits it", () => {
+    const onChange = vi.fn();
+    const onSubmit = vi.fn();
+    render(
+      <AddressSearch
+        {...baseProps({
+          value: "",
+          onChange,
+          onSubmit,
+          saved: [{ label: "245 MC GUINNESS BOULEVARD, Brooklyn, NY, USA", lat: 40.73, lng: -73.95 }],
+        })}
+      />,
+    );
+    fireEvent.focus(screen.getByRole("combobox"));
+    const option = screen.getByRole("option", { name: /MC GUINNESS/i });
+    fireEvent.click(option);
+    expect(onChange).toHaveBeenCalledWith("245 MC GUINNESS BOULEVARD, Brooklyn, NY, USA");
+    expect(onSubmit).toHaveBeenCalledWith("245 MC GUINNESS BOULEVARD, Brooklyn, NY, USA");
+  });
+
+  it("a saved place in the dropdown has its own unsave control, calling onUnsave", () => {
+    const onUnsave = vi.fn();
+    render(
+      <AddressSearch
+        {...baseProps({
+          value: "",
+          saved: [{ label: "245 MC GUINNESS BOULEVARD, Brooklyn, NY, USA", lat: 40.73, lng: -73.95 }],
+          onUnsave,
+        })}
+      />,
+    );
+    fireEvent.focus(screen.getByRole("combobox"));
+    fireEvent.click(screen.getByRole("button", { name: /unsave 245 MC GUINNESS/i }));
+    expect(onUnsave).toHaveBeenCalledWith("245 MC GUINNESS BOULEVARD, Brooklyn, NY, USA");
+  });
+
+  it("does not show saved places once the field has real typed text (live typeahead takes over)", async () => {
+    stubFetch();
+    render(
+      <AddressSearch
+        {...baseProps({
+          value: "350 5th",
+          saved: [{ label: "245 MC GUINNESS BOULEVARD, Brooklyn, NY, USA", lat: 40.73, lng: -73.95 }],
+        })}
+      />,
+    );
+    await screen.findByRole("option", { name: /New York, NY/i });
+    expect(screen.queryByText(/MC GUINNESS/i)).not.toBeInTheDocument();
   });
 
   it("does not reopen the dropdown after submitting the typed address (regression: a slow debounced fetch used to resolve after submit and reopen it)", async () => {
@@ -172,5 +227,32 @@ describe("AddressSearch", () => {
     expect(screen.queryByRole("option")).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /pull the record/i }));
     expect(onSubmit).toHaveBeenCalledWith("350 5th Ave, Manhattan");
+  });
+
+  // WAVE 6f item 7 (2026-08-11, Noah: "a bare click cell shows nothing. we
+  // only see 350 5th ave manhattan every time"). The old fixed example
+  // placeholder ("350 5TH AVE, MANHATTAN") is gone -- it read as a stuck
+  // real value on an honestly-empty field. The resting placeholder is now
+  // a plain instruction with no address-shaped token in it, and a real
+  // approxAddress (App.tsx's own reverse-geocode hint) overrides it with a
+  // "≈ <address>" hint instead.
+  it("the resting placeholder is an instruction, not an address-shaped example", () => {
+    render(<AddressSearch {...baseProps({ value: "", approxAddress: null })} />);
+    const input = screen.getByRole("combobox") as HTMLInputElement;
+    expect(input.placeholder).not.toMatch(/\d/); // no house-number-shaped token
+    expect(input.placeholder.toLowerCase()).toContain("address");
+  });
+
+  it("a real approxAddress overrides the placeholder with a marked-approximate hint", () => {
+    render(
+      <AddressSearch
+        {...baseProps({ value: "", approxAddress: "245 MC GUINNESS BOULEVARD, Brooklyn, NY, USA" })}
+      />,
+    );
+    const input = screen.getByRole("combobox") as HTMLInputElement;
+    expect(input.placeholder).toBe("≈ 245 MC GUINNESS BOULEVARD, Brooklyn, NY, USA");
+    // Still an honestly-empty field -- an approx hint is a placeholder, never
+    // a real value the submit button would treat as something to search.
+    expect(input.value).toBe("");
   });
 });

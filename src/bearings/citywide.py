@@ -168,6 +168,25 @@ def warm_caches() -> None:
     PATH.write_text(json.dumps(_bake()))
 
 
+def nearest_neighborhood(lat: float, lng: float) -> dict | None:
+    """The closest of the 262 baked NTA label points to (lat, lng), by
+    straight-line degree distance -- WAVE 6f item 7's fallback for the
+    bare-cell-click reverse-geocode hint (geocode.reverse_geocode()) when
+    GeoSearch itself has nothing at that exact point (this citywide bake
+    already covers 100% of NYC by construction, so this fallback can never
+    itself come up empty the way a live address lookup can). Straight-line
+    degree distance, not a true haversine, is a deliberate approximation:
+    this only ever picks among 262 points to label a stand-in area name,
+    never a precise distance/duration claim this codebase's own real-number
+    rules would govern -- see reach.py's actual haversine use for where that
+    rule bites.
+    """
+    neighborhoods = get()["neighborhoods"]
+    if not neighborhoods:
+        return None
+    return min(neighborhoods, key=lambda n: (n["lat"] - lat) ** 2 + (n["lng"] - lng) ** 2)
+
+
 def get() -> dict:
     """The baked citywide map data. Requires warm_caches() to have run
     first -- raises FileNotFoundError otherwise (a loud, named guard),

@@ -354,6 +354,46 @@ def get_geocode_autocomplete(text: str = Query(..., min_length=0)) -> dict:
     return {"results": [{"label": r.label, "lat": r.lat, "lng": r.lng} for r in results]}
 
 
+@app.get("/api/geocode/reverse")
+def get_geocode_reverse(lat: float = Query(...), lng: float = Query(...)) -> dict:
+    """WAVE 6f item 7 (2026-08-11): point -> a hint address, for a bare
+    citywide-grid cell click (App.tsx's loadCell() calls this with the
+    clicked cell's own centre so the search field can show "≈ <address>"
+    instead of sitting on a fixed example placeholder that reads as a stuck
+    real value -- see AddressSearch.tsx's own item 7 comment).
+
+    Never a 4xx/5xx for "nothing found here" -- unlike /api/geocode (a real
+    search where "no match" is a genuine error to surface), a reverse hint
+    for an arbitrary map point always has SOME honest answer to give back
+    when the point is actually in NYC: geocode.reverse_geocode() first,
+    falling back to citywide.nearest_neighborhood() (this bake covers all
+    of NYC, so THAT fallback itself cannot come up empty for any real NYC
+    point -- the citywide grid this feeds only contains real NYC cells).
+    Guarded on `cells.in_nyc()` before ever trying the neighbourhood
+    fallback: nearest_neighborhood() always returns ITS single nearest of
+    262 points regardless of how far away the query is, so an ungated call
+    for a genuinely out-of-NYC point (this endpoint's own lat/lng are
+    unvalidated query params, unlike /api/geocode's real address string)
+    would silently hand back a real-sounding but meaningless NYC
+    neighbourhood name for, say, a point in Washington DC. `approximate` is
+    always true in the response -- there is no code path where this
+    endpoint hands back an authoritative geocode."""
+    hit = geocode.reverse_geocode(lat, lng)
+    if hit is not None:
+        return {"label": hit.label, "lat": hit.lat, "lng": hit.lng, "approximate": True}
+
+    if cells.in_nyc(lat, lng):
+        area = citywide.nearest_neighborhood(lat, lng)
+        if area is not None:
+            return {
+                "label": f"near {area['name']}, {area['borough']}",
+                "lat": area["lat"],
+                "lng": area["lng"],
+                "approximate": True,
+            }
+    return {"label": None, "lat": lat, "lng": lng, "approximate": True}
+
+
 @app.get("/api/cells")
 def get_cells() -> dict:
     """The small, flat, citywide grid index -- every real H3 res-9 cell's

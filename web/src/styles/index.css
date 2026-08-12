@@ -94,7 +94,7 @@ table {
      to 2 (`.report__title` and `.disclosure__title` differed only in their
      clamp ceiling, 2.6rem vs 2.4rem -- converged to one shared 2.5rem).
      EXCEPTION, documented not silent: five map-canvas/DOM-marker classes
-     (`.maplabel--neighborhood`, `.maplabel--precinct`, `.pinmarker__badge`,
+     (`.maplabel--neighborhood`, `.maplabel--precinct`, `.savedmarker__badge`,
      `.mapstation__bullet`, and the third-party `.maplibregl-ctrl-attrib`
      override) keep literal px values -- each is sized to fit a specific
      fixed-px marker/glyph container (e.g. a 13px station-bullet circle),
@@ -150,7 +150,7 @@ table {
        (border 1.5px + padding 8px = 9.5px, see `.mapfield__frame`'s own
        comment) that aligns the map canvas top with the side-panel tiles'
        top to sub-10px precision -- also untouched.
-     - Map-canvas/DOM-marker chrome (`.mapstation*`, `.pinmarker*`,
+     - Map-canvas/DOM-marker chrome (`.mapstation*`, `.savedmarker*`,
        `.maplabel*`) keeps literal px, matching the type scale's own
        exception for the identical class list -- these size to fixed-px
        marker/glyph containers, not reflowable copy.
@@ -190,31 +190,21 @@ table {
   --motion-fast: 150ms; /* exits/deletions -- slow entry is forgiven, slow exit isn't (emil-design-eng skill) */
   --motion-base: 200ms; /* settle: tile/percentile value crossfade, row entrance */
   --motion-bar: 250ms; /* getting-around bar width/scale transitions */
-  /* WAVE 6d (2026-08-11, tmux-style tile expansion): the FLIP grow/shrink
-     transform duration -- a bigger spatial move (a tile travels from its
-     grid cell to the full 2x2 footprint) than a value crossfade
-     (--motion-base), so it needs more time to read as smooth rather than a
-     snap, but it's the same CLASS of "sizing transform" as the getting-
-     around bar's own scaleX transition -- 260ms sits right beside
-     --motion-bar (250ms) rather than inventing a duration far from the
-     existing family, per the dispatch's own "near the existing motion
-     tokens" instruction. */
+  /* WAVE 6d (2026-08-11, tmux-style tile expansion): originally also the
+     tile's own FLIP grow/shrink transform duration. WAVE 6f item 3
+     (2026-08-11) moved that ONE animation to a real spring played by the
+     Web Animations API (CellReportView.tsx's own ExpandableTile comment
+     has the full mechanism + physics) -- it now reads its duration from
+     lib/motion.ts's MOTION_EXPAND_MS (600ms) directly, in JS, not from
+     this token. This token's one remaining consumer is `.tile--receded`'s
+     opacity fade (below) -- a plain, unrelated crossfade for the OTHER
+     three tiles hiding while one floats, deliberately left at its
+     original 260ms: this app's two-tier motion policy (lib/motion.ts's
+     own opening comment) means only the ONE hero grow/shrink motion got
+     more expressive, not everything adjacent to it. */
   --motion-expand: 260ms;
   --ease-out: cubic-bezier(0.23, 1, 0.32, 1); /* strong ease-out (emil-design-eng skill) -- entrances/settles */
   --ease: ease; /* hover/colour changes only (emil-design-eng skill's easing table) */
-  /* WAVE 6d: a SUBTLE spring for the tile expand/collapse FLIP transform --
-     Noah's own "bouncy... not cartoon" ask. Tuned numerically (not eyeballed):
-     a cubic-bezier's overshoot amplitude is the peak height its eased output
-     climbs past 1 before settling; cubic-bezier(0.34, 1.56, 0.64, 1) (the
-     common "easeOutBack" reference curve) overshoots by ~9.8% of the
-     animated delta, which reads as a cartoon bounce on a box this large.
-     cubic-bezier(0.3, 1.2, 0.6, 1) was computed (sampling the bezier's
-     parametric y(t) against x(t)=progress, Node script, 2026-08-11) to
-     overshoot by only ~1.25% of the delta -- on this tile's real ~300-400px
-     grow/shrink travel, that is a ~4-5px overshoot at the corner that moves
-     furthest, then settle: one small, real spring, not several rubber-band
-     oscillations. */
-  --ease-spring: cubic-bezier(0.3, 1.2, 0.6, 1);
 }
 
 /* `prefers-reduced-motion: reduce` collapses every duration token to 0ms in
@@ -222,10 +212,15 @@ table {
    --motion-bar/--motion-expand snaps to its end state instantly, with no
    per-rule reduced-motion override needed. Easing curves are left alone
    deliberately: a 0ms transition/animation has no perceptible easing
-   regardless of curve. WAVE 6d: --motion-expand joins this list so the tile
-   FLIP transform (CellReportView.tsx's ExpandableTile) also snaps instantly
-   under reduced motion, with no separate JS-side reduced-motion branch --
-   same "one place" convention as every duration token above it. */
+   regardless of curve. --motion-expand's own remaining consumer
+   (`.tile--receded`'s opacity fade) still snaps via this shared rule.
+   The tile's own FLIP grow/shrink spring is DIFFERENT since WAVE 6f item 3
+   (2026-08-11): it's Web-Animations-API-driven, in JS, so it can't be
+   collapsed from a CSS custom property -- CellReportView.tsx's
+   ExpandableTile calls lib/motion.ts's prefersReducedMotion() directly and
+   skips the Animation entirely (a plain inline-style jump to the target
+   transform) under reduced motion, a real, separate, explicit branch, not
+   an oversight that this rule no longer quietly covers for it. */
 @media (prefers-reduced-motion: reduce) {
   :root {
     --motion-fast: 0ms;
@@ -410,6 +405,22 @@ body {
   font-family: var(--font-mono);
 }
 
+/* WAVE 6f item 7 (2026-08-11, Noah: "we only see 350 5th ave manhattan
+   every time"). Without an explicit rule here, the placeholder inherited
+   this input's own full-strength ink colour in every browser tested live
+   -- a real, felt cause of the complaint: a fixed, address-shaped
+   placeholder rendered in the SAME weight/colour as a real typed value is
+   genuinely hard to tell apart from one at a glance. Steel + italic is
+   this file's own established "this is not confirmed content" treatment
+   (.record-line--approx above uses the identical steel-not-ink demotion) --
+   applied here so the field's resting/hint state is unmistakable purely
+   from styling, independent of AddressSearch.tsx's own wording fix. */
+.search__field input::placeholder {
+  color: var(--steel);
+  font-style: italic;
+  opacity: 1;
+}
+
 .search__field button {
   flex-shrink: 0;
   border: none;
@@ -441,7 +452,7 @@ body {
    like the primary (ink-filled) button -- a ghost/outline treatment marks
    it as the secondary action, matching `.button--ghost`'s own convention
    elsewhere in this file. */
-.search__pin {
+.search__save {
   flex-shrink: 0;
   border: none;
   border-left: 1.5px solid var(--ink);
@@ -457,20 +468,20 @@ body {
   transition: background 0.12s ease, color 0.12s ease;
 }
 
-.search__pin:hover:not(:disabled) {
+.search__save:hover:not(:disabled) {
   background: var(--ink);
   color: var(--bone);
 }
 
-/* `button.search__pin:disabled` (not just `.search__pin:disabled`): the
+/* `button.search__save:disabled` (not just `.search__save:disabled`): the
    extra `button` element selector matches `.search__field button:disabled`
-   above's OWN specificity (0,2,1) exactly -- a plain `.search__pin:disabled`
+   above's OWN specificity (0,2,1) exactly -- a plain `.search__save:disabled`
    is only (0,2,0), so that broader rule's `background: var(--steel)` won
    regardless of source order, combining with this rule's `color:
    var(--steel)` into invisible steel-on-steel text (confirmed live via
    Playwright + getComputedStyle before this fix). At equal specificity,
    source order decides -- this rule is declared later, so it wins. */
-button.search__pin:disabled {
+button.search__save:disabled {
   background: transparent;
   color: var(--steel);
   cursor: not-allowed;
@@ -537,6 +548,45 @@ button.search__pin:disabled {
 
 .search__suggestion:hover {
   background: rgba(17, 17, 17, 0.06);
+}
+
+/* WAVE 6f item 8 (2026-08-11, Noah: "instead of pin can we just click
+   save"): the search dropdown's own saved-places row -- a `.search__suggestion`
+   button (unchanged, same look as a live typeahead row) plus a minimal
+   unsave "×", side by side. The border-bottom/last-child rule moves to
+   this wrapping `<li>` (not the inner button) since a row now has two
+   children, not one -- `.search__suggestion` inside it drops its own
+   border so the two don't double up. */
+.search__suggestion--saved {
+  display: flex;
+  align-items: stretch;
+  border-bottom: 1px solid rgba(17, 17, 17, 0.12);
+}
+
+.search__suggestion--saved:last-child {
+  border-bottom: none;
+}
+
+.search__suggestion--saved .search__suggestion {
+  flex: 1;
+  min-width: 0;
+  border-bottom: none;
+}
+
+.search__suggestion-unsave {
+  flex-shrink: 0;
+  border: none;
+  border-left: 1px solid rgba(17, 17, 17, 0.12);
+  background: transparent;
+  color: var(--steel);
+  padding: 0 var(--space-4);
+  font-size: var(--text-md);
+  line-height: 1;
+  transition: color 0.12s var(--ease);
+}
+
+.search__suggestion-unsave:hover {
+  color: var(--red);
 }
 
 .search__error {
@@ -652,6 +702,18 @@ button.search__pin:disabled {
   font-size: var(--text-sm);
   font-weight: 700;
   color: var(--ink);
+}
+
+/* WAVE 6f item 7 (2026-08-11): a bare-click cell's reverse-geocoded hint
+   heading -- visually distinct from a real confirmed search (the plain
+   .record-line above, full-weight ink) since it names an approximate
+   nearest address, not a resolved search result. Steel (not ink), and
+   NOT bold -- the same "this is a hint, not a confirmed fact" visual
+   demotion `.search__field .search__clear`'s steel-not-ink treatment
+   already establishes elsewhere in this file, no new colour. */
+.record-line--approx {
+  font-weight: 500;
+  color: var(--steel);
 }
 
 /* ---------- field grid & field chrome (the metric rows) ---------- */
@@ -1563,13 +1625,24 @@ button.search__pin:disabled {
   position: relative;
   border: 1.5px solid var(--ink);
   border-radius: var(--radius-sm);
-  padding: 8px;
-  /* WAVE 6e: no `overflow: hidden` here on purpose -- the 8px padding
-     already keeps `.mapfield__map`'s own square canvas corners well clear
-     of this frame's rounded border arc, so nothing needs clipping to look
-     right; adding overflow would risk cutting off a MapLibre popup
-     (`.buildinginfo`) that legitimately extends past the map's edge near a
-     boundary marker. */
+  /* WAVE 6f item 5 (2026-08-11, Noah: "weird white border next to the
+     black border edge"). ROOT CAUSE: this 8px value predates `--radius-sm`
+     (set in Wave 1c round 2, 2026-08-03, as generic breathing room, before
+     any rounded-corner concern existed at all) -- once Wave 6e added
+     `--radius-sm: 3px` here and retroactively justified the SAME 8px as
+     "clears the rounded corner arc," nobody re-checked whether 8px was
+     still the right number for a 3px arc. It wasn't: clearing a 3px radius
+     needs at most 3px of padding, so the other ~5px was pure excess bone-
+     coloured gap between the ink border and the map's own vivid content
+     (water/roads/buildings touch the canvas edge almost everywhere), which
+     is exactly what read as a second, unintended "border." Shrunk to 3px
+     -- the real minimum for this corner-clearance mechanism, not a rounded
+     guess -- so the gap is barely perceptible instead of a visible band.
+     Still no `overflow: hidden` here, on purpose (WAVE 6e's own reasoning
+     still holds): clipping would cut off a MapLibre popup (`.buildinginfo`)
+     that legitimately extends past the map's edge near a boundary marker,
+     so the fix is sizing the padding correctly, not switching mechanisms. */
+  padding: 3px;
 }
 
 /* UX-FIX 2026-08-03 (audit finding #1) -- see MapView.tsx's own comment on
@@ -1596,10 +1669,25 @@ button.search__pin:disabled {
 }
 
 /* MapLibre needs an explicit height on its container -- unlike the old
-   viewBox SVG, a GL canvas has no intrinsic aspect ratio to fall back to. */
+   viewBox SVG, a GL canvas has no intrinsic aspect ratio to fall back to.
+   WAVE 6f item 6 (2026-08-11, Noah live-use: "feels too skinny"). 560px was
+   fixed regardless of the map column's own fluid width (`.appgrid`'s `1fr`
+   track) -- at 1366px that column measures ~962px wide (~1.7:1), but at
+   1920px it's ~1506px wide (~2.7:1), an increasingly letterboxed strip as
+   the viewport widens, which is the concrete shape of "skinny." Raised to
+   680px (+21%) -- still a fixed value (unchanged pattern; this map has no
+   intrinsic aspect ratio to preserve responsively, per this comment's own
+   first line), chosen to bring the ratio back closer to ~1.4:1 at 1366px
+   and ~2.2:1 at 1920px. `.appgrid`'s two structural alignments (search-top
+   == sidebar-top, chips-bottom == sidebar-bottom, this file's own
+   `.appgrid` comment) are grid-mechanics-derived, not manually pixel-
+   matched to this height -- `.sidepanel` spans and stretches to whatever
+   the content row's height ends up being, so raising this number cannot
+   desync either alignment; still re-verified live via Playwright per this
+   wave's own report, not assumed from the mechanism alone. */
 .mapfield__map {
   width: 100%;
-  height: 560px;
+  height: 680px;
   background: var(--bone);
 }
 
@@ -1875,19 +1963,51 @@ button.search__pin:disabled {
    of grid flow and pinned to the grid's own box (`inset: 0` against
    `.tilegrid`'s `position: relative` above) -- CellReportView.tsx computes
    and applies the actual `transform` (grid-cell rect <-> full-footprint
-   rect) directly as an inline style; this rule only owns the STRUCTURAL
-   float (position/inset/stacking) and the transition every transform write
-   animates through. `transform-origin: top left` matches the FLIP math,
-   which computes translate/scale relative to the box's own top-left corner
-   (viewport-relative rects), not the default center origin. */
+   rect); this rule only owns the STRUCTURAL float (position/inset/
+   stacking). `transform-origin: top left` matches the FLIP math, which
+   computes translate/scale relative to the box's own top-left corner
+   (viewport-relative rects), not the default center origin.
+   `overflow-y: auto` is a defensive fallback, not a mechanism this app
+   relies on -- WAVE 6f item 4 (2026-08-11) measured every real tile's
+   expanded content live via Playwright (clientHeight === scrollHeight,
+   zero overflow, at 1366/1920/375px) and redesigned the one that didn't
+   fit until it did; this stays in case a FUTURE tile's content ever grows
+   past this budget, so that would show as a scrollbar (loud, visible,
+   fixable) rather than silently clipped/invisible content.
+   WAVE 6f item 3 (2026-08-11): the `transition: transform ...` rule this
+   used to carry is GONE -- the grow/shrink motion is now played by a real
+   Web Animations API `animate()` call (CellReportView.tsx's own comment
+   on ExpandableTile has the full mechanism/physics), which operates on a
+   separate animation layer, not through inline-style changes this
+   `transition` would watch. Leaving the old `transition` rule in place
+   would have been at best inert and at worst double-animated the one
+   inline `el.style.transform` write this component still does (the
+   `prefers-reduced-motion: reduce` branch, which must snap instantly, not
+   ease through this now-dead rule).
+   `background-color: var(--bone)` -- WAVE 6f item 3's own frame-capture
+   verification (2026-08-11) caught a REAL bug this same change made newly
+   visible: `.tile` (below) has never set its own background, which was
+   harmless while a tile was a plain grid sibling with nothing stacked
+   behind it, but this rule floats a tile OVER its own now-`.tile--
+   receded` siblings -- and those siblings don't even START fading (index
+   .css's `.tile--receded` opacity transition) until `settledExpandedKey`
+   fires, which is scheduled off MOTION_EXPAND_MS (600ms now, was 260ms).
+   With no opaque background of its own, the floating tile spent that
+   whole 600ms+ window letting the still-fully-opaque siblings underneath
+   show straight through wherever its own content didn't happen to cover
+   -- confirmed live via a frame-capture screenshot at rest (t=750ms):
+   "NOISE COMPLAINTS"/"138"/etc. plainly legible behind the settled
+   "GROCERY & EVERYDAY PLACES" tile. A real, felt regression the OLD
+   260ms duration was just too short to make obvious, not something that
+   was ever actually fine. */
 .tile--floating {
   position: absolute;
   inset: 0;
   z-index: 5;
   transform-origin: top left;
-  transition: transform var(--motion-expand) var(--ease-spring);
   will-change: transform;
   overflow-y: auto;
+  background-color: var(--bone);
 }
 
 /* WAVE 6d: every tile NOT currently floating (i.e. not the expanded/
@@ -2038,6 +2158,15 @@ button.search__pin:disabled {
   color: var(--steel);
 }
 
+/* WAVE 6f item 4 (2026-08-11): tighter margin specifically while floating
+   (expanded) -- part of closing the amenities tile's measured overflow
+   (see `.tile__expandedbody .amenities`'s own comment). Scoped to
+   `.tile--floating` so a tile at REST in the 2x2 grid (plenty of vertical
+   room there) keeps its original, more generous spacing. */
+.tile--floating .tile__disclosuretoggle {
+  margin-top: var(--space-2);
+}
+
 /* WAVE 6d (2026-08-11, tmux-style tile expansion): the small "x" close
    affordance in the expanded card's own header -- ONE of the three ways to
    close (the others: clicking `.tile__disclosuretoggle` again -- "click-
@@ -2075,12 +2204,17 @@ button.search__pin:disabled {
    reauthored -- the content and spacing it produces are unchanged from
    Wave 1c, only the DOM location moved. */
 .tile__expandedbody {
-  margin-top: var(--space-4);
+  margin-top: var(--space-3);
 }
 
+/* WAVE 6f item 4 (2026-08-11): tightened alongside the amenities column
+   change above -- see that rule's own comment for the measured overflow
+   this whole block of edits closes. Scoped to `.tile__expandedbody`
+   specifically (not `.field__provenance` globally, which other tiles'
+   non-overflowing detail regions also use unchanged). */
 .tile__expandedbody .field__provenance {
-  margin-top: var(--space-3);
-  padding-top: var(--space-3);
+  margin-top: var(--space-2);
+  padding-top: var(--space-2);
 }
 
 .tile__expandedbody .field__empty {
@@ -2101,10 +2235,32 @@ button.search__pin:disabled {
    4 mono-numeral+label columns comfortably fit regardless of viewport width
    -- the exact overflow bug Wave 1b found and fixed for the old per-tile
    `.tile__disclosure .amenities` rule, then Wave 1c's `.tiledetail
-   .amenities`; same fix, same reasoning, new selector. */
+   .amenities`; same fix, same reasoning, new selector.
+   WAVE 6f item 4 (2026-08-11, Noah: "remove the inner scroll bar"). ROOT
+   CAUSE, measured live via Playwright (`.tile--floating`'s own
+   clientHeight vs. scrollHeight, not eyeballed): this was the ONLY one of
+   the four expanded tiles that actually overflowed its pinned floating
+   footprint -- crime/noise/trees each measured exactly clientHeight===
+   scrollHeight (296px, no overflow); this one measured scrollHeight 465px
+   against the same 296px budget, a real 169px shortfall. Two things
+   changed together to close it, both measured after each step, not
+   assumed: (1) this rule -- 2 columns x 4 rows of "count + label" (all 8
+   real Overture categories: grocery/cafe/restaurant/bar/pharmacy/gym/
+   park/laundry, same data, nothing dropped) closed most of the gap at 4
+   columns x 2 rows; (2) the surrounding chrome (`.tile__expandedbody`'s
+   own top margin, `.tile__expandedbody .field__provenance`'s margin+
+   padding, `.tile--floating .tile__disclosuretoggle`'s margin, all just
+   below/nearby) tightened to close the last 22px. Confirmed live with
+   ZERO overflow (clientHeight === scrollHeight exactly) on all four tiles
+   at 1366px, 1920px, AND 375px mobile (`.tilegrid` already stays 2 cols
+   at every width per the media query below, and this rule carries no
+   width-gated override of its own -- one layout, verified to fit at
+   every width this app ships, not a desktop-only fix with mobile left
+   unchecked). */
 .tile__expandedbody .amenities {
-  grid-template-columns: repeat(2, 1fr);
-  margin-top: var(--space-3);
+  grid-template-columns: repeat(4, 1fr);
+  gap: var(--space-2);
+  margin-top: var(--space-2);
 }
 
 @media (max-width: 900px) {
@@ -2324,12 +2480,13 @@ button.search__pin:disabled {
   color: var(--bone);
 }
 
-/* LAYOUT-V3 WAVE 1d item 11 (2026-08-03): the pin-a-place form
+/* LAYOUT-V3 WAVE 1d item 11 (2026-08-03): the save-a-place form
    (`.prefbar__pin*`, `.prefbar__error`) is gone from this file --
-   pinning now happens from AddressSearch.tsx's own consolidated bar
-   (`.search__pin`). Removed here rather than left as dead CSS. */
+   saving now happens from AddressSearch.tsx's own consolidated bar
+   (`.search__save`, renamed from `.search__pin` in WAVE 6f item 8,
+   2026-08-11). Removed here rather than left as dead CSS. */
 
-.prefbar__pins {
+.prefbar__saved {
   display: flex;
   flex-wrap: wrap;
   gap: var(--space-3);
@@ -2338,7 +2495,7 @@ button.search__pin:disabled {
   padding: 0;
 }
 
-.prefbar__pinitem {
+.prefbar__saveditem {
   display: inline-flex;
   align-items: center;
   gap: var(--space-2);
@@ -2350,7 +2507,7 @@ button.search__pin:disabled {
   color: var(--ink);
 }
 
-.prefbar__pinremove {
+.prefbar__savedremove {
   border: none;
   background: transparent;
   color: var(--steel);
@@ -2360,7 +2517,7 @@ button.search__pin:disabled {
   padding: 0 var(--space-1);
 }
 
-.prefbar__pinremove:hover {
+.prefbar__savedremove:hover {
   color: var(--red);
 }
 
@@ -2368,7 +2525,7 @@ button.search__pin:disabled {
    is gone along with `.mapfield__controls` above -- see MapView.tsx's own
    item-4 comment. Removed here rather than left as dead CSS. */
 
-/* ---------- subject marker + pinned-place markers ---------- */
+/* ---------- subject marker + saved-place markers ---------- */
 .mapsubject {
   width: 10px;
   height: 10px;
@@ -2378,13 +2535,13 @@ button.search__pin:disabled {
   box-shadow: 0 0 0 1px var(--ink);
 }
 
-.pinmarker {
+.savedmarker {
   display: flex;
   align-items: center;
   gap: 4px;
 }
 
-.pinmarker__dot {
+.savedmarker__dot {
   display: block;
   width: 8px;
   height: 8px;
@@ -2394,7 +2551,7 @@ button.search__pin:disabled {
   flex-shrink: 0;
 }
 
-.pinmarker__badge {
+.savedmarker__badge {
   font-family: var(--font-mono);
   font-size: 9.5px;
   letter-spacing: 0.03em;
