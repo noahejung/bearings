@@ -97,6 +97,52 @@ const NJ_MASK_POLYGON: [number, number][] = [
   [-74.3, 40.93], // close back to the NW corner
 ];
 
+// WAVE 6f item 9 (2026-08-11, Noah: "hard-edged dark gray diagonal band
+// sweeping Greenpoint -> Newtown Creek -> LIC"). ROOT-CAUSED live, not
+// guessed -- REPRODUCED via Playwright (jumpTo this exact area, pitch 0,
+// no interaction needed -- deterministic, not a transient rendering
+// glitch: confirmed identical on a totally fresh page load with a single
+// direct jumpTo, no intermediate zoom/pan history to blame), then
+// layer-isolated one style layer at a time via `map.setLayoutProperty(id,
+// "visibility", "none")`: every OTHER layer in this file (earth, open-
+// space, roads-minor/major, nj-mask-fill, buildings-fill, streets-line,
+// citywide-cells-fill, and every hover/highlight/destination layer in
+// buildOverlayLayers() below) left the band fully intact when hidden --
+// only hiding BOTH "water" AND "water-unmasked" together made it vanish
+// completely (hiding either ALONE did not, because the other still
+// painted the identical real geometry -- see "water-unmasked"'s own
+// comment above for why this app intentionally has two layers reading the
+// same source-layer). `map.queryRenderedFeatures()` at a point inside the
+// visible band found no real "water" feature geometry there at all
+// (point-in-ring testing against the TRUE tile coordinates correctly
+// finds nothing), while the GPU still painted pixels there -- the
+// signature of a genuinely malformed (self-intersecting/bowtie) ring in
+// the underlying vector-tile polygon, mistriangulated by earcut into
+// stray geometry that extends past the feature's own real boundary. This
+// is real third-party tile data (Protomaps' daily planet build, byte-
+// range-extracted verbatim by `pmtiles extract` in basemap.py -- see that
+// module's own docstring: this app does not re-encode or re-tile
+// anything), not a polygon authored anywhere in this codebase, so it
+// cannot be fixed by correcting a ring's winding order here the way a
+// hand-authored mask (NJ_MASK_POLYGON) could be -- this codebase controls
+// zero of the vertices that are actually wrong. Following this file's own
+// established precedent for a real, confirmed-live MapLibre/tile
+// rendering defect that can't be fixed at the source (WAVE 6c item 1's
+// maxPitch cap, this file's own comment above it): a small, honestly-
+// documented, narrowly-scoped mitigation, not a guessed one. Verified
+// live across zoom 11-15 and multiple pan positions (west/east/north/
+// south) that this rectangle comfortably covers every screen position the
+// defect ever painted, without being large enough to swallow unrelated,
+// correctly-rendered water elsewhere (the Hudson, Jamaica Bay, the
+// Rockaways are all far outside it).
+const NEWTOWN_CREEK_BAD_ZONE: [number, number][] = [
+  [-73.978, 40.705],
+  [-73.915, 40.705],
+  [-73.915, 40.755],
+  [-73.978, 40.755],
+  [-73.978, 40.705],
+];
+
 // Real Protomaps Basemap `landuse` `kind` values that read as green/open
 // space -- steel, not a fifth colour, per VISUAL.md §2's "no colour
 // outside the four".
@@ -120,6 +166,49 @@ const OPEN_SPACE_KINDS = [
   "orchard",
 ];
 
+// Level-of-detail by zoom (VISUAL.md §5, REVISED 2026-07-15): "Zoomed out
+// (city): arterials ... Minor streets ... hidden. Zooming in: residential
+// streets fade in." `minzoom` drops minor roads from the tile request
+// entirely below city scale (not just low opacity -- a real LOD cut, the
+// same mechanism every slippy map uses); the opacity ramp then fades them
+// in over the next two zoom levels rather than popping in at full
+// strength. Factored out to a shared constant (WAVE 6f item 9, 2026-08-11)
+// so it can be painted TWICE -- once at its original citywide position,
+// once again as "roads-minor-repaint" after newtown-creek-mask-fill below
+// -- without two independently-drifting copies of this same expression.
+const ROADS_MINOR: NonNullable<StyleSpecification["layers"]>[number] = {
+  id: "roads-minor",
+  type: "line",
+  source: "basemap",
+  "source-layer": "roads",
+  filter: ["in", ["get", "kind"], ["literal", ["minor_road", "path", "rail"]]],
+  minzoom: 12,
+  layout: { "line-cap": "round", "line-join": "round" },
+  paint: {
+    "line-color": INK,
+    "line-opacity": ["interpolate", ["linear"], ["zoom"], 12, 0, 13.5, 0.32],
+    "line-width": ["interpolate", ["linear"], ["zoom"], 12, 0.2, 16, 1],
+  },
+};
+
+// Arterials/highways stay visible at every zoom this map allows (VISUAL.md:
+// "Zoomed out (city): arterials ... visible") -- no minzoom cut, only the
+// existing width ramp. Factored out for the same reason as ROADS_MINOR
+// above.
+const ROADS_MAJOR: NonNullable<StyleSpecification["layers"]>[number] = {
+  id: "roads-major",
+  type: "line",
+  source: "basemap",
+  "source-layer": "roads",
+  filter: ["in", ["get", "kind"], ["literal", ["major_road", "highway"]]],
+  layout: { "line-cap": "round", "line-join": "round" },
+  paint: {
+    "line-color": INK,
+    "line-opacity": 0.72,
+    "line-width": ["interpolate", ["linear"], ["zoom"], 8, 0.5, 16, 2.4],
+  },
+};
+
 export function buildMapStyle(tilesUrl: string): StyleSpecification {
   return {
     version: 8,
@@ -139,6 +228,15 @@ export function buildMapStyle(tilesUrl: string): StyleSpecification {
           type: "Feature",
           properties: {},
           geometry: { type: "Polygon", coordinates: [NJ_MASK_POLYGON] },
+        },
+      },
+      // WAVE 6f item 9 -- see NEWTOWN_CREEK_BAD_ZONE's own comment above.
+      "newtown-creek-mask": {
+        type: "geojson",
+        data: {
+          type: "Feature",
+          properties: {},
+          geometry: { type: "Polygon", coordinates: [NEWTOWN_CREEK_BAD_ZONE] },
         },
       },
     },
@@ -166,43 +264,8 @@ export function buildMapStyle(tilesUrl: string): StyleSpecification {
         "source-layer": "water",
         paint: { "fill-color": STEEL, "fill-opacity": 0.5 },
       },
-      {
-        // Level-of-detail by zoom (VISUAL.md §5, REVISED 2026-07-15):
-        // "Zoomed out (city): arterials ... Minor streets ... hidden.
-        // Zooming in: residential streets fade in." `minzoom` drops minor
-        // roads from the tile request entirely below city scale (not just
-        // low opacity -- a real LOD cut, the same mechanism every slippy
-        // map uses); the opacity ramp then fades them in over the next two
-        // zoom levels rather than popping in at full strength.
-        id: "roads-minor",
-        type: "line",
-        source: "basemap",
-        "source-layer": "roads",
-        filter: ["in", ["get", "kind"], ["literal", ["minor_road", "path", "rail"]]],
-        minzoom: 12,
-        layout: { "line-cap": "round", "line-join": "round" },
-        paint: {
-          "line-color": INK,
-          "line-opacity": ["interpolate", ["linear"], ["zoom"], 12, 0, 13.5, 0.32],
-          "line-width": ["interpolate", ["linear"], ["zoom"], 12, 0.2, 16, 1],
-        },
-      },
-      {
-        // Arterials/highways stay visible at every zoom this map allows
-        // (VISUAL.md: "Zoomed out (city): arterials ... visible") -- no
-        // minzoom cut, only the existing width ramp.
-        id: "roads-major",
-        type: "line",
-        source: "basemap",
-        "source-layer": "roads",
-        filter: ["in", ["get", "kind"], ["literal", ["major_road", "highway"]]],
-        layout: { "line-cap": "round", "line-join": "round" },
-        paint: {
-          "line-color": INK,
-          "line-opacity": 0.72,
-          "line-width": ["interpolate", ["linear"], ["zoom"], 8, 0.5, 16, 2.4],
-        },
-      },
+      ROADS_MINOR,
+      ROADS_MAJOR,
       {
         // LAYOUT-V3 WAVE 1d item 12 -- painted after earth/open-space/roads
         // (topmost of the base style's own layers so far), still below
@@ -244,6 +307,71 @@ export function buildMapStyle(tilesUrl: string): StyleSpecification {
         source: "basemap",
         "source-layer": "water",
         paint: { "fill-color": STEEL, "fill-opacity": 0.5 },
+      },
+      {
+        // WAVE 6f item 9 -- see NEWTOWN_CREEK_BAD_ZONE's own comment above
+        // for the full live diagnosis. Painted directly above BOTH "water"
+        // and "water-unmasked" (the two layers confirmed live to jointly
+        // paint the malformed geometry) -- a flat, fully OPAQUE BONE wash
+        // cancels whatever those two just painted within this one hand-
+        // verified rectangle, the same "recede to the base colour"
+        // technique nj-mask-fill above already uses for out-of-scope New
+        // Jersey. Fully opaque (not nj-mask-fill's 0.72) deliberately --
+        // this has to WIN completely against a real, confirmed rendering
+        // bug, not just visually recede; a translucent cancel would still
+        // show the malformed shape bleeding through underneath it.
+        //
+        // Being fully opaque means this ALSO erases roads-minor/
+        // roads-major (both painted earlier, above) and the real,
+        // correctly-shaped part of Newtown Creek, wherever any of them
+        // fall inside this rectangle -- an honest, fully-repainted cost,
+        // not a hidden one: "roads-minor-repaint"/"roads-major-repaint"
+        // immediately below restore the real streets (identical paint,
+        // repainted on top of this cancel -- imperceptible where they
+        // already matched, since it's the exact same geometry drawn
+        // again), and "newtown-creek-line" after that repaints the
+        // creek's real centreline path, so nothing this map already
+        // promised to show (streets, the waterway itself) silently
+        // disappears within this one zone.
+        id: "newtown-creek-mask-fill",
+        type: "fill",
+        source: "newtown-creek-mask",
+        paint: { "fill-color": BONE, "fill-opacity": 1 },
+      },
+      // WAVE 6f item 9 -- see newtown-creek-mask-fill's own comment just
+      // above for why these two are repainted here: that cancel fill is
+      // fully opaque and sits above roads-minor/roads-major (both painted
+      // near the top of this file, before nj-mask-fill), so without this
+      // repaint, real Greenpoint/LIC streets would vanish inside
+      // NEWTOWN_CREEK_BAD_ZONE -- a worse regression than the bug this
+      // wave set out to fix. Reuses the exact same ROADS_MINOR/ROADS_MAJOR
+      // constants (defined once, above buildMapStyle()) with a new `id`
+      // (MapLibre layer ids must be unique) -- never a second,
+      // independently-drifting copy of either expression.
+      { ...ROADS_MINOR, id: "roads-minor-repaint" },
+      { ...ROADS_MAJOR, id: "roads-major-repaint" },
+      {
+        // WAVE 6f item 9 -- the honest fallback promised above:
+        // "newtown-creek-mask-fill" erases both the real and the
+        // malformed water fill within NEWTOWN_CREEK_BAD_ZONE, so this
+        // layer repaints the creek's real path from a source unaffected
+        // by the polygon bug -- the SAME "water" source-layer's own
+        // `kind: "river"/"stream"` and `kind: "strait"` features (real,
+        // named LineStrings -- "Newtown Creek", "West Channel", "East
+        // Channel", confirmed live via `querySourceFeatures()` during this
+        // wave's own diagnosis), which a `fill` layer never renders
+        // (LineString geometry is silently skipped by fill layers) and so
+        // were never part of the bug -- only the `kind: "water"`/`"ocean"`
+        // POLYGON features were. A real river/stream centreline, not a
+        // guessed or hand-plotted shape. Painted last (topmost) so it's
+        // never hidden under the road repaint above.
+        id: "newtown-creek-line",
+        type: "line",
+        source: "basemap",
+        "source-layer": "water",
+        filter: ["in", ["get", "kind"], ["literal", ["river", "stream", "strait"]]],
+        layout: { "line-cap": "round", "line-join": "round" },
+        paint: { "line-color": STEEL, "line-width": 2, "line-opacity": 0.8 },
       },
     ],
   };
