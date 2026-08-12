@@ -190,31 +190,21 @@ table {
   --motion-fast: 150ms; /* exits/deletions -- slow entry is forgiven, slow exit isn't (emil-design-eng skill) */
   --motion-base: 200ms; /* settle: tile/percentile value crossfade, row entrance */
   --motion-bar: 250ms; /* getting-around bar width/scale transitions */
-  /* WAVE 6d (2026-08-11, tmux-style tile expansion): the FLIP grow/shrink
-     transform duration -- a bigger spatial move (a tile travels from its
-     grid cell to the full 2x2 footprint) than a value crossfade
-     (--motion-base), so it needs more time to read as smooth rather than a
-     snap, but it's the same CLASS of "sizing transform" as the getting-
-     around bar's own scaleX transition -- 260ms sits right beside
-     --motion-bar (250ms) rather than inventing a duration far from the
-     existing family, per the dispatch's own "near the existing motion
-     tokens" instruction. */
+  /* WAVE 6d (2026-08-11, tmux-style tile expansion): originally also the
+     tile's own FLIP grow/shrink transform duration. WAVE 6f item 3
+     (2026-08-11) moved that ONE animation to a real spring played by the
+     Web Animations API (CellReportView.tsx's own ExpandableTile comment
+     has the full mechanism + physics) -- it now reads its duration from
+     lib/motion.ts's MOTION_EXPAND_MS (600ms) directly, in JS, not from
+     this token. This token's one remaining consumer is `.tile--receded`'s
+     opacity fade (below) -- a plain, unrelated crossfade for the OTHER
+     three tiles hiding while one floats, deliberately left at its
+     original 260ms: this app's two-tier motion policy (lib/motion.ts's
+     own opening comment) means only the ONE hero grow/shrink motion got
+     more expressive, not everything adjacent to it. */
   --motion-expand: 260ms;
   --ease-out: cubic-bezier(0.23, 1, 0.32, 1); /* strong ease-out (emil-design-eng skill) -- entrances/settles */
   --ease: ease; /* hover/colour changes only (emil-design-eng skill's easing table) */
-  /* WAVE 6d: a SUBTLE spring for the tile expand/collapse FLIP transform --
-     Noah's own "bouncy... not cartoon" ask. Tuned numerically (not eyeballed):
-     a cubic-bezier's overshoot amplitude is the peak height its eased output
-     climbs past 1 before settling; cubic-bezier(0.34, 1.56, 0.64, 1) (the
-     common "easeOutBack" reference curve) overshoots by ~9.8% of the
-     animated delta, which reads as a cartoon bounce on a box this large.
-     cubic-bezier(0.3, 1.2, 0.6, 1) was computed (sampling the bezier's
-     parametric y(t) against x(t)=progress, Node script, 2026-08-11) to
-     overshoot by only ~1.25% of the delta -- on this tile's real ~300-400px
-     grow/shrink travel, that is a ~4-5px overshoot at the corner that moves
-     furthest, then settle: one small, real spring, not several rubber-band
-     oscillations. */
-  --ease-spring: cubic-bezier(0.3, 1.2, 0.6, 1);
 }
 
 /* `prefers-reduced-motion: reduce` collapses every duration token to 0ms in
@@ -222,10 +212,15 @@ table {
    --motion-bar/--motion-expand snaps to its end state instantly, with no
    per-rule reduced-motion override needed. Easing curves are left alone
    deliberately: a 0ms transition/animation has no perceptible easing
-   regardless of curve. WAVE 6d: --motion-expand joins this list so the tile
-   FLIP transform (CellReportView.tsx's ExpandableTile) also snaps instantly
-   under reduced motion, with no separate JS-side reduced-motion branch --
-   same "one place" convention as every duration token above it. */
+   regardless of curve. --motion-expand's own remaining consumer
+   (`.tile--receded`'s opacity fade) still snaps via this shared rule.
+   The tile's own FLIP grow/shrink spring is DIFFERENT since WAVE 6f item 3
+   (2026-08-11): it's Web-Animations-API-driven, in JS, so it can't be
+   collapsed from a CSS custom property -- CellReportView.tsx's
+   ExpandableTile calls lib/motion.ts's prefersReducedMotion() directly and
+   skips the Animation entirely (a plain inline-style jump to the target
+   transform) under reduced motion, a real, separate, explicit branch, not
+   an oversight that this rule no longer quietly covers for it. */
 @media (prefers-reduced-motion: reduce) {
   :root {
     --motion-fast: 0ms;
@@ -1968,19 +1963,51 @@ button.search__save:disabled {
    of grid flow and pinned to the grid's own box (`inset: 0` against
    `.tilegrid`'s `position: relative` above) -- CellReportView.tsx computes
    and applies the actual `transform` (grid-cell rect <-> full-footprint
-   rect) directly as an inline style; this rule only owns the STRUCTURAL
-   float (position/inset/stacking) and the transition every transform write
-   animates through. `transform-origin: top left` matches the FLIP math,
-   which computes translate/scale relative to the box's own top-left corner
-   (viewport-relative rects), not the default center origin. */
+   rect); this rule only owns the STRUCTURAL float (position/inset/
+   stacking). `transform-origin: top left` matches the FLIP math, which
+   computes translate/scale relative to the box's own top-left corner
+   (viewport-relative rects), not the default center origin.
+   `overflow-y: auto` is a defensive fallback, not a mechanism this app
+   relies on -- WAVE 6f item 4 (2026-08-11) measured every real tile's
+   expanded content live via Playwright (clientHeight === scrollHeight,
+   zero overflow, at 1366/1920/375px) and redesigned the one that didn't
+   fit until it did; this stays in case a FUTURE tile's content ever grows
+   past this budget, so that would show as a scrollbar (loud, visible,
+   fixable) rather than silently clipped/invisible content.
+   WAVE 6f item 3 (2026-08-11): the `transition: transform ...` rule this
+   used to carry is GONE -- the grow/shrink motion is now played by a real
+   Web Animations API `animate()` call (CellReportView.tsx's own comment
+   on ExpandableTile has the full mechanism/physics), which operates on a
+   separate animation layer, not through inline-style changes this
+   `transition` would watch. Leaving the old `transition` rule in place
+   would have been at best inert and at worst double-animated the one
+   inline `el.style.transform` write this component still does (the
+   `prefers-reduced-motion: reduce` branch, which must snap instantly, not
+   ease through this now-dead rule).
+   `background-color: var(--bone)` -- WAVE 6f item 3's own frame-capture
+   verification (2026-08-11) caught a REAL bug this same change made newly
+   visible: `.tile` (below) has never set its own background, which was
+   harmless while a tile was a plain grid sibling with nothing stacked
+   behind it, but this rule floats a tile OVER its own now-`.tile--
+   receded` siblings -- and those siblings don't even START fading (index
+   .css's `.tile--receded` opacity transition) until `settledExpandedKey`
+   fires, which is scheduled off MOTION_EXPAND_MS (600ms now, was 260ms).
+   With no opaque background of its own, the floating tile spent that
+   whole 600ms+ window letting the still-fully-opaque siblings underneath
+   show straight through wherever its own content didn't happen to cover
+   -- confirmed live via a frame-capture screenshot at rest (t=750ms):
+   "NOISE COMPLAINTS"/"138"/etc. plainly legible behind the settled
+   "GROCERY & EVERYDAY PLACES" tile. A real, felt regression the OLD
+   260ms duration was just too short to make obvious, not something that
+   was ever actually fine. */
 .tile--floating {
   position: absolute;
   inset: 0;
   z-index: 5;
   transform-origin: top left;
-  transition: transform var(--motion-expand) var(--ease-spring);
   will-change: transform;
   overflow-y: auto;
+  background-color: var(--bone);
 }
 
 /* WAVE 6d: every tile NOT currently floating (i.e. not the expanded/

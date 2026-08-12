@@ -12,7 +12,14 @@ import {
 import { ApiError, getCommute, getRoute } from "../api";
 import { ANCHOR_COORDS } from "../lib/anchors";
 import { crimeRelativeLabel, formatPercentile, ordinalSuffix } from "../lib/crime";
-import { motionDelay, MOTION_EXPAND_MS, MOTION_FAST_MS } from "../lib/motion";
+import {
+  buildSpringKeyframes,
+  motionDelay,
+  MOTION_EXPAND_MS,
+  MOTION_FAST_MS,
+  prefersReducedMotion,
+  type TileTransform,
+} from "../lib/motion";
 import { unreachableReasonSentence, unreachableReasonShortLabel } from "../lib/transit";
 import { useAutocomplete } from "../lib/useAutocomplete";
 import type { AutocompleteResult, CellProfile, RouteResult, RouteStep, UnreachableReason } from "../types";
@@ -857,10 +864,11 @@ const TILE_TITLES: Record<TileHighlightKey, string> = {
 // (First/Last/Invert/Play) measuring, inverting, and animating a single
 // tile between its grid cell and the full grid footprint. CellReportView
 // below owns WHICH tile is expanded/closing, WHEN a float has settled (a
-// `window.setTimeout` mirroring --motion-expand, not a `transitionend`
-// listener here -- see lib/motion.ts's own MOTION_EXPAND_MS comment for why
-// a timer, not a CSS event, is this project's established pattern), and
-// what content to render inside a tile (compact vs full detail); every
+// `window.setTimeout` mirroring MOTION_EXPAND_MS, not a `transitionend`/
+// `animationend` listener here -- see lib/motion.ts's own MOTION_EXPAND_MS
+// comment for why a timer, not a CSS/WAAPI event, is this project's
+// established pattern), and what content to render inside a tile (compact
+// vs full detail); every
 // tile's own copy is unchanged, just relocated from the old shared
 // `.tiledetail` region (LAYOUT-V3 WAVE 1c, see CellReportView's own comment
 // further down) into the tile itself.
@@ -875,22 +883,49 @@ const TILE_TITLES: Record<TileHighlightKey, string> = {
 // target -- "cover the entire tile-grid footprint", Noah's own phrase). The
 // transform that makes the FULL box LOOK like the small First box is
 // `translate(First.left - Last.left, First.top - Last.top) scale
-// (First.width / Last.width, First.height / Last.height)` -- applied
-// instantly (no transition) the moment a tile starts floating for the
-// FIRST time, then cleared (transform: none, WITH a transition) to grow
-// into place -- standard FLIP "invert, then play". Collapsing reuses the
-// exact same formula as its animation TARGET rather than its start point --
-// this is what makes an interrupted retarget (re-clicking mid-animation, or
-// clicking a different tile before this one settles) continue smoothly
-// with no snap: the browser's own CSS transition interpolates from
-// whatever transform is CURRENTLY rendered (mid-flight or fully settled)
-// to the newly-set target on its own; nothing here re-captures or replays
-// a "current value" in JS. `expanded` always wins over a stale `closing`
-// (the branch order below checks it FIRST) -- a tile can be re-opened
-// before its own prior close finishes (CellReportView's `closingKeys` isn't
-// necessarily cleared yet when that happens), and in that case the target
-// must still be "grow to full," not "keep shrinking," regardless of the
-// leftover close bookkeeping.
+// (First.width / Last.width, First.height / Last.height)`.
+//
+// WAVE 6f item 3 (2026-08-11, Noah: "more dramatic expressive motion
+// curves"): HOW that transform gets from First to Last (or back) changed
+// -- Wave 6d played it as a plain CSS `transition` (browser-native
+// interpolation, one easing curve, at most one overshoot); this wave
+// replaces that with a real Web Animations API `animate()` call driven by
+// lib/motion.ts's buildSpringKeyframes() (a genuine under-damped spring,
+// 3 diminishing oscillations -- see that module's own comment for the
+// physics). The FLIP geometry above (First/Last, the translate+scale
+// formula) is completely unchanged; only the PLAYBACK mechanism is new.
+// Interruption (re-clicking mid-animation, or clicking a different tile
+// before this one settles) is now explicit rather than free: a live CSS
+// `transition` retargets smoothly on its own when its target value
+// changes, but a discrete keyframe `animation` does not, so
+// currentRenderedTransform() below reads whatever transform is ACTUALLY
+// on screen at that instant (mid-flight or settled) and that becomes the
+// new animate() call's `from` -- the same "continue smoothly, no snap"
+// guarantee, just implemented explicitly instead of inherited from the
+// browser's own transition engine. `expanded` always wins over a stale
+// `closing` (the branch order below checks it FIRST) -- a tile can be
+// re-opened before its own prior close finishes (CellReportView's
+// `closingKeys` isn't necessarily cleared yet when that happens), and in
+// that case the target must still be "grow to full," not "keep
+// shrinking," regardless of the leftover close bookkeeping.
+//
+// currentRenderedTransform() decomposes a live 2D CSS `matrix(a,b,c,d,e,f)`
+// string into {tx,ty,sx,sy} via the standard closed-form (tx=e, ty=f,
+// sx=sqrt(a^2+c^2), sy=sqrt(b^2+d^2) -- derived from this component's own
+// translate*scale*rotate composition order, not a general-purpose matrix
+// library). Deliberately does NOT also recover the current rotation angle
+// -- an interrupted retarget's very first new keyframe re-starts the
+// rotate wobble at its own small fixed value (<=1deg, decaying to 0
+// either way) rather than whatever fraction of a degree the interrupted
+// animation happened to be at; on a rotation capped at 1 degree, that
+// mismatch is sub-pixel and never worth the extra decomposition math.
+function currentRenderedTransform(el: HTMLElement): TileTransform {
+  const computed = getComputedStyle(el).transform;
+  const match = /^matrix\(([^)]+)\)$/.exec(computed);
+  if (!match) return { tx: 0, ty: 0, sx: 1, sy: 1 }; // "none", or an unexpected (e.g. matrix3d) form -- identity is always a safe fallback
+  const [a, b, c, d, e, f] = match[1].split(",").map(Number);
+  return { tx: e, ty: f, sx: Math.sqrt(a * a + c * c), sy: Math.sqrt(b * b + d * d) };
+}
 function ExpandableTile({
   tileKey,
   expanded,
@@ -912,6 +947,16 @@ function ExpandableTile({
 }) {
   const wasFloatingRef = useRef(false);
   const floating = expanded || closing;
+  // WAVE 6f item 3 (2026-08-11): the live Web Animations API Animation this
+  // tile is currently playing, if any -- tracked so a retarget (open while
+  // still closing, close while still opening, or re-open before a prior
+  // close settled) can read the CURRENT rendered transform and hand it to
+  // a brand-new animate() call as its `from`, the WAAPI equivalent of the
+  // old code's "the transition is already live, so a value change smoothly
+  // reverses direction" trick -- CSS `transition` does this automatically;
+  // a discrete keyframe `animation` does not, so this component now does
+  // it explicitly.
+  const animRef = useRef<Animation | null>(null);
 
   useLayoutEffect(() => {
     const el = tileRefs.current?.[tileKey];
@@ -923,19 +968,17 @@ function ExpandableTile({
     if (!floating) {
       // Fully at rest (never floated, or a prior close just settled and
       // `.tile--floating` was just removed, returning the tile to normal
-      // grid flow). Any inline `transform`/`transition` this effect wrote
-      // during that close is INDEPENDENT of `position` -- a `transform`
-      // keeps applying to a statically positioned element exactly the same
-      // as an absolutely positioned one -- so it MUST be cleared here, or a
-      // tile that just finished shrinking back into its grid cell stays
-      // visibly shrunk/offset by its own last close transform forever
-      // (reproduced live via Playwright, 2026-08-11: a collapsed tile
-      // measured at roughly half its real grid-cell size after Esc).
+      // grid flow). Any leftover Animation/inline transform this effect
+      // left behind is INDEPENDENT of `position` -- it keeps applying to a
+      // statically positioned element exactly the same as an absolutely
+      // positioned one -- so it MUST be cleared here, or a tile that just
+      // finished shrinking back into its grid cell stays visibly shrunk/
+      // offset forever (the same real Playwright-reproduced bug Wave 6d's
+      // original comment named, still true under WAAPI).
       if (wasFloatingRef.current) {
-        el.style.transition = "none";
+        animRef.current?.cancel();
+        animRef.current = null;
         el.style.transform = "";
-        void el.offsetHeight;
-        el.style.transition = "";
       }
       wasFloatingRef.current = floating;
       return;
@@ -948,38 +991,39 @@ function ExpandableTile({
       return;
     }
     const gridRect = gridEl.getBoundingClientRect();
-    const homeTransform =
-      `translate(${(origin.left - gridRect.left).toFixed(2)}px, ${(origin.top - gridRect.top).toFixed(2)}px) ` +
-      `scale(${(origin.width / gridRect.width).toFixed(4)}, ${(origin.height / gridRect.height).toFixed(4)})`;
+    // The small grid-cell rect, expressed the same way the old FLIP math
+    // did (a translate + non-uniform scale from the full `inset: 0` box
+    // down to the tile's own real cell) -- still real, live-measured
+    // geometry, just fed to buildSpringKeyframes() below instead of a
+    // browser-native `transition`.
+    const homeTransform: TileTransform = {
+      tx: origin.left - gridRect.left,
+      ty: origin.top - gridRect.top,
+      sx: origin.width / gridRect.width,
+      sy: origin.height / gridRect.height,
+    };
+    const identityTransform: TileTransform = { tx: 0, ty: 0, sx: 1, sy: 1 };
+    const target = expanded ? identityTransform : homeTransform;
 
-    if (expanded) {
-      if (!wasFloatingRef.current) {
-        // Freshly opening (never floating before): snap to First (the
-        // small grid-cell rect) with no transition, force a layout flush
-        // so the browser actually commits that as the current rendered
-        // state, then release to Last (`none` -- the full `inset: 0` box)
-        // WITH the transition -- FLIP's own "invert, then play".
-        el.style.transition = "none";
-        el.style.transform = homeTransform;
-        void el.offsetHeight; // force reflow -- flush the instant jump above
-        el.style.transition = "";
-        el.style.transform = "none";
-      } else {
-        // Already floating (fully open, or re-opened before a prior close
-        // settled) -- just (re)assert the target. The transition is
-        // already live, so if this tile is mid-shrink, it smoothly
-        // reverses direction back up to full instead of snapping.
-        el.style.transform = "none";
-      }
-    } else if (closing) {
-      // Retarget toward the origin rect from wherever the tile is
-      // CURRENTLY rendered (settled open, or mid-flight on an
-      // interruption). `.tile--floating`'s own `transition` rule is never
-      // cleared, so this is a plain value change the browser interpolates
-      // on its own -- no manual invert step needed for closing.
-      el.style.transition = "";
-      el.style.transform = homeTransform;
+    // `prefers-reduced-motion: reduce` -- "values snap, no motion" (this
+    // app's own binding rule, lib/motion.ts's own module docstring). No
+    // Animation at all; the tile jumps straight to its target transform.
+    if (prefersReducedMotion()) {
+      animRef.current?.cancel();
+      animRef.current = null;
+      el.style.transform = expanded ? "none" : `translate(${target.tx}px, ${target.ty}px) scale(${target.sx}, ${target.sy})`;
+      wasFloatingRef.current = floating;
+      return;
     }
+
+    const from = wasFloatingRef.current ? currentRenderedTransform(el) : homeTransform;
+    animRef.current?.cancel();
+    const keyframes = buildSpringKeyframes(from, target);
+    animRef.current = el.animate(keyframes, {
+      duration: MOTION_EXPAND_MS,
+      easing: "linear", // the spring's own curve is already baked into the keyframes -- see buildSpringKeyframes()'s own comment for why a second easing curve on top would distort it
+      fill: "forwards",
+    });
 
     wasFloatingRef.current = floating;
   }, [expanded, closing, tileKey, gridRef, tileRefs, originRects, floating]);
