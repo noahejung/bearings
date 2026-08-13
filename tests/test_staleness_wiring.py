@@ -37,15 +37,8 @@ def test_profile_pois_warns_on_a_stale_parquet_cache(tmp_path, monkeypatch):
     profile._write_parquet(df, fake_path)
     _age(fake_path, days_old=45)  # past config.POI_CACHE_MAX_AGE_S (30 days)
 
-    profile._pois.cache_clear()
-    try:
-        with pytest.warns(staleness.StaleCacheWarning, match="POI table"):
-            profile._pois()
-    finally:
-        # Never leave this 1-row fake table as the process-wide cached
-        # value -- every other test in the suite calls profile._pois()
-        # expecting the real ~478k-row table.
-        profile._pois.cache_clear()
+    with pytest.warns(staleness.StaleCacheWarning, match="POI table"):
+        profile._ensure_pois_baked()
 
 
 def test_profile_anchor_times_warns_on_a_stale_json_cache(tmp_path, monkeypatch):
