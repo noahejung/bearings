@@ -11,7 +11,7 @@ import type { AutocompleteResult } from "../types";
 // (this file) / pin-search-bar (PreferenceBar.tsx) flow is replaced with
 // ONE bar: this input now also drives a debounced typeahead (real GeoSearch
 // candidates, GET /api/geocode/autocomplete) and carries its own "pin"
-// button beside "Pull the record" -- picking a suggestion or submitting the
+// button beside "Search" -- picking a suggestion or submitting the
 // form loads it as the main record; the pin button pins whatever address is
 // currently typed/selected instead, reusing the exact geocode this bar
 // already ran to show suggestions rather than a second round-trip.
@@ -202,7 +202,7 @@ export function AddressSearch({
             </button>
           )}
           <button type="submit" disabled={loading || value.trim().length === 0}>
-            {loading ? "Pulling…" : "Pull the record"}
+            {loading ? "Searching…" : "Search"}
           </button>
           <button
             type="button"

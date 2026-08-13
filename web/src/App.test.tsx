@@ -567,7 +567,7 @@ describe("App (full mount)", () => {
     // instruction now, not an address-shaped example (see AddressSearch.tsx's
     // own item 7 comment for why -- a fixed real-looking placeholder read as
     // a stuck value).
-    expect(screen.getByRole("combobox")).toHaveAttribute("placeholder", "SEARCH AN NYC ADDRESS…");
+    expect(screen.getByRole("combobox", { name: /nyc address/i })).toHaveAttribute("placeholder", "SEARCH AN NYC ADDRESS…");
 
     // The map is visible before any search or click -- Task 1/4: it must
     // not be gated behind a loaded report. LAYOUT-V3 WAVE 1c (2026-08-03,
@@ -578,15 +578,16 @@ describe("App (full mount)", () => {
     // rests on it alone.
     expect(screen.getByLabelText(/Navigable map of New York City/i)).toBeInTheDocument();
 
-    const input = screen.getByRole("combobox");
+    const input = screen.getByRole("combobox", { name: /nyc address/i });
     fireEvent.change(input, { target: { value: ADDRESS } });
-    fireEvent.click(screen.getByRole("button", { name: /pull the record/i }));
+    fireEvent.click(screen.getByRole("button", { name: /^search$/i }));
 
-    // The real geocoded label becomes the report heading -- resolved via
-    // GET /api/geocode, not the old live GET /api/profile.
-    await waitFor(() =>
-      expect(screen.getByRole("heading", { name: GEOCODE_RESULT.label })).toBeInTheDocument(),
-    );
+    // The real geocoded label canonicalizes into the search field's own
+    // value -- resolved via GET /api/geocode, not the old live
+    // GET /api/profile. WAVE 6h item 2 removed the separate identity
+    // heading this used to also check for (it duplicated the exact same
+    // fact); the field is the one place this now lives.
+    await waitFor(() => expect(screen.getByRole("combobox", { name: /nyc address/i })).toHaveValue(GEOCODE_RESULT.label));
 
     // The real block-level report fields, from CellReportView -- named
     // by their own heading (VISUAL.md §1's NO-LARP rule). LAYOUT-V3 WAVE 1e
@@ -649,8 +650,8 @@ describe("App (full mount)", () => {
     // starting default").
     expect(map._paintProps.get("destination-rings-fill:fill-opacity-transition")).toEqual({ duration: 200 });
 
-    fireEvent.change(screen.getByRole("combobox"), { target: { value: ADDRESS } });
-    fireEvent.click(screen.getByRole("button", { name: /pull the record/i }));
+    fireEvent.change(screen.getByRole("combobox", { name: /nyc address/i }), { target: { value: ADDRESS } });
+    fireEvent.click(screen.getByRole("button", { name: /^search$/i }));
     await waitFor(() => expect(screen.getByText("Midtown")).toBeInTheDocument());
 
     const row = screen.getByText("Midtown").closest('[role="button"]') as HTMLElement;
@@ -670,7 +671,7 @@ describe("App (full mount)", () => {
 
   it("renders a real 'no data' state for a block with no precinct match, never a fabricated number", async () => {
     render(<App />);
-    fireEvent.change(screen.getByRole("combobox"), {
+    fireEvent.change(screen.getByRole("combobox", { name: /nyc address/i }), {
       target: { value: "3220 Netherland Ave, Bronx" },
     });
     // Point the fixture geocode at the Riverdale cell for this one test.
@@ -703,11 +704,9 @@ describe("App (full mount)", () => {
         return Promise.reject(new Error(`unexpected fetch: ${url}`));
       }),
     );
-    fireEvent.click(screen.getByRole("button", { name: /pull the record/i }));
+    fireEvent.click(screen.getByRole("button", { name: /^search$/i }));
 
-    await waitFor(() =>
-      expect(screen.getByRole("heading", { name: "3220 NETHERLAND AVENUE" })).toBeInTheDocument(),
-    );
+    await waitFor(() => expect(screen.getByRole("combobox", { name: /nyc address/i })).toHaveValue("3220 NETHERLAND AVENUE"));
 
     expect(screen.getByText(/We don.t have crime data for this block yet/i)).toBeInTheDocument();
   });
@@ -717,11 +716,9 @@ describe("App (full mount)", () => {
 
     // Search an address first, so there's a real, different report on
     // screen to prove the click actually SWAPS it.
-    fireEvent.change(screen.getByRole("combobox"), { target: { value: ADDRESS } });
-    fireEvent.click(screen.getByRole("button", { name: /pull the record/i }));
-    await waitFor(() =>
-      expect(screen.getByRole("heading", { name: GEOCODE_RESULT.label })).toBeInTheDocument(),
-    );
+    fireEvent.change(screen.getByRole("combobox", { name: /nyc address/i }), { target: { value: ADDRESS } });
+    fireEvent.click(screen.getByRole("button", { name: /^search$/i }));
+    await waitFor(() => expect(screen.getByRole("combobox", { name: /nyc address/i })).toHaveValue(GEOCODE_RESULT.label));
     expect(screen.getByText("140")).toBeInTheDocument(); // ESB's noise count
 
     // Simulate a real click on the citywide grid's hit layer -- MapLibre's
@@ -741,21 +738,24 @@ describe("App (full mount)", () => {
     expect(screen.getByText("112")).toBeInTheDocument(); // Riverdale's tree count
 
     // A bare click carries no SEARCHED address -- the previously searched
-    // address must be cleared, not left on screen implying this block-level
-    // record is still about a specific address it no longer is.
+    // address must be cleared, not left in the field implying this
+    // block-level record is still about a specific address it no longer is.
     // LAYOUT-V3 WAVE 1d item 2 (2026-08-03): the old "This block" framing
     // fallback stays gone -- no INVENTED area label (the tiles below are the
     // honest record either way).
-    expect(screen.queryByRole("heading", { name: "This block" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("heading", { name: GEOCODE_RESULT.label })).not.toBeInTheDocument();
+    expect(screen.queryByText("This block")).not.toBeInTheDocument();
+    expect(screen.getByRole("combobox", { name: /nyc address/i })).toHaveValue("");
     // WAVE 6f item 7 (2026-08-11, Noah: "a bare click cell shows nothing"):
     // unlike the invented-label fallback above, a REAL reverse-geocoded hint
-    // now appears once GET /api/geocode/reverse resolves -- marked "≈" so
-    // it's never mistaken for a confirmed search result.
+    // now appears once GET /api/geocode/reverse resolves, as the field's own
+    // placeholder -- marked "≈" so it's never mistaken for a confirmed
+    // search result. WAVE 6h item 2 removed the separate identity heading
+    // this used to also check for (it duplicated the exact same fact).
     await waitFor(() =>
-      expect(
-        screen.getByRole("heading", { name: `≈ ${REVERSE_GEOCODE_RESULT.label}` }),
-      ).toBeInTheDocument(),
+      expect(screen.getByRole("combobox", { name: /nyc address/i })).toHaveAttribute(
+        "placeholder",
+        `≈ ${REVERSE_GEOCODE_RESULT.label}`,
+      ),
     );
     // The fact-check section requires a real searched address -- it must not
     // render for an addressless block click, even with an approx hint shown.
@@ -769,7 +769,7 @@ describe("App (full mount)", () => {
   it("saving an address adds it to the sidebar list and persists it across a fresh mount", async () => {
     const { unmount } = render(<App />);
 
-    fireEvent.change(screen.getByRole("combobox"), { target: { value: ADDRESS } });
+    fireEvent.change(screen.getByRole("combobox", { name: /nyc address/i }), { target: { value: ADDRESS } });
     fireEvent.click(screen.getByRole("button", { name: /^save$/i }));
 
     // The saved label renders twice on a real page (the sidebar list AND
@@ -789,7 +789,7 @@ describe("App (full mount)", () => {
   it("unsaving a place removes it from the sidebar list and from localStorage", async () => {
     render(<App />);
 
-    fireEvent.change(screen.getByRole("combobox"), { target: { value: ADDRESS } });
+    fireEvent.change(screen.getByRole("combobox", { name: /nyc address/i }), { target: { value: ADDRESS } });
     fireEvent.click(screen.getByRole("button", { name: /^save$/i }));
     await waitFor(() => expect(screen.getAllByText(GEOCODE_RESULT.label).length).toBeGreaterThan(0));
 
@@ -871,11 +871,9 @@ describe("Route line preview during the real GET /api/map latency window (Wave 6
     );
 
     render(<App />);
-    fireEvent.change(screen.getByRole("combobox"), { target: { value: ADDRESS } });
-    fireEvent.click(screen.getByRole("button", { name: /pull the record/i }));
-    await waitFor(() =>
-      expect(screen.getByRole("heading", { name: GEOCODE_RESULT.label })).toBeInTheDocument(),
-    );
+    fireEvent.change(screen.getByRole("combobox", { name: /nyc address/i }), { target: { value: ADDRESS } });
+    fireEvent.click(screen.getByRole("button", { name: /^search$/i }));
+    await waitFor(() => expect(screen.getByRole("combobox", { name: /nyc address/i })).toHaveValue(GEOCODE_RESULT.label));
 
     // Turn route lines on and hover the first anchor row -- /api/map is
     // still pending at this point (deliberately never resolved yet).

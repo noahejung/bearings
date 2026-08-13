@@ -78,7 +78,7 @@ describe("AddressSearch", () => {
   it("submits the typed address via onSubmit", () => {
     const onSubmit = vi.fn();
     render(<AddressSearch {...baseProps({ value: "350 5th Ave, Manhattan", onSubmit })} />);
-    fireEvent.click(screen.getByRole("button", { name: /pull the record/i }));
+    fireEvent.click(screen.getByRole("button", { name: /^search$/i }));
     expect(onSubmit).toHaveBeenCalledWith("350 5th Ave, Manhattan");
   });
 
@@ -186,7 +186,7 @@ describe("AddressSearch", () => {
     // Let the debounce actually schedule (but don't await its resolution --
     // submit lands mid-flight, matching the live bug's own timing).
     await new Promise((r) => setTimeout(r, 200));
-    fireEvent.click(screen.getByRole("button", { name: /pull the record/i }));
+    fireEvent.click(screen.getByRole("button", { name: /^search$/i }));
     // Give the in-flight fetch's own promise plenty of time to resolve.
     await new Promise((r) => setTimeout(r, 400));
     expect(screen.queryByRole("option")).not.toBeInTheDocument();
@@ -225,7 +225,7 @@ describe("AddressSearch", () => {
     render(<AddressSearch {...baseProps({ value: "350 5th Ave, Manhattan", onSubmit })} />);
     await act(() => new Promise((r) => setTimeout(r, 400)));
     expect(screen.queryByRole("option")).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: /pull the record/i }));
+    fireEvent.click(screen.getByRole("button", { name: /^search$/i }));
     expect(onSubmit).toHaveBeenCalledWith("350 5th Ave, Manhattan");
   });
 

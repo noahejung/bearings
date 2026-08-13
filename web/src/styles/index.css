@@ -447,8 +447,8 @@ body {
 }
 
 /* LAYOUT-V3 WAVE 1d item 11 (2026-08-03, SPEC-layout-v3.md §8) -- the
-   consolidated bar's own second action, sitting beside "Pull the record"
-   inside the same bordered `.search__field` row. Deliberately NOT styled
+   consolidated bar's own second action, sitting beside "Search" inside
+   the same bordered `.search__field` row. Deliberately NOT styled
    like the primary (ink-filled) button -- a ghost/outline treatment marks
    it as the secondary action, matching `.button--ghost`'s own convention
    elsewhere in this file. */
@@ -674,47 +674,14 @@ button.search__save:disabled {
    FactCheckView.tsx (the only live user of the sibling .report__* classes)
    has carried this class since before Wave 1. */
 
-/* LAYOUT-V3 WAVE 1c (2026-08-03, SPEC-layout-v3.md §8 Wave 1c item 2, Noah:
-   the old `.report__head`/`.report__kicker`/`.report__title` block above
-   this one "appears for no clear reason" after a click). Replaces that
-   three-piece title ceremony (a separate red kicker line + a
-   clamp(1.6rem,3.6vw,2.6rem) display headline) with ONE compact,
-   normal-weight line -- still a real heading (id="report-heading",
-   App.tsx), just no longer staged as an event. `.report__head`/
-   `.report__kicker`/`.report__title` themselves are UNCHANGED and still
-   used by FactCheckView.tsx, which keeps its own kicker+title (a distinct,
-   less-obvious feature that genuinely benefits from an explicit "here's
-   what this section is" framing -- see the Wave 1c report's kept/removed
-   inventory for the reasoning). */
-/* WAVE 6e (2026-08-11, Noah live-use: "no divider needed between search bar
-   and the rest"): the border-top this rule used to carry (UX-FIX 2026-08-03
-   finding #7) existed to separate the "Confirmed as" kicker + heading pair
-   from the search field above it -- both the kicker (see App.tsx's own
-   comment where that paragraph used to render) and this rule are gone
-   together; `margin-top`/`padding-top` alone still give the heading room to
-   breathe without a ruled line under the search bar. */
-.record {
-  margin-top: var(--space-6);
-  padding-top: var(--space-4);
-}
-
-.record-line {
-  font-size: var(--text-sm);
-  font-weight: 700;
-  color: var(--ink);
-}
-
-/* WAVE 6f item 7 (2026-08-11): a bare-click cell's reverse-geocoded hint
-   heading -- visually distinct from a real confirmed search (the plain
-   .record-line above, full-weight ink) since it names an approximate
-   nearest address, not a resolved search result. Steel (not ink), and
-   NOT bold -- the same "this is a hint, not a confirmed fact" visual
-   demotion `.search__field .search__clear`'s steel-not-ink treatment
-   already establishes elsewhere in this file, no new colour. */
-.record-line--approx {
-  font-weight: 500;
-  color: var(--steel);
-}
+/* WAVE 6h item 2 (2026-08-13): `.record`/`.record-line`/`.record-line--
+   approx` removed -- the identity line they styled (App.tsx's own
+   report-heading h2, added by LAYOUT-V3 WAVE 1c/1d and given its
+   approximate-hint sibling by WAVE 6f item 7) duplicated the exact same
+   address text the search field itself already shows (its `value` once
+   resolved, its `≈ address` placeholder for a bare-click hint) -- Noah's
+   screenshot feedback: "the address renders TWICE." See App.tsx's own
+   WAVE 6h item 2 comment for the removed JSX. */
 
 /* ---------- field grid & field chrome (the metric rows) ---------- */
 /* Six cards total: one --wide (spans the full row) plus five narrow ones.
@@ -1833,7 +1800,11 @@ button.search__save:disabled {
     "chips   sidebar";
   column-gap: var(--space-5);
   row-gap: var(--space-5);
-  margin-top: var(--space-6);
+  /* WAVE 6h item 2 (2026-08-13): was var(--space-6) (24px) -- tightened to
+     var(--space-5) (16px) as part of shrinking the nav-row + search-row +
+     (now-removed) identity-line stack Noah's screenshot flagged as "too
+     much space taken up vertically." */
+  margin-top: var(--space-5);
 }
 
 .appgrid__search {
@@ -2648,8 +2619,9 @@ button.search__save:disabled {
      class since), just missed in that pass since it lived inside this
      media query rather than beside the base rule. */
   /* At narrow widths .search__field button (fixed-width, nowrap, uppercase
-     mono "PULL THE RECORD") was eating enough of the row that the input had
-     no floor and scrolled its own typed text behind the button -- confirmed
+     mono -- "PULL THE RECORD" at the time this was found, "SEARCH" since
+     Wave 6h item 3) was eating enough of the row that the input had no
+     floor and scrolled its own typed text behind the button -- confirmed
      live at 375px with "350 5th Ave, Manhattan" (2026-07-28 UX audit finding
      #3). Stack instead of squeezing: input gets the full row and its own
      min-width, button drops to its own row below. */

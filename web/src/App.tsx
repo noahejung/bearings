@@ -237,8 +237,10 @@ export default function App() {
   // citywide-cells-fill layer, a real /api/cell/{h3} network call confirmed,
   // both a single click and a rapid real double-click) -- `setAddressInput
   // ("")` below already clears the bar synchronously, in the same tick as
-  // `setSearchedAddress(null)`, so a bare cell click always leaves BOTH the
-  // heading and the input honestly empty together; the submit button
+  // `setSearchedAddress(null)`, so a bare cell click always leaves the
+  // input honestly empty (WAVE 6h item 2 also removed the separate identity
+  // heading this comment originally cross-checked against -- the field
+  // alone carries this fact now); the submit button
   // disabling itself is then correct (nothing typed), not a bug. The
   // audit's finding did not reproduce. This is also already the dispatch's
   // own first suggested resolution ("clear... the field") -- kept as the
@@ -355,9 +357,12 @@ export default function App() {
           the masthead ("Bearings" + tagline) and the top information band
           labeling the searched address are both gone -- Header.tsx itself
           is deleted, not just unmounted. The app now opens straight at the
-          search bar; address identity, when there is one, lives at the
-          panel's own compact `.record-line` below (item 2's line), not a
-          page-level band duplicating the same fact.
+          search bar; address identity, when there is one, lives in the
+          search field itself (its `value` once a real address resolves,
+          its `≈ address` placeholder for a bare-click hint -- WAVE 6h item
+          2 below removed the separate identity line that used to repeat
+          the same fact a second time), not a page-level band duplicating
+          it either.
 
           LAYOUT-V3 WAVE 6 (2026-08-11, SPEC-layout-v3.md §8, Noah: "a more
           consistent home page/navbar ... it feels confusing that things
@@ -415,9 +420,10 @@ export default function App() {
             content, replacing map+chips+sidebar entirely -- `.appgrid--
             disclosure` collapses to one column); row 3 is the category-chip
             bar. `.appgrid__search` is the one real wrapper div this
-            restructure needs (AddressSearch plus the conditional `.record`
-            line both belong in the same grid cell, stacked) -- every other
-            area is just an existing component's own root class
+            restructure needs (AddressSearch's own grid cell -- WAVE 6h item
+            2 removed the conditional `.record` line that used to share it)
+            -- every other area is just an existing component's own root
+            class
             (`.mapfield`/`.disclosure`, `.prefbar`, `.sidepanel`) claimed
             directly via `grid-area` in CSS, no extra wrapper. */}
         <div className={`appgrid${showDisclosure ? " appgrid--disclosure" : ""}`} id="report">
@@ -437,55 +443,20 @@ export default function App() {
               onUnsave={removeSaved}
             />
 
-            {/* LAYOUT-V3 WAVE 1d item 2 (2026-08-03, Noah: the "this block"
-                identity framing goes -- "the line where it sits becomes the
-                plain address/area label itself, no framing word"). Renders
-                ONLY when a real address was actually searched, and only on
-                the map view: the old `?? "This block"` fallback for a bare
-                grid click invented a framing label this project has no real
-                area name to back (a cell carries no neighbourhood/borough
-                name of its own -- see types.ts's CellProfile) -- inventing
-                one would fabricate an identity the data doesn't have, and
-                the tiles below are already the honest record either way. A
-                bare click's side panel therefore starts directly at the
-                tile grid, with nothing standing in for an address that was
-                never given. */}
-            {!showDisclosure && cellReport && searchedAddress && (
-              <div className="record">
-                {/* WAVE 6e (2026-08-11, Noah live-use: "no need to write
-                    confirmed as"). The "Confirmed as" kicker (UX-FIX
-                    2026-08-03 finding #7) is gone -- it existed to visually
-                    bridge the search field and this heading when the two
-                    could show different text; WAVE 6b (2026-08-11) already
-                    closed that gap at the source (handleSearch
-                    canonicalizes the input to this same resolved label, see
-                    that function's own comment), so the bridge itself is no
-                    longer needed. */}
-                <h2 className="record-line mono" id="report-heading">
-                  {searchedAddress}
-                </h2>
-              </div>
-            )}
-
-            {/* WAVE 6f item 7 (2026-08-11, Noah: "a bare click cell shows
-                nothing"). A bare grid click still gets no INVENTED identity
-                label (the item 2 comment above still holds -- a cell has no
-                neighbourhood/borough of its own), but it now has a REAL one:
-                approxAddress is only ever set from an actual GET
-                /api/geocode/reverse response (loadCell()), never guessed.
-                The "≈" prefix is load-bearing, not decorative -- it's the
-                one visual signal that this line is a nearest-address HINT
-                for the clicked point, not a confirmed search result the way
-                the sibling block above is (that distinction is also why this
-                renders as its own separate block rather than merging into
-                the condition above). */}
-            {!showDisclosure && cellReport && !searchedAddress && approxAddress && (
-              <div className="record">
-                <h2 className="record-line mono record-line--approx" id="report-heading">
-                  ≈ {approxAddress}
-                </h2>
-              </div>
-            )}
+            {/* WAVE 6h item 2 (2026-08-13, Noah screenshot feedback: the
+                address rendered TWICE -- once in the search field, once on
+                this bold identity line right below it). The search field
+                already carries the exact same fact: a real searched address
+                canonicalizes into the field's own `value` (handleSearch's
+                own comment), and a bare-click approximate address already
+                shows via the field's `≈ address` placeholder
+                (AddressSearch.tsx's own item 7 comment). This block --
+                LAYOUT-V3 WAVE 1d item 2's plain address/area heading, and
+                WAVE 6f item 7's "≈" approximate-hint sibling -- duplicated
+                that fact a second time, in the same shell region, adding
+                height nothing else on screen needed. Removed outright, not
+                relocated: the field is the one place the current
+                address/hint lives now. */}
           </div>
 
           {showDisclosure ? (
