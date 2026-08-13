@@ -74,8 +74,14 @@ const FALLBACK_HAZARD_NOTE =
 // citation that genuinely did drift once (see this file's own top comment).
 // Grepped live from the real backend source, 2026-08-11, same "Mirrors
 // bearings/X.py's Y" citation convention as every other fallback above.
+// WAVE 6h item 4 (2026-08-13, Noah: "cut out anything that's dramatic or
+// fluff, talk normal"): the old opening sentence ("Everything on this map
+// is real.") was a reassurance-toned flourish, not a fact this paragraph
+// needed to state up front -- the sourcing detail that follows already
+// establishes it. "computed fresh from" is now plain "comes from." Every
+// fact/source/caveat below is unchanged, only the sentences carrying them.
 const BASEMAP_METHOD_NOTE =
-  "Everything on this map is real. The base layer -- streets, land, water -- is OpenStreetMap, a free public map. Everything on top is computed fresh from the city's own records: building outlines and streets from city property maps, subway/PATH lines from the transit agencies' own schedules, plus five per-block numbers (noise complaints, nearby places, street trees, building age, transit stations) -- each cited to its real source elsewhere in this report, nothing estimated. Click any home or apartment building for its own real year built and safety-violation record, not just the block's average.";
+  "The base layer -- streets, land, water -- is OpenStreetMap, a free public map. Everything on top comes from the city's own records: building outlines and streets from city property maps, subway/PATH lines from the transit agencies' own schedules, plus five per-block numbers (noise complaints, nearby places, street trees, building age, transit stations), each cited to its real source elsewhere in this report. None of it is estimated. Click any home or apartment building for its own real year built and safety-violation record, not just the block's average.";
 // LAYOUT-V3 WAVE 6c item 6 (2026-08-11, Noah, on the deployed map: "the
 // 5/10/15-minute walk rings around searched addresses aren't helpful
 // either"). The rings themselves are gone (MapView.tsx no longer draws
