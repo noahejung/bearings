@@ -9,6 +9,7 @@ import type {
   MapGeometry,
   Profile,
   Reach,
+  ReverseGeocodeResult,
   RouteResult,
 } from "./types";
 
@@ -100,6 +101,15 @@ export function getAutocomplete(text: string): Promise<{ results: AutocompleteRe
   return request<{ results: AutocompleteResult[] }>(
     `/api/geocode/autocomplete?text=${encodeURIComponent(text)}`,
   );
+}
+
+// WAVE 6f item 7 (2026-08-11): point -> a hint address for a bare citywide-
+// grid cell click, so App.tsx's loadCell() can show the field a real "≈
+// <address>" placeholder instead of the old fixed example text that read
+// as a stuck value. See bearings/api.py's get_geocode_reverse() docstring
+// for why this never 4xx/5xx's.
+export function getReverseGeocode(lat: number, lng: number): Promise<ReverseGeocodeResult> {
+  return request<ReverseGeocodeResult>(`/api/geocode/reverse?lat=${lat}&lng=${lng}`);
 }
 
 // A precomputed block-level report for one real H3 res-9 cell -- a flat

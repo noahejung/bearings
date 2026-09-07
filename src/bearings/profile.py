@@ -1,15 +1,18 @@
 """Assemble the per-address profile.
 
 Everything expensive (POI ingest, the transit graph, Dijkstra from each
-anchor) is computed once and memoised. The two slowest pieces -- the POI
-table (pulled from Overture over S3) and the anchor-time dict (a full
-Dijkstra run from every anchor) -- are additionally persisted to
-`config.DERIVED_DIR` as build-time artefacts: the first call in the data
-directory's lifetime pays the real cost and writes the result to disk;
-every call after that, in this run or a future one, loads it back in
-milliseconds. `warm_caches()` is the seam the HTTP API (api.py) calls on
-startup so the first real request is never the one paying for a cold
-boot."""
+anchor) is computed once. The two slowest pieces -- the POI table (pulled
+from Overture over S3) and the anchor-time dict (a full Dijkstra run from
+every anchor) -- are additionally persisted to `config.DERIVED_DIR` as
+build-time artefacts: the first call in the data directory's lifetime
+pays the real cost and writes the result to disk; every call after that,
+in this run or a future one, reads it back in milliseconds instead of
+redoing the work. The POI table is read back per request via DuckDB, not
+held resident as a persistent in-memory DataFrame (see
+`_ensure_pois_baked()`'s docstring); the anchor-time dict is small enough
+to keep `lru_cache`d in memory. `warm_caches()` is the seam the HTTP API
+(api.py) calls on startup so the first real request is never the one
+paying for a cold boot."""
 
 import json
 from functools import lru_cache
@@ -156,24 +159,24 @@ def _write_parquet(df: pd.DataFrame, path) -> None:
     con.close()
 
 
-def _read_parquet(path) -> pd.DataFrame:
-    con = duckdb.connect()
-    df = con.execute(f"SELECT * FROM read_parquet('{path.as_posix()}')").fetch_df()
-    con.close()
-    return df
+def _ensure_pois_baked() -> None:
+    """Bake data/derived/pois.parquet if it doesn't already exist yet (the
+    Overture POI table -- ~478k rows pulled over S3, the single slowest
+    thing this module does), or warn if the existing bake is stale. Called
+    once by warm_caches() so the first real request never pays that cost.
 
-
-@lru_cache(maxsize=1)
-def _pois():
-    """The Overture POI table -- ~478k rows pulled over S3, which is the
-    single slowest thing this module does. Persisted to disk (see the
-    module docstring) so only the very first boot ever pays for it."""
+    Deliberately does NOT return or cache the table in memory the way it
+    used to (`_pois()`, removed 2026-08-13): the 2026-08-11 memory audit
+    measured that a persistent DataFrame here cost +102MB resident for a
+    14MB-on-disk file, when `_amenities()` below only ever reads two of
+    its five columns. `_amenities()` now queries the baked file directly
+    per request via DuckDB, the same pattern mapgeo.py's own
+    `_amenity_cell_counts()` already established for this identical file."""
     if _POIS_PATH.exists():
         staleness.warn_if_stale(_POIS_PATH, config.POI_CACHE_MAX_AGE_S, "POI table")
-        return _read_parquet(_POIS_PATH)
+        return
     df = overture.fetch_pois()
     _write_parquet(df, _POIS_PATH)
-    return df
 
 
 @lru_cache(maxsize=1)
@@ -190,8 +193,8 @@ def _stations():
 def _anchor_times():
     """{anchor: {stop_id: seconds}} -- a full Dijkstra run from every
     anchor over the whole transit graph. Persisted to disk for the same
-    reason _pois() is: it's real work, and it never changes without a new
-    GTFS feed, so there is no reason to redo it every boot."""
+    reason _ensure_pois_baked() is: it's real work, and it never changes
+    without a new GTFS feed, so there is no reason to redo it every boot."""
     if _ANCHOR_TIMES_PATH.exists():
         staleness.warn_if_stale(
             _ANCHOR_TIMES_PATH, config.ANCHOR_TIMES_CACHE_MAX_AGE_S, "anchor-times"
@@ -267,7 +270,7 @@ def warm_caches() -> None:
     itself would already fail on `AnchorSnapTooFar`, not buried inside a
     live request or a partway-through citywide bake.
     """
-    _pois()
+    _ensure_pois_baked()
     _stations()
     _anchor_times()
     _disconnected_stop_ids()
@@ -627,11 +630,32 @@ def route_for(
 
 
 def _amenities(cell: str) -> dict[str, int]:
-    ring = set(cells.neighbors(cell, k=1))
-    near = _pois()[_pois()["cell"].isin(ring)]
-    counts = near["category"].value_counts().to_dict()
-    counts.pop("other", None)
-    return {k: int(v) for k, v in counts.items()}
+    """Real Overture daily-life-category POI counts for one cell's 1-ring
+    disk, read straight from the already-baked pois.parquet via a
+    per-request DuckDB query -- mapgeo.py's own `_amenity_cell_counts()`
+    pattern for the identical file, not a persistent in-memory table (see
+    `_ensure_pois_baked()`'s docstring for why)."""
+    ring = list(set(cells.neighbors(cell, k=1)))
+    if not _POIS_PATH.exists():
+        raise FileNotFoundError(
+            f"{_POIS_PATH} has not been baked yet -- call bearings.profile."
+            "warm_caches() first (api.py's startup handler does this)."
+        )
+    con = duckdb.connect()
+    try:
+        placeholders = ",".join("?" for _ in ring)
+        rows = con.execute(
+            f"""
+            SELECT category, count(*) AS n
+            FROM read_parquet('{_POIS_PATH.as_posix()}')
+            WHERE cell IN ({placeholders}) AND category != 'other'
+            GROUP BY category
+            """,
+            ring,
+        ).fetchall()
+    finally:
+        con.close()
+    return {category: int(n) for category, n in rows}
 
 
 @lru_cache(maxsize=128)
@@ -654,7 +678,8 @@ def _crime_percentile(total_ytd: int) -> float | None:
     (bearings.cli, which never calls citywide.warm_caches() itself) still
     gets a real percentile rather than a crash, at the cost of paying the
     citywide bake once on a genuinely fresh data/ directory, same tradeoff
-    _pois()/_anchor_times() already make for their own first call.
+    _ensure_pois_baked()/_anchor_times() already make for their own first
+    call.
     """
     citywide.warm_caches()
     totals = [

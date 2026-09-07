@@ -35,6 +35,16 @@ GEOSEARCH_URL = "https://geosearch.planninglabs.nyc/v2/search"
 # once the connection is warm, vs. GEOSEARCH_URL's own ~3s median for a full
 # `/v2/search` geocode). LAYOUT-V3 WAVE 1d item 11.
 GEOSEARCH_AUTOCOMPLETE_URL = "https://geosearch.planninglabs.nyc/v2/autocomplete"
+# WAVE 6f item 7 (2026-08-11): point -> nearest address, for the bare-cell-
+# click reverse-geocode. VERIFIED LIVE, not guessed: `/v1/reverse` (the
+# route named in this wave's own dispatch) is 410 Gone on this exact host
+# ("v1 API has been permanently removed" -- confirmed via a live httpx call
+# before writing any of this) -- GeoSearch migrated to `/v2/reverse` only,
+# same Pelias FeatureCollection shape as GEOSEARCH_URL/GEOSEARCH_AUTOCOMPLETE_
+# URL above. Measured live: ~150-180ms, warm connection -- close to
+# GEOSEARCH_AUTOCOMPLETE_URL's own latency class, nowhere near GEOSEARCH_URL's
+# ~3s median full geocode.
+GEOSEARCH_REVERSE_URL = "https://geosearch.planninglabs.nyc/v2/reverse"
 MTA_GTFS_URL = "http://web.mta.info/developers/data/nyct/subway/google_transit.zip"
 
 # PATH (Port Authority Trans-Hudson) serves Jersey City/Newark/Hoboken --

@@ -1,5 +1,6 @@
-import { useState } from "react";
-import { ApiError, getCell, getGeocode, postFactcheck } from "./api";
+import { useEffect, useRef, useState } from "react";
+import * as h3js from "h3-js";
+import { ApiError, getCell, getGeocode, getReverseGeocode, postFactcheck } from "./api";
 import { AddressSearch } from "./components/AddressSearch";
 import { CellReportView, GettingAroundField, type TileHighlightKey } from "./components/CellReportView";
 import { DisclosurePage } from "./components/DisclosurePage";
@@ -7,7 +8,7 @@ import { FactCheckView } from "./components/FactCheckView";
 import { MapView } from "./components/MapView";
 import { PreferenceBar } from "./components/PreferenceBar";
 import { EXAMPLE_LISTING_ADDRESS, EXAMPLE_LISTING_TEXT } from "./data/examples";
-import type { PinnedPlace } from "./lib/preferences";
+import { loadSavedPlaces, saveSavedPlaces, type SavedPlace } from "./lib/preferences";
 import type { CellProfile, FactcheckResult } from "./types";
 
 function scrollToId(id: string) {
@@ -37,6 +38,25 @@ export default function App() {
   // "about this address" framing for a location nobody searched.
   const [selectedCell, setSelectedCell] = useState<string | null>(null);
   const [searchedAddress, setSearchedAddress] = useState<string | null>(null);
+  // WAVE 6f item 7 (2026-08-11, Noah: "a bare click cell shows nothing. we
+  // only see 350 5th ave manhattan every time"). A REAL reverse-geocoded
+  // hint for whichever cell is currently loaded WITHOUT a searched address
+  // -- distinct from searchedAddress (a genuine user search/pick) the same
+  // way selectedCell already stays distinct from it (this comment block's
+  // own sibling above). Never fabricated: only ever set from a real
+  // GET /api/geocode/reverse response (loadCell()), cleared alongside
+  // every other per-selection reset (clearSelection/handleSearch/
+  // handleCellClick's own failure paths) so it can never survive to label
+  // a DIFFERENT cell or a real search result.
+  const [approxAddress, setApproxAddress] = useState<string | null>(null);
+  // Guards the reverse-geocode race a rapid double-click can cause: cell A's
+  // request can resolve AFTER cell B's own loadCell() has already moved on
+  // (a real, plain network-order race, no debounce involved) -- without
+  // this, A's now-stale label could land on screen after B is what's
+  // actually showing. Not React state (a ref never itself triggers a
+  // render) -- it exists purely to be read back inside loadCell()'s own
+  // async continuation below.
+  const latestCellRef = useRef<string | null>(null);
   const [cellReport, setCellReport] = useState<CellProfile | null>(null);
   const [reportLoading, setReportLoading] = useState(false);
   const [reportError, setReportError] = useState<string | null>(null);
@@ -46,15 +66,32 @@ export default function App() {
   const [factcheckLoading, setFactcheckLoading] = useState(false);
   const [factcheckError, setFactcheckError] = useState<string | null>(null);
 
-  // The preference bar's own state (SPEC-lens-report.md §2) -- session-only,
-  // plain useState, no persistence of any kind (no localStorage, no URL
-  // encoding, no accounts -- "every visit starts clean"). Lifted here
-  // because both PreferenceBar (the controls) and MapView (the rendering)
-  // need to read/write it.
+  // The preference bar's own category-chip state (SPEC-lens-report.md §2)
+  // -- session-only, plain useState, no persistence of any kind (no
+  // localStorage, no URL encoding, no accounts -- "every visit starts
+  // clean"). Lifted here because both PreferenceBar (the controls) and
+  // MapView (the rendering) need to read/write it.
   const [activeCategories, setActiveCategories] = useState<Set<string>>(new Set());
-  const [pins, setPins] = useState<PinnedPlace[]>([]);
-  const [pinLoading, setPinLoading] = useState(false);
-  const [pinError, setPinError] = useState<string | null>(null);
+  // WAVE 6f item 8 (2026-08-11, Noah: "instead of pin can we just click
+  // save"): SAVED PLACES (renamed from "pins") -- UNLIKE activeCategories
+  // above, this one DOES persist now, via lib/preferences.ts's localStorage
+  // bridge (loadSavedPlaces()/saveSavedPlaces()), per SPEC-data-layer-v2.md
+  // §6's client-side-interim answer while real accounts stay on hold.
+  // Lazy useState initializer -- loadSavedPlaces() only ever needs to run
+  // once, on mount, not on every render.
+  const [saved, setSaved] = useState<SavedPlace[]>(() => loadSavedPlaces());
+  const [saveLoading, setSaveLoading] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+
+  // Persists the WHOLE list after every add/remove -- a plain effect keyed
+  // on `saved` itself, not called inline inside the setSaved updaters
+  // above, so this can't double-fire under StrictMode's dev-only double-
+  // invoke of updater functions. Also fires once on mount (re-writing the
+  // exact value loadSavedPlaces() just read) -- a harmless no-op write,
+  // simpler than special-casing "skip the first run."
+  useEffect(() => {
+    saveSavedPlaces(saved);
+  }, [saved]);
 
   // LAYOUT-V3 WAVE 1d item 14 (2026-08-03, SPEC-layout-v3.md §8): the
   // methodology/disclosure page -- a real, separate app view (not a scroll
@@ -101,36 +138,37 @@ export default function App() {
     });
   }
 
-  function addPin(pin: PinnedPlace) {
-    // A place pinned twice by the same label just replaces itself -- never
+  function addSaved(place: SavedPlace) {
+    // A place saved twice by the same label just replaces itself -- never
     // a silently-duplicated marker sitting on top of another.
-    setPins((prev) => [...prev.filter((p) => p.label !== pin.label), pin]);
+    setSaved((prev) => [...prev.filter((p) => p.label !== place.label), place]);
   }
 
-  function removePin(label: string) {
-    setPins((prev) => prev.filter((p) => p.label !== label));
+  function removeSaved(label: string) {
+    setSaved((prev) => prev.filter((p) => p.label !== label));
   }
 
-  // LAYOUT-V3 WAVE 1d item 11: the consolidated search bar's own "pin"
+  // LAYOUT-V3 WAVE 1d item 11: the consolidated search bar's own "save"
   // button calls this with whatever address is currently typed/selected --
   // the exact same GET /api/geocode call PreferenceBar.tsx's now-removed
-  // pin form used to make, just triggered from the one bar instead of two.
-  async function pinAddress(address: string) {
-    setPinLoading(true);
-    setPinError(null);
+  // standalone pin form used to make, just triggered from the one bar
+  // instead of two.
+  async function saveAddress(address: string) {
+    setSaveLoading(true);
+    setSaveError(null);
     try {
       const result = await getGeocode(address);
-      addPin({ label: result.label, lat: result.lat, lng: result.lng });
-      // WAVE 6 (2026-08-11, SPEC-layout-v3.md §8): a pin is only visible on
-      // the map, so pinning from the disclosure page (the shell's search
-      // bar is present there too) returns to the map view -- same "an
-      // action taken from any view lands you somewhere that shows its
-      // result" rule handleSearch below already follows.
+      addSaved({ label: result.label, lat: result.lat, lng: result.lng });
+      // WAVE 6 (2026-08-11, SPEC-layout-v3.md §8): a saved place is only
+      // visible on the map, so saving from the disclosure page (the
+      // shell's search bar is present there too) returns to the map view
+      // -- same "an action taken from any view lands you somewhere that
+      // shows its result" rule handleSearch below already follows.
       setShowDisclosure(false);
     } catch (e) {
-      setPinError(e instanceof ApiError ? e.message : "Something went wrong pinning that place.");
+      setSaveError(e instanceof ApiError ? e.message : "Something went wrong saving that place.");
     } finally {
-      setPinLoading(false);
+      setSaveLoading(false);
     }
   }
 
@@ -143,9 +181,11 @@ export default function App() {
   }
 
   async function loadCell(h3: string) {
+    latestCellRef.current = h3;
     setSelectedCell(h3);
     setReportLoading(true);
     setReportError(null);
+    setApproxAddress(null);
     resetFactcheck();
     // A new block is loading -- whatever tile the PREVIOUS block's panel
     // had hovered/expanded no longer means anything (CellReportView's own
@@ -169,6 +209,22 @@ export default function App() {
     } finally {
       setReportLoading(false);
     }
+    // WAVE 6f item 7: a real reverse-geocode hint for this cell, fetched
+    // AFTER the report itself (decorative, must never delay or fail the
+    // actual record) -- fire-and-forget, deliberately outside the
+    // try/finally above so a reverse-geocode failure can never flip
+    // reportError/reportLoading for what is, at most, a missing label. The
+    // endpoint itself (bearings/api.py's get_geocode_reverse()) already
+    // degrades to an area-name fallback rather than erroring, so a thrown
+    // exception here means a genuine network failure, not "no address
+    // nearby" -- caught the same honest way (label stays null, no crash).
+    try {
+      const [lat, lng] = h3js.cellToLatLng(h3);
+      const hint = await getReverseGeocode(lat, lng);
+      if (latestCellRef.current === h3) setApproxAddress(hint.label);
+    } catch {
+      if (latestCellRef.current === h3) setApproxAddress(null);
+    }
   }
 
   // The missing click-to-load feature (SPEC-precompute-v2.md Phase 2):
@@ -181,8 +237,10 @@ export default function App() {
   // citywide-cells-fill layer, a real /api/cell/{h3} network call confirmed,
   // both a single click and a rapid real double-click) -- `setAddressInput
   // ("")` below already clears the bar synchronously, in the same tick as
-  // `setSearchedAddress(null)`, so a bare cell click always leaves BOTH the
-  // heading and the input honestly empty together; the submit button
+  // `setSearchedAddress(null)`, so a bare cell click always leaves the
+  // input honestly empty (WAVE 6h item 2 also removed the separate identity
+  // heading this comment originally cross-checked against -- the field
+  // alone carries this fact now); the submit button
   // disabling itself is then correct (nothing typed), not a bug. The
   // audit's finding did not reproduce. This is also already the dispatch's
   // own first suggested resolution ("clear... the field") -- kept as the
@@ -206,9 +264,11 @@ export default function App() {
   // Deliberately does NOT touch `showDisclosure` -- clearing is about the
   // loaded record, not which view is open.
   function clearSelection() {
+    latestCellRef.current = null;
     setAddressInput("");
     setSearchedAddress(null);
     setSelectedCell(null);
+    setApproxAddress(null);
     setCellReport(null);
     setReportError(null);
     resetFactcheck();
@@ -221,7 +281,9 @@ export default function App() {
   // profile compute) -> the containing cell -> the same instant
   // GET /api/cell/{h3} lookup a click uses.
   async function handleSearch(address: string) {
+    latestCellRef.current = null;
     setAddressInput(address);
+    setApproxAddress(null);
     setReportLoading(true);
     setReportError(null);
     resetFactcheck();
@@ -295,9 +357,12 @@ export default function App() {
           the masthead ("Bearings" + tagline) and the top information band
           labeling the searched address are both gone -- Header.tsx itself
           is deleted, not just unmounted. The app now opens straight at the
-          search bar; address identity, when there is one, lives at the
-          panel's own compact `.record-line` below (item 2's line), not a
-          page-level band duplicating the same fact.
+          search bar; address identity, when there is one, lives in the
+          search field itself (its `value` once a real address resolves,
+          its `≈ address` placeholder for a bare-click hint -- WAVE 6h item
+          2 below removed the separate identity line that used to repeat
+          the same fact a second time), not a page-level band duplicating
+          it either.
 
           LAYOUT-V3 WAVE 6 (2026-08-11, SPEC-layout-v3.md §8, Noah: "a more
           consistent home page/navbar ... it feels confusing that things
@@ -355,9 +420,10 @@ export default function App() {
             content, replacing map+chips+sidebar entirely -- `.appgrid--
             disclosure` collapses to one column); row 3 is the category-chip
             bar. `.appgrid__search` is the one real wrapper div this
-            restructure needs (AddressSearch plus the conditional `.record`
-            line both belong in the same grid cell, stacked) -- every other
-            area is just an existing component's own root class
+            restructure needs (AddressSearch's own grid cell -- WAVE 6h item
+            2 removed the conditional `.record` line that used to share it)
+            -- every other area is just an existing component's own root
+            class
             (`.mapfield`/`.disclosure`, `.prefbar`, `.sidepanel`) claimed
             directly via `grid-area` in CSS, no extra wrapper. */}
         <div className={`appgrid${showDisclosure ? " appgrid--disclosure" : ""}`} id="report">
@@ -366,51 +432,31 @@ export default function App() {
               value={addressInput}
               onChange={setAddressInput}
               onSubmit={handleSearch}
-              onPin={pinAddress}
+              onSave={saveAddress}
               onClear={clearSelection}
-              pinLoading={pinLoading}
-              pinError={pinError}
+              saveLoading={saveLoading}
+              saveError={saveError}
               loading={reportLoading}
               error={reportError}
+              approxAddress={!searchedAddress ? approxAddress : null}
+              saved={saved}
+              onUnsave={removeSaved}
             />
 
-            {/* LAYOUT-V3 WAVE 1d item 2 (2026-08-03, Noah: the "this block"
-                identity framing goes -- "the line where it sits becomes the
-                plain address/area label itself, no framing word"). Renders
-                ONLY when a real address was actually searched, and only on
-                the map view: the old `?? "This block"` fallback for a bare
-                grid click invented a framing label this project has no real
-                area name to back (a cell carries no neighbourhood/borough
-                name of its own -- see types.ts's CellProfile) -- inventing
-                one would fabricate an identity the data doesn't have, and
-                the tiles below are already the honest record either way. A
-                bare click's side panel therefore starts directly at the
-                tile grid, with nothing standing in for an address that was
-                never given. */}
-            {!showDisclosure && cellReport && searchedAddress && (
-              <div className="record">
-                {/* UX-FIX 2026-08-03 (audit finding #7, "search input and
-                    report heading show two different renderings of the
-                    address at once"): WAVE 6b (2026-08-11) closed that gap
-                    at the source -- handleSearch now canonicalizes the
-                    input to the same resolved label this heading shows (see
-                    that function's own comment) -- but the two still read
-                    as independent facts to a sighted user without this
-                    kicker explicitly saying "these agree," so it stays.
-                    `aria-hidden`: the heading's own accessible name must
-                    stay exactly the address text (App.test.tsx pins
-                    `getByRole("heading", { name: GEOCODE_RESULT.label })`)
-                    -- a sighted-only affordance, not new information a
-                    screen-reader user is missing (the heading already
-                    states the real confirmed address either way). */}
-                <p className="record-line__kicker mono" aria-hidden="true">
-                  Confirmed as
-                </p>
-                <h2 className="record-line mono" id="report-heading">
-                  {searchedAddress}
-                </h2>
-              </div>
-            )}
+            {/* WAVE 6h item 2 (2026-08-13, Noah screenshot feedback: the
+                address rendered TWICE -- once in the search field, once on
+                this bold identity line right below it). The search field
+                already carries the exact same fact: a real searched address
+                canonicalizes into the field's own `value` (handleSearch's
+                own comment), and a bare-click approximate address already
+                shows via the field's `≈ address` placeholder
+                (AddressSearch.tsx's own item 7 comment). This block --
+                LAYOUT-V3 WAVE 1d item 2's plain address/area heading, and
+                WAVE 6f item 7's "≈" approximate-hint sibling -- duplicated
+                that fact a second time, in the same shell region, adding
+                height nothing else on screen needed. Removed outright, not
+                relocated: the field is the one place the current
+                address/hint lives now. */}
           </div>
 
           {showDisclosure ? (
@@ -430,22 +476,22 @@ export default function App() {
                 selectedCell={selectedCell}
                 onCellClick={handleCellClick}
                 activeCategories={activeCategories}
-                pins={pins}
+                saved={saved}
                 highlightedTile={highlightedTile}
                 crimePrecinct={cellReport?.safety.precinct ?? null}
                 destinationHighlight={destinationHighlight}
                 routeHighlight={routeHighlight}
               />
 
-              {/* Category chips + the pinned-places list, session-only
-                  (SPEC-lens-report.md §2) -- moved below the map (Wave 6b
-                  item 1, Noah's explicit target grid: "right below [the
-                  map] is the groceries, cafes, etc. tags"). */}
+              {/* Category chips + the saved-places list, persisted via
+                  localStorage now (Wave 6f item 8) -- moved below the map
+                  (Wave 6b item 1, Noah's explicit target grid: "right below
+                  [the map] is the groceries, cafes, etc. tags"). */}
               <PreferenceBar
                 activeCategories={activeCategories}
                 onToggleCategory={toggleCategory}
-                pins={pins}
-                onRemovePin={removePin}
+                saved={saved}
+                onUnsave={removeSaved}
               />
 
               <aside className="sidepanel" aria-label="Block record">
@@ -504,7 +550,14 @@ export default function App() {
           a second button here duplicated that one navigation action rather
           than adding a distinct one. */}
       <footer className="footer">
-        <p>Built on public data — every number traces to a source you can click.</p>
+        {/* WAVE 6f item 1 (2026-08-11, Noah live-use: this line -> "ONE
+            straight line"). Shortened from "...every number traces to a
+            source you can click" -- same fact, fewer words, so it reads as
+            one line rather than wrapping. The Methodology page (DisclosurePage.tsx)
+            is where the full per-block source citations actually live --
+            this footer line was never the only place that honesty lived,
+            just the shortest correct summary of it. */}
+        <p>Built on public data — every number cites a real source.</p>
       </footer>
     </div>
   );

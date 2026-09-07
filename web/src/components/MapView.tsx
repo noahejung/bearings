@@ -6,7 +6,7 @@ import { Protocol } from "pmtiles";
 import { useEffect, useRef, useState } from "react";
 import { ApiError, getCellsIndex, getCitywide, getMapGeometry, getReach } from "../api";
 import { buildMapStyle, buildOverlayLayers, DESTINATION_ENTER_MS, DESTINATION_EXIT_MS } from "../lib/mapStyle";
-import type { PinnedPlace } from "../lib/preferences";
+import type { SavedPlace } from "../lib/preferences";
 import type { CellsIndexEntry, Citywide, Era, MapGeometry, Reach, Source } from "../types";
 import type { TileHighlightKey } from "./CellReportView";
 import { colorFor } from "./RouteBullet";
@@ -669,7 +669,7 @@ function collidesWithAny(box: ScreenBox, placed: ScreenBox[]): boolean {
 // shows THAT building's own real year/hazard record, not the block's
 // average. A hand-built DOM element behind a real `maplibregl.Marker`,
 // matching this file's own established idiom for map-anchored info
-// (`.mapstation`, `.pinmarker`) rather than MapLibre's own `Popup` (which
+// (`.mapstation`, `.savedmarker`) rather than MapLibre's own `Popup` (which
 // this app has never used, and whose default chrome -- rounded corners,
 // box-shadow -- would need overriding to match VISUAL.md's "no drop
 // shadows, no gradients" rule anyway).
@@ -753,7 +753,7 @@ export function MapView({
   selectedCell,
   onCellClick,
   activeCategories,
-  pins,
+  saved,
   highlightedTile,
   crimePrecinct,
   destinationHighlight,
@@ -772,10 +772,12 @@ export function MapView({
   // "click any hex to swap the report" feature (SPEC-precompute-v2.md
   // Phase 2). App.tsx owns what happens next (GET /api/cell/{h3}).
   onCellClick: (h3: string) => void;
-  // Session-only preference-bar state (App.tsx owns it, no persistence
-  // anywhere -- see lib/preferences.ts's own module docstring).
+  // Session-only category-chip state (App.tsx owns it, no persistence).
   activeCategories: Set<string>;
-  pins: PinnedPlace[];
+  // WAVE 6f item 8 (2026-08-11): renamed from `pins` -- now persisted via
+  // localStorage (App.tsx owns the load/save, lib/preferences.ts's own
+  // module docstring has the full mechanism).
+  saved: SavedPlace[];
   // LAYOUT-V3 WAVE 1c item 4: which side-panel tile (if any) is currently
   // hovered/expanded -- CellReportView.tsx owns the hover/expand state
   // itself and reports just this one key up; see tileHighlightGeometry()
@@ -856,7 +858,7 @@ export function MapView({
 
   const labelMarkersRef = useRef<Marker[]>([]);
   const stationMarkersRef = useRef<Marker[]>([]);
-  const pinMarkersRef = useRef<Marker[]>([]);
+  const savedMarkersRef = useRef<Marker[]>([]);
   const subjectMarkerRef = useRef<Marker | null>(null);
   // LAYOUT-V3 WAVE 1e: the one, currently-open per-building info marker (or
   // `null` when none is open) -- unlike the arrays above, at most one of
@@ -936,8 +938,8 @@ export function MapView({
       labelMarkersRef.current = [];
       stationMarkersRef.current.forEach((m) => m.remove());
       stationMarkersRef.current = [];
-      pinMarkersRef.current.forEach((m) => m.remove());
-      pinMarkersRef.current = [];
+      savedMarkersRef.current.forEach((m) => m.remove());
+      savedMarkersRef.current = [];
       subjectMarkerRef.current?.remove();
       subjectMarkerRef.current = null;
       buildingInfoMarkerRef.current?.remove();
@@ -1518,36 +1520,37 @@ export function MapView({
     );
   }, [destinationHighlight, routeHighlight, highlightedTile, mapReady, geo]);
 
-  // ---- 11. pinned-place markers (SPEC-lens-report.md §3: "a pinned place
+  // ---- 11. saved-place markers (SPEC-lens-report.md §3: "a saved place
   // is never silently absent" -- always rendered, even outside every real
-  // band). Walk-time badge is computed client-side from the subject point
-  // (see WALK_SPEED_MPS's own comment for why this one scalar, unlike the
-  // ring geometry itself, is a legitimate frontend computation) -- `null`
-  // when no address/cell is currently selected, in which case the badge
-  // shows the pin's own label with no fabricated minute count. ----
+  // band; renamed from "pinned" in WAVE 6f item 8, 2026-08-11). Walk-time
+  // badge is computed client-side from the subject point (see
+  // WALK_SPEED_MPS's own comment for why this one scalar, unlike the ring
+  // geometry itself, is a legitimate frontend computation) -- `null` when
+  // no address/cell is currently selected, in which case the badge shows
+  // the saved place's own label with no fabricated minute count. ----
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !mapReady) return;
-    pinMarkersRef.current.forEach((m) => m.remove());
-    pinMarkersRef.current = [];
+    savedMarkersRef.current.forEach((m) => m.remove());
+    savedMarkersRef.current = [];
 
     const subject = reach?.center ?? geo?.subject ?? null;
-    for (const pin of pins) {
+    for (const place of saved) {
       const el = document.createElement("div");
-      el.className = "pinmarker";
+      el.className = "savedmarker";
       const dot = document.createElement("span");
-      dot.className = "pinmarker__dot";
+      dot.className = "savedmarker__dot";
       el.appendChild(dot);
       const badge = document.createElement("span");
-      badge.className = "pinmarker__badge";
-      const minutes = subject ? Math.round(haversineM(subject, pin) / WALK_SPEED_MPS / 60) : null;
-      badge.textContent = minutes === null ? pin.label : `${pin.label} — ${minutes} min`;
+      badge.className = "savedmarker__badge";
+      const minutes = subject ? Math.round(haversineM(subject, place) / WALK_SPEED_MPS / 60) : null;
+      badge.textContent = minutes === null ? place.label : `${place.label} — ${minutes} min`;
       el.appendChild(badge);
-      pinMarkersRef.current.push(
-        new maplibregl.Marker({ element: el, anchor: "left" }).setLngLat([pin.lng, pin.lat]).addTo(map),
+      savedMarkersRef.current.push(
+        new maplibregl.Marker({ element: el, anchor: "left" }).setLngLat([place.lng, place.lat]).addTo(map),
       );
     }
-  }, [pins, reach, geo, mapReady]);
+  }, [saved, reach, geo, mapReady]);
 
   // ---- 12. the subject marker -- replaces the old hex-outline "which
   // block is selected" signal (RETIRED 2026-07-29, see this file's own top
@@ -1729,7 +1732,25 @@ export function MapView({
           deferred scope either way; this block returns with it if/when
           that lens ships. */}
 
-      {loading && <p className="mapfield__status mono">Loading the neighborhood record…</p>}
+      {/* WAVE 6e (2026-08-11, Noah live-use: "loading neighborhood record
+          seems to take a long time"). Diagnosed, not guessed: this `loading`
+          flag belongs to effect 4's own GET /api/map fetch (the map's local
+          building/street overlay) -- the side-panel REPORT (CellReportView's
+          tiles, driven by the separate, fast GET /api/cell/{h3}) is already
+          fully loaded and interactive by the time this text can even appear
+          (measured live via Playwright against this exact build: report
+          tiles paint in ~100-360ms; /api/map itself measured 2.5-15.8s in
+          the same run, consistent with the already-documented, already-
+          flagged backend cost in the 2026-08-11 Wave 6c report -- a live
+          bbox + per-cell metrics compute, not a frontend fetch-sequencing
+          bug: App.tsx already fires the cell/map/reach requests essentially
+          in parallel, confirmed in the same trace). The old copy ("Loading
+          the neighborhood record...") named the wrong thing -- it read as
+          if the whole report was still loading, when only this secondary
+          map overlay was. Reworded to name what is ACTUALLY still loading,
+          the same "loading the thing that's actually loading" fix Wave 6c
+          already applied to the route-line preview's own note. */}
+      {loading && <p className="mapfield__status mono">Loading this address's map detail…</p>}
       {error && <p className="mapfield__status mapfield__status--error mono">{error}</p>}
 
       {/* UX-FIX 2026-08-03 (audit finding #4, "amenities-tile hover has a

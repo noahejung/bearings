@@ -9,6 +9,31 @@ GTFS is a zip of CSVs. We need four of them:
 Everything that differs between feeds -- the download URL, the cache
 filename, and whether IDs need a namespace prefix -- lives in FEEDS below.
 The parsing functions never branch on which feed they're looking at.
+
+**Bake vs. per-request (2026-09-07).** stations()/shapes()/shape_routes()
+below are honest, but expensive: each one re-opens the zip and re-parses
+(and for stations(), re-merges) several CSVs. mapgeo.map_geometry() called
+all three on every single GET /api/map request, which measured 1.32s of
+every request on a full desktop CPU (0.99s stations + 0.21s shapes and
+shape_routes + a 154k-point Python bbox loop) -- pure repeated work against
+a file that cannot change inside a process lifetime.
+
+The two derived artefacts the map actually needs are therefore baked to
+Parquet once at build time (warm_cache(), called by mapgeo.warm_caches(),
+which the Dockerfile already runs at `docker build`) and sliced per request
+with DuckDB: SUBWAY_STATIONS_PATH and SUBWAY_SHAPES_PATH, read by
+stations_in_bbox() and shape_candidates_in_bbox(). This is the same
+bake-once / bbox-slice-per-request pattern sources/buildings.py and
+sources/streets.py already use for their own static geodata.
+
+It is deliberately NOT an @lru_cache on the three functions above.
+Measured 2026-09-07 against this repo's real feeds: memoising all six
+(function, feed) pairs retains +13.23MB resident, ~15.03MB of which is
+shapes("mta") alone. Render's free tier caps the whole process at 512MB and
+Wave 6h's measured 3-concurrent peak was already 487.7-496.5MB, so a
+persistent frame that size would eat most of the remaining headroom --
+exactly the failure mode Wave 6h had just finished removing from
+profile._pois(). The baked path costs 0MB resident.
 """
 
 import io
@@ -16,6 +41,7 @@ import zipfile
 from functools import lru_cache
 from pathlib import Path
 
+import duckdb
 import httpx
 import pandas as pd
 
@@ -39,6 +65,12 @@ FEEDS: dict[str, dict[str, str | None]] = {
         "prefix": "PATH:",
     },
 }
+
+# Derived, build-time-baked slices of the feeds above -- see this module's
+# own "Bake vs. per-request" docstring section for why these exist and why
+# an @lru_cache on the raw frames was measured and rejected instead.
+SUBWAY_STATIONS_PATH = config.DERIVED_DIR / "subway_stations.parquet"
+SUBWAY_SHAPES_PATH = config.DERIVED_DIR / "subway_shapes.parquet"
 
 
 def _download(feed: str) -> Path:
@@ -233,6 +265,197 @@ def shape_routes(feed: str = "mta") -> dict[str, str]:
         lambda s: "/".join(sorted(set(s.dropna())))
     )
     return grouped.to_dict()
+
+
+# ---------------------------------------------------------------------------
+# Baked subway geometry for the map's per-request bbox slice.
+# ---------------------------------------------------------------------------
+
+
+def _write_parquet(df: pd.DataFrame, path: Path) -> None:
+    """The same DuckDB COPY the sibling geodata bakes use (see
+    sources/streets.py's own _write_parquet) so all three baked map layers
+    are written the one way."""
+    config.DERIVED_DIR.mkdir(parents=True, exist_ok=True)
+    con = duckdb.connect()
+    try:
+        con.register("_df", df)
+        con.execute(f"COPY _df TO '{path.as_posix()}' (FORMAT PARQUET)")
+    finally:
+        con.close()
+
+
+def _baked_stations_frame() -> pd.DataFrame:
+    """Every real station in every feed, in the exact order
+    `pd.concat([stations(f) for f in FEEDS], ignore_index=True)` produces
+    -- `ord` preserves that order across the Parquet round trip, so a bbox
+    slice of the baked file is row-for-row identical to a bbox slice of the
+    live parse (which is what the map's station markers already rendered).
+    """
+    out = pd.concat([stations(feed) for feed in FEEDS], ignore_index=True)
+    out = out[["name", "lat", "lng", "routes"]].copy()
+    out.insert(0, "ord", range(len(out)))
+    return out
+
+
+def _baked_shapes_frame() -> pd.DataFrame:
+    """Every real GTFS shape in every feed, with its rider-facing route
+    label already joined on (shape_routes()) and its own min/max lat/lng
+    precomputed so DuckDB can prune rows before any Python touches a
+    coordinate. `ord` preserves mapgeo._subway_lines()'s own iteration
+    order: feed order first, then shapes()' own shape_id order within a
+    feed.
+
+    Geometry is stored as two FLAT `lats`/`lngs` LIST<DOUBLE> columns
+    rather than one nested `coords` LIST<LIST<DOUBLE>>, and that is a
+    measurement, not a style choice. Six concurrent bbox queries against
+    this file (the load shape three real users produce, since FastAPI runs
+    these sync handlers in a thread pool inside ONE process) measured, in
+    isolated processes, peak Working Set: +171.7MB / +150.2MB with a nested
+    coords column, +113.1MB / +106.7MB with flat columns, against +216.0MB
+    / +235.1MB for the pre-2026-09-07 live-parse path. DuckDB's Python
+    conversion of a doubly-nested LIST allocates a large transient buffer
+    per query; a single-level LIST does not. Flat was also faster (0.58s vs
+    0.93s for the same six queries). Under Render's 512MB cap that
+    difference is the whole margin.
+    """
+    records: list[dict] = []
+    for feed in FEEDS:
+        routes = shape_routes(feed)
+        for row in shapes(feed).itertuples():
+            lats = [lat for lat, _ in row.coords]
+            lngs = [lng for _, lng in row.coords]
+            records.append(
+                {
+                    "ord": len(records),
+                    "shape_id": row.shape_id,
+                    "route": routes.get(row.shape_id, ""),
+                    "lats": lats,
+                    "lngs": lngs,
+                    "min_lat": min(lats),
+                    "max_lat": max(lats),
+                    "min_lng": min(lngs),
+                    "max_lng": max(lngs),
+                }
+            )
+    return pd.DataFrame.from_records(
+        records,
+        columns=[
+            "ord",
+            "shape_id",
+            "route",
+            "lats",
+            "lngs",
+            "min_lat",
+            "max_lat",
+            "min_lng",
+            "max_lng",
+        ],
+    )
+
+
+def warm_cache() -> None:
+    """Bake data/derived/subway_stations.parquet and subway_shapes.parquet
+    if they don't already exist. Called by mapgeo.warm_caches(), which the
+    Dockerfile runs at `docker build` time and api.py's ASGI lifespan runs
+    at boot -- so no /api/map request ever pays the GTFS parse. Safe to
+    call more than once; a no-op once both files exist. Same shape as
+    sources/streets.py's warm_cache(), staleness warning included."""
+    if SUBWAY_STATIONS_PATH.exists() and SUBWAY_SHAPES_PATH.exists():
+        staleness.warn_if_stale(
+            SUBWAY_STATIONS_PATH, config.GTFS_CACHE_MAX_AGE_S, "baked subway stations"
+        )
+        staleness.warn_if_stale(
+            SUBWAY_SHAPES_PATH, config.GTFS_CACHE_MAX_AGE_S, "baked subway shapes"
+        )
+        return
+    _write_parquet(_baked_stations_frame(), SUBWAY_STATIONS_PATH)
+    _write_parquet(_baked_shapes_frame(), SUBWAY_SHAPES_PATH)
+
+
+def _not_baked(path: Path) -> FileNotFoundError:
+    return FileNotFoundError(
+        f"{path} has not been baked yet -- call bearings.sources.gtfs."
+        "warm_cache() first (mapgeo.warm_caches() does this; the Dockerfile's "
+        "build-time step and api.py's startup handler both call that). Loud "
+        "on purpose: an unbaked subway layer must never come back as an "
+        "empty one."
+    )
+
+
+def stations_in_bbox(bbox: dict) -> list[dict]:
+    """Every real station inside `bbox`, as {"name", "lat", "lng",
+    "routes"} -- a DuckDB slice of the baked table, row for row identical
+    to filtering the live parse the same way."""
+    if not SUBWAY_STATIONS_PATH.exists():
+        raise _not_baked(SUBWAY_STATIONS_PATH)
+    con = duckdb.connect()
+    try:
+        rows = con.execute(
+            f"""
+            SELECT name, lat, lng, routes
+            FROM read_parquet('{SUBWAY_STATIONS_PATH.as_posix()}')
+            WHERE lat BETWEEN ? AND ? AND lng BETWEEN ? AND ?
+            ORDER BY ord
+            """,
+            [bbox["south"], bbox["north"], bbox["west"], bbox["east"]],
+        ).fetchall()
+    finally:
+        con.close()
+    return [
+        {"name": name, "lat": float(lat), "lng": float(lng), "routes": list(routes)}
+        for name, lat, lng, routes in rows
+    ]
+
+
+def shape_candidates_in_bbox(bbox: dict) -> list[dict]:
+    """Every baked shape whose OWN bounding box overlaps `bbox`, as
+    {"shape_id", "route", "coords"} in mapgeo._subway_lines()'s original
+    order.
+
+    Deliberately a SUPERSET, not the answer: a shape whose bbox overlaps
+    can still have every one of its vertices outside `bbox` (subway shapes
+    are long and diagonal). The exact "does this line actually pass through
+    the box" test stays where it already was and already had coverage --
+    mapgeo._shape_touches_bbox() -- rather than being re-implemented in SQL
+    where the two could drift apart. A bbox-overlap prefilter can only ever
+    contain more rows than the vertex test, never fewer (one vertex inside
+    the box forces that row's own min/max to straddle the box on both
+    axes), so nothing real is lost; what it buys is that the per-point
+    Python loop runs over a handful of candidate lines instead of every
+    baked point in both feeds. (Measured for one real midtown bbox on
+    2026-09-07: 295 baked shapes, 228 candidates, 223 genuinely touching --
+    a near-exact prefilter here, because subway shapes are long enough that
+    a bbox overlap almost always means a real crossing.)
+
+    `strict=True` on the lats/lngs zip is deliberate: the two flat columns
+    are written from the same coordinate list and must stay the same
+    length, so a silent truncation to the shorter of the two would draw a
+    real subway line short rather than fail.
+    """
+    if not SUBWAY_SHAPES_PATH.exists():
+        raise _not_baked(SUBWAY_SHAPES_PATH)
+    con = duckdb.connect()
+    try:
+        rows = con.execute(
+            f"""
+            SELECT shape_id, route, lats, lngs
+            FROM read_parquet('{SUBWAY_SHAPES_PATH.as_posix()}')
+            WHERE max_lat >= ? AND min_lat <= ? AND max_lng >= ? AND min_lng <= ?
+            ORDER BY ord
+            """,
+            [bbox["south"], bbox["north"], bbox["west"], bbox["east"]],
+        ).fetchall()
+    finally:
+        con.close()
+    return [
+        {
+            "shape_id": shape_id,
+            "route": route,
+            "coords": [[float(a), float(b)] for a, b in zip(lats, lngs, strict=True)],
+        }
+        for shape_id, route, lats, lngs in rows
+    ]
 
 
 def feed_for_stop(stop_id: str) -> str:

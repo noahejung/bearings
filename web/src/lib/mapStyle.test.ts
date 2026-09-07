@@ -138,6 +138,121 @@ describe("buildMapStyle (basemap)", () => {
       expect(nearest[0]).toBeLessThan(realShoreLng);
     }
   });
+
+  // WAVE 6f item 9 (2026-08-11, Noah: "hard-edged dark gray diagonal band
+  // sweeping Greenpoint -> Newtown Creek -> LIC"). The band itself turned
+  // out to be a real, malformed polygon in third-party Protomaps tile data
+  // (see NEWTOWN_CREEK_BAD_ZONE's own comment in mapStyle.ts for the full
+  // live diagnosis) -- this codebase controls none of THOSE vertices, so
+  // it can't be unit-tested here. What this codebase DOES control is every
+  // hand-plotted polygon it authors itself (NJ_MASK_POLYGON,
+  // NEWTOWN_CREEK_BAD_ZONE, and any future one) -- a self-intersecting/
+  // bowtie ring in ONE of those would earcut-mistriangulate into exactly
+  // this same class of stray-geometry bug, just from a bug THIS repo
+  // introduced instead of a third party. This generic, ring-agnostic
+  // validity check runs against EVERY geojson Polygon source baked into
+  // buildMapStyle()'s own output (not a hardcoded list of two names), so a
+  // future mask polygon is covered automatically the moment it's added
+  // here, with no second place to remember to update.
+  function isClosedSimplePolygon(ring: [number, number][]): { closed: boolean; simple: boolean } {
+    const closed = ring.length > 3 && ring[0][0] === ring[ring.length - 1][0] && ring[0][1] === ring[ring.length - 1][1];
+    // Real edges only -- the ring's own last point duplicates the first
+    // (the "closed" check above), so edges run [0,1), not through the
+    // duplicate.
+    const n = ring.length - 1;
+    const edges: [[number, number], [number, number]][] = [];
+    for (let i = 0; i < n; i++) edges.push([ring[i], ring[(i + 1) % n]]);
+
+    function ccw(a: [number, number], b: [number, number], c: [number, number]): boolean {
+      return (c[1] - a[1]) * (b[0] - a[0]) > (b[1] - a[1]) * (c[0] - a[0]);
+    }
+    function segmentsIntersect(
+      a: [number, number],
+      b: [number, number],
+      c: [number, number],
+      d: [number, number],
+    ): boolean {
+      return ccw(a, c, d) !== ccw(b, c, d) && ccw(a, b, c) !== ccw(a, b, d);
+    }
+
+    let simple = true;
+    for (let i = 0; i < edges.length && simple; i++) {
+      for (let j = i + 1; j < edges.length; j++) {
+        // Adjacent edges (including the wrap-around pair) legitimately
+        // share an endpoint -- not a self-intersection, skip.
+        if (j === i + 1 || (i === 0 && j === edges.length - 1)) continue;
+        if (segmentsIntersect(edges[i][0], edges[i][1], edges[j][0], edges[j][1])) {
+          simple = false;
+          break;
+        }
+      }
+    }
+    return { closed, simple };
+  }
+
+  it("every hand-plotted mask polygon baked into the style is a real closed, non-self-intersecting ring", () => {
+    const style = buildMapStyle("https://example.com/tiles/nyc-basemap.pmtiles");
+    let checked = 0;
+    for (const [sourceId, source] of Object.entries(style.sources)) {
+      if (source.type !== "geojson") continue;
+      const data = (source as { data: unknown }).data as {
+        type: string;
+        geometry?: { type: string; coordinates?: unknown };
+      };
+      if (data.type !== "Feature" || data.geometry?.type !== "Polygon") continue;
+      const ring = (data.geometry.coordinates as [number, number][][])[0];
+      const { closed, simple } = isClosedSimplePolygon(ring);
+      expect(closed, `${sourceId}'s polygon ring is not closed (first point != last point)`).toBe(true);
+      expect(simple, `${sourceId}'s polygon ring is self-intersecting (a bowtie) -- this is exactly the earcut-mistriangulation bug class WAVE 6f item 9 diagnosed in third-party tile data; this repo's OWN masks must never ship one`).toBe(true);
+      checked++;
+    }
+    // A real regression guard, not a vacuous pass: this must find at least
+    // the two masks this file bakes today (nj-mask, newtown-creek-mask) --
+    // if a future refactor moved mask polygons to a shape this test can't
+    // see (e.g. a different source type), this count catches that too.
+    expect(checked).toBeGreaterThanOrEqual(2);
+  });
+
+  // WAVE 6f item 9 -- the mitigation's own layering contract: the cancel
+  // fill is fully opaque and sits above roads-minor/roads-major (painted
+  // near the top of this style), so without a repaint, real streets inside
+  // NEWTOWN_CREEK_BAD_ZONE would vanish -- a worse regression than the bug
+  // this wave fixes. This is the direct regression guard for that.
+  it("repaints roads-minor/roads-major after the Newtown Creek cancel fill, and repaints the creek's real line last", () => {
+    const style = buildMapStyle("https://example.com/tiles/nyc-basemap.pmtiles");
+    const ids = style.layers.map((l) => l.id);
+    const cancelIdx = ids.indexOf("newtown-creek-mask-fill");
+    expect(cancelIdx).toBeGreaterThan(-1);
+    expect(ids.indexOf("roads-minor-repaint")).toBeGreaterThan(cancelIdx);
+    expect(ids.indexOf("roads-major-repaint")).toBeGreaterThan(cancelIdx);
+    expect(ids.indexOf("newtown-creek-line")).toBeGreaterThan(ids.indexOf("roads-minor-repaint"));
+    expect(ids.indexOf("newtown-creek-line")).toBeGreaterThan(ids.indexOf("roads-major-repaint"));
+
+    // The repaints must be REAL copies (same filter/paint), not stubs --
+    // regression guard against someone "fixing" a duplicate-id lint error
+    // by hollowing one out instead of keeping both in sync.
+    const original = style.layers.find((l) => l.id === "roads-minor") as { filter: unknown; paint: unknown };
+    const repaint = style.layers.find((l) => l.id === "roads-minor-repaint") as { filter: unknown; paint: unknown };
+    expect(repaint.filter).toEqual(original.filter);
+    expect(repaint.paint).toEqual(original.paint);
+  });
+
+  // The honest fallback itself: a real river/stream/strait LineString from
+  // the SAME "water" source-layer the buggy polygon fill comes from --
+  // never a hand-plotted guess at the creek's real path.
+  it("newtown-creek-line reads real river/stream/strait LineStrings from the basemap's own water source-layer", () => {
+    const style = buildMapStyle("https://example.com/tiles/nyc-basemap.pmtiles");
+    const line = style.layers.find((l) => l.id === "newtown-creek-line") as {
+      type: string;
+      source: string;
+      "source-layer"?: string;
+      filter: unknown[];
+    };
+    expect(line.type).toBe("line");
+    expect(line.source).toBe("basemap");
+    expect(line["source-layer"]).toBe("water");
+    expect(line.filter).toEqual(["in", ["get", "kind"], ["literal", ["river", "stream", "strait"]]]);
+  });
 });
 
 describe("buildOverlayLayers (MapView's own app layers)", () => {

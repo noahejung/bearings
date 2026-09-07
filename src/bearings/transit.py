@@ -177,7 +177,7 @@ def graph() -> nx.DiGraph:
     server opens its listening socket), so this cost lands at boot, never
     inside a live request, matching this codebase's own established
     "nothing pays the cold-boot cost at request time" rule for every other
-    warm_caches() cache (_pois(), _anchor_times(), etc.)."""
+    warm_caches() cache (_ensure_pois_baked(), _anchor_times(), etc.)."""
     return build_graph()
 
 

@@ -179,22 +179,6 @@ export interface MapStation {
   routes: string[];
 }
 
-// Five real per-cell metrics (VISUAL.md §5, REVISED 2026-07-15 -- the
-// heat-map toggle became a metric dropdown; see bearings/mapgeo.py's own
-// module docstring for what each one measures and where its number comes
-// from). `building_age_years` is the only metric that can be `null`: the
-// real median PLUTO yearbuilt of every lot in a cell, or null when no
-// PLUTO lot with a recorded year falls in that cell -- never a fabricated
-// year standing in for "no record".
-export interface MapCell {
-  h3: string;
-  noise: number;
-  amenities: number;
-  trees: number;
-  building_age_years: number | null;
-  transit_access: number;
-}
-
 // LAYOUT-V3 WAVE 1e (SPEC-layout-v3.md §8, Noah: "what's stopping us from
 // searching up every livable building and mapping that out"). Every real
 // footprint now carries its own real PLUTO/HPD attributes -- see
@@ -226,7 +210,11 @@ export interface MapGeometry {
   streets: MapStreet[];
   subway_lines: MapLine[];
   stations: MapStation[];
-  cells: MapCell[];
+  // No per-cell metric array. GET /api/map used to carry one (five metrics
+  // x the 37 cells of a k=3 disk, three of them live Socrata calls per
+  // request); nothing in this app ever read it, and CellsIndexEntry below
+  // already carries the identical five for every cell citywide from a
+  // baked file. Removed backend-side 2026-09-07.
   basemap_note: string;
   sources: Record<string, Source>;
 }
@@ -307,13 +295,31 @@ export interface AutocompleteResult {
   lng: number;
 }
 
+// Mirrors GET /api/geocode/reverse exactly (bearings/api.py's
+// get_geocode_reverse()) -- WAVE 6f item 7. `label` is `null` only in the
+// theoretical case both geocode.reverse_geocode() AND citywide.
+// nearest_neighborhood() come back empty (see that endpoint's own
+// docstring for why the fallback alone should never actually hit this).
+// `approximate` is always `true` -- there is no code path where this
+// endpoint hands back an authoritative geocode.
+export interface ReverseGeocodeResult {
+  label: string | null;
+  lat: number;
+  lng: number;
+  approximate: true;
+}
+
 // Mirrors GET /api/cells exactly (bearings/cellprofile.py's cells_index())
 // -- every real H3 res-9 cell citywide, flattened to just what the map
 // grid needs: an id, a centroid (so a click/hover can report a real
-// location even before the full profile loads), and the same five
-// metric-dropdown summary numbers MapCell already carries (see that
-// interface's own comment) -- but for EVERY real cell citywide, not just
-// the 37 in one address's local disk. Deliberately NOT the full per-cell
+// location even before the full profile loads), and five metric summary
+// numbers -- for EVERY real cell citywide. `building_age_years` is the
+// only one that can be `null`: the real median PLUTO yearbuilt of every
+// lot in a cell, or null when no PLUTO lot with a recorded year falls in
+// it -- never a fabricated year standing in for "no record". (This used
+// to point at MapGeometry's own MapCell for that explanation; MapCell was
+// deleted on 2026-09-07 when GET /api/map stopped shipping the field, so
+// the explanation lives here now.) Deliberately NOT the full per-cell
 // report (that's what GET /api/cell/{h3} is for, fetched only for
 // whichever one cell was actually clicked or searched).
 export interface CellsIndexEntry {
