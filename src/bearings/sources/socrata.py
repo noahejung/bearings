@@ -74,10 +74,35 @@ def fetch(
     select: str | None = None,
     where: str | None = None,
     limit: int | None = None,
+    order: str | None = None,
 ) -> pd.DataFrame:
     """Fetch a NYC Open Data set as a DataFrame.
 
     `dataset_key` is a key of config.SOCRATA_DATASETS, not a raw 4x4.
+
+    `order` is passed straight through as SODA's `$order`. **Pass
+    `order=":id"` for any multi-page fetch whose result is baked to disk.**
+    SODA does not guarantee a stable row order across pages when none is
+    given, so a plain `$limit`/`$offset` walk can serve the same row on two
+    consecutive pages -- and, as the mirror image of that, silently skip a
+    row that shifted the other way. That is not hypothetical here: it is
+    the measured cause of the duplicate rows in this repo's own baked
+    building/street files (2026-09-07). data/derived/buildings.parquet,
+    baked 2026-07-14, carried 314 exact-duplicate rows out of 1,079,572
+    (0.029%), and 626 of the 628 rows involved sat in one contiguous run at
+    file positions 149,686-150,324 -- straddling the `$offset=150000` page
+    boundary exactly. data/derived/streets.parquet carried 1,118 duplicates
+    out of 135,266 (0.827%) in the same shape. One of those duplicated
+    footprints (base_bbl 1008380069) was re-queried live on 2026-09-07 and
+    the dataset returns exactly ONE row for it, confirming the second copy
+    was a pagination artefact and never a real second building.
+
+    Left `None` by default rather than always ordering: `$order=:id` costs
+    a little on the server (2.30s vs 1.76s for a real 5-row page at
+    `$offset=149998` against the building dataset, measured live
+    2026-09-07), and the callers that fetch a single page, or that
+    client-aggregate a whole dataset into counts where row identity does
+    not matter, do not need it.
     """
     dataset_id = config.SOCRATA_DATASETS[dataset_key]  # KeyError on typo, by design
     url = f"https://{config.SOCRATA_DOMAIN}/resource/{dataset_id}.json"
@@ -95,6 +120,8 @@ def fetch(
             params["$select"] = select
         if where:
             params["$where"] = where
+        if order:
+            params["$order"] = order
 
         resp = _get_with_retry(url, params)
         rows = resp.json()

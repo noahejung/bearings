@@ -92,3 +92,46 @@ def test_rank_scales_with_lane_count_for_non_highways():
 def test_sources_cites_a_real_working_url():
     assert streets.SOURCE["name"]
     assert streets.SOURCE["url"].startswith("http")
+
+
+# --- flat lats/lngs geometry columns (2026-09-07 perf pass) ---
+# Same change, same reasoning as tests/test_buildings.py's own block --
+# see sources/buildings.py's fetch_footprints() docstring for the measured
+# reason the nested column had to go.
+
+
+def _describe(path):
+    import duckdb
+
+    con = duckdb.connect()
+    try:
+        return {name: dtype for name, dtype, *_ in con.execute(
+            f"DESCRIBE SELECT * FROM read_parquet('{path.as_posix()}')"
+        ).fetchall()}
+    finally:
+        con.close()
+
+
+def test_baked_segments_store_flat_lat_lng_columns_not_a_nested_list(warmed):
+    schema = _describe(streets._PATH)
+    assert schema.get("lats") == "DOUBLE[]"
+    assert schema.get("lngs") == "DOUBLE[]"
+    assert "coords" not in schema
+
+
+def test_baked_segments_carry_a_stable_ord_column(warmed):
+    schema = _describe(streets._PATH)
+    assert schema.get("ord") in ("BIGINT", "INTEGER", "HUGEINT")
+
+
+def test_segments_in_bbox_is_byte_deterministic_across_identical_calls(warmed):
+    first = streets.segments_in_bbox(EMPIRE_STATE_BBOX)
+    second = streets.segments_in_bbox(EMPIRE_STATE_BBOX)
+    assert first == second
+    assert len(first) > 20
+
+
+def test_a_real_bbox_carries_no_exact_duplicate_segments(warmed):
+    segments = streets.segments_in_bbox(EMPIRE_STATE_BBOX)
+    keys = [(s["physicalid"], tuple(tuple(p) for p in s["coords"])) for s in segments]
+    assert len(keys) == len(set(keys))

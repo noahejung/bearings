@@ -144,3 +144,56 @@ def test_hazard_class_c_is_a_real_zero_not_none_for_a_matched_lot_with_no_violat
     assert matched_no_hazard
     for f in matched_no_hazard:
         assert isinstance(f["hazard_class_c"], int)
+
+
+# --- flat lats/lngs geometry columns (2026-09-07 perf pass) ---
+#
+# The baked footprint geometry moved from one nested `coords`
+# LIST<LIST<DOUBLE>> column to two flat `lats`/`lngs` LIST<DOUBLE> columns.
+# That is a measurement, not a style choice -- see buildings.py's own
+# fetch_footprints() docstring for the numbers. These tests assert on the
+# real baked Parquet file, not on a fixture, because the whole point of the
+# change is what DuckDB has to materialise when it reads that file.
+
+
+def _describe(path):
+    import duckdb
+
+    con = duckdb.connect()
+    try:
+        return {name: dtype for name, dtype, *_ in con.execute(
+            f"DESCRIBE SELECT * FROM read_parquet('{path.as_posix()}')"
+        ).fetchall()}
+    finally:
+        con.close()
+
+
+def test_baked_footprints_store_flat_lat_lng_columns_not_a_nested_list(warmed):
+    schema = _describe(buildings._PATH)
+    assert schema.get("lats") == "DOUBLE[]"
+    assert schema.get("lngs") == "DOUBLE[]"
+    assert "coords" not in schema  # the nested LIST<LIST<DOUBLE>> is gone
+
+
+def test_baked_footprints_carry_a_stable_ord_column(warmed):
+    # `ord` is what footprints_in_bbox()'s ORDER BY uses -- without it the
+    # endpoint is not byte-deterministic across two identical requests.
+    schema = _describe(buildings._PATH)
+    assert schema.get("ord") in ("BIGINT", "INTEGER", "HUGEINT")
+
+
+def test_footprints_in_bbox_is_byte_deterministic_across_identical_calls(warmed):
+    first = buildings.footprints_in_bbox(EMPIRE_STATE_BBOX)
+    second = buildings.footprints_in_bbox(EMPIRE_STATE_BBOX)
+    assert first == second
+    assert len(first) > 50
+
+
+def test_a_real_bbox_carries_no_exact_duplicate_footprints(warmed):
+    # Duplicate rows in the bake are a SODA pagination artefact (see
+    # fetch_footprints()' docstring), not two real buildings -- an
+    # identical bbl AND identical geometry is the same footprint served
+    # twice, and drawing it twice is pure waste.
+    footprints = buildings.footprints_in_bbox(EMPIRE_STATE_BBOX)
+    keys = [(f["bbl"], tuple(tuple(p) for p in f["coords"])) for f in footprints]
+    assert len(keys) == len(set(keys))
