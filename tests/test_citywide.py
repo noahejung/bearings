@@ -150,5 +150,20 @@ def test_crime_caveat_is_a_real_plain_sentence():
     assert isinstance(caveat, str)
     assert len(caveat) > 40
     # States the denominator decision plainly -- no per-capita rate is
-    # computed here (see citywide.py's module docstring for why).
-    assert "percentile" in caveat.lower() or "percent" in caveat.lower()
+    # computed here (see citywide.py's module docstring for why). Asserted
+    # against that intent rather than one exact wording: the copy must still
+    # say what is being compared (raw counts), that it is NOT a per-person
+    # rate, and why (no population figure exists per area). The pre-2026-08
+    # copy carried that intent with the word "percentile"; the plain-voice
+    # rewrite (Wave 6f/6h) carries it as "Ranks raw crime counts ... not per
+    # person -- no per-area population figure exists". An assertion pinned to
+    # the retired wording is what left CI's smoke-test job red on main from
+    # 2026-08-11 onward: a stale local data/derived/citywide.json still held
+    # the old text, so the drift only ever surfaced on CI's fresh bake.
+    # Hyphens folded to spaces so the phrase check reads "per-resident" and
+    # "per resident" alike -- the retired copy hyphenated it, the current one
+    # does not, and neither spelling is the thing under test.
+    lower = caveat.lower().replace("-", " ")
+    assert "raw" in lower and "count" in lower
+    assert any(phrase in lower for phrase in ("per person", "per capita", "per resident"))
+    assert "population" in lower
