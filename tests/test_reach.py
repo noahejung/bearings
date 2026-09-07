@@ -131,3 +131,70 @@ def test_reach_is_deterministic_for_a_fixed_center():
     a = reach._bands(40.748441, -73.985656)
     b = reach._bands(40.748441, -73.985656)
     assert a == b
+
+
+# --- _stations_near() off the GTFS request path (2026-09-07) ---
+
+
+def test_stations_near_never_opens_the_gtfs_zips(loc, monkeypatch):
+    """The whole point of moving this onto the baked
+    subway_stations.parquet: GET /api/reach was the last caller still
+    re-parsing both feeds' stops/trips/stop_times/routes on every request.
+
+    gtfs._read() is the single chokepoint every zip-reading path in that
+    module goes through (stations(), shapes(), shape_routes(), stop_times()),
+    so making it explode is a precise assertion that no feed was opened --
+    stronger than timing the call, which would only say it got faster.
+    """
+
+    def explode(*args, **kwargs):
+        raise AssertionError(
+            "reach._stations_near() re-parsed a GTFS feed -- it must read the "
+            "build-time-baked subway_stations.parquet instead"
+        )
+
+    monkeypatch.setattr(reach.gtfs, "_read", explode)
+    stations = reach._stations_near(loc.lat, loc.lng, reach.band_radius_m(15))
+    assert len(stations) > 0
+    assert any(s["routes"] for s in stations)
+
+
+def test_stations_near_is_identical_to_the_old_live_parse(loc):
+    """The baked path must be row-for-row the same answer the live parse
+    gave, not merely 'about the same' -- same stations, same order, same
+    route lists. Recomputed here from gtfs.stations() directly, which is
+    what _stations_near() used to iterate."""
+    baked = reach._stations_near(loc.lat, loc.lng, reach.band_radius_m(15))
+
+    expected = []
+    for feed in reach.gtfs.FEEDS:
+        for row in reach.gtfs.stations(feed).itertuples():
+            d = _haversine_m((loc.lat, loc.lng), (row.lat, row.lng))
+            if d > reach.band_radius_m(15):
+                continue
+            band = reach._band_for(d)
+            if band is None:
+                continue
+            expected.append(
+                {
+                    "name": row.name,
+                    "lat": float(row.lat),
+                    "lng": float(row.lng),
+                    "routes": list(row.routes),
+                    "band_minutes": band,
+                }
+            )
+    assert baked == expected
+
+
+def test_reach_is_byte_deterministic_across_identical_calls(loc):
+    """Two identical GET /api/reach calls must return the identical
+    payload. They did not until 2026-09-07: _places_near()'s DuckDB query
+    had no ORDER BY, so the `places` array came back in whatever order the
+    parallel Parquet scan produced -- same set, different bytes, on every
+    call. Same defect and same fix as buildings.footprints_in_bbox()."""
+    import json
+
+    first = json.dumps(reach.reach(EMPIRE_STATE), sort_keys=False)
+    second = json.dumps(reach.reach(EMPIRE_STATE), sort_keys=False)
+    assert first == second

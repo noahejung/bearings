@@ -104,7 +104,18 @@ def _places_near(lat: float, lng: float, radius_m: float) -> list[dict]:
     mapgeo._amenity_cell_counts() reads), never a live fetch. Raises the
     same loud not-baked-yet FileNotFoundError that function's own guard
     does, rather than silently returning an empty list that looks like
-    "no places nearby" instead of "not baked yet"."""
+    "no places nearby" instead of "not baked yet".
+
+    `ORDER BY name, category, lat, lng` is what makes two identical GET
+    /api/reach calls byte-identical. Without it this query had no ordering
+    guarantee, so the `places` array came back in whatever order the
+    parallel Parquet scan happened to produce -- the same set of real
+    places, different bytes, on every call (confirmed live 2026-09-07:
+    three identical requests against the pre-change container returned
+    three different payloads). pois.parquet carries no bake-order column of
+    its own, so the sort is on the real fields rather than an `ord` the way
+    the geometry files do it; the result is the same guarantee.
+    """
     if not _POIS_PATH.exists():
         raise FileNotFoundError(
             f"{_POIS_PATH} has not been baked yet -- call bearings.profile."
@@ -120,6 +131,7 @@ def _places_near(lat: float, lng: float, radius_m: float) -> list[dict]:
             FROM read_parquet('{_POIS_PATH.as_posix()}')
             WHERE lat BETWEEN ? AND ? AND lng BETWEEN ? AND ?
               AND category IN ({cat_placeholders})
+            ORDER BY name, category, lat, lng
             """,
             [bbox["south"], bbox["north"], bbox["west"], bbox["east"], *AMENITY_CATEGORIES],
         ).fetchall()
@@ -150,33 +162,47 @@ def _stations_near(lat: float, lng: float, radius_m: float) -> list[dict]:
     """Every real subway/PATH station within `radius_m` of (lat, lng), each
     tagged with the smallest real band it falls inside.
 
-    Still a live per-request gtfs.stations() parse of both feeds. That used
-    to be shared work -- mapgeo's own station lookup made the identical
-    call on the same request -- but as of 2026-09-07 the map reads the
-    build-time-baked subway_stations.parquet instead
-    (gtfs.stations_in_bbox()), so this is now the last caller re-parsing
-    the feeds at request time. GET /api/reach was deliberately out of scope
-    for that change; moving this to gtfs.stations_in_bbox() (or a radius
-    variant of it) is a known, un-done follow-up, not an oversight.
+    Reads the build-time-baked subway_stations.parquet via
+    gtfs.stations_in_bbox(), not a live parse of both GTFS feeds. Until
+    2026-09-07 this function re-opened both zips and re-parsed
+    stops/trips/stop_times/routes on **every single GET /api/reach**, which
+    is roughly a second of that endpoint's own measured ~2.2s. mapgeo used
+    to make the identical call on the same request, so it was at least
+    shared waste; when the map moved onto the baked file earlier the same
+    day, this became the only caller left re-parsing the feeds at request
+    time, and this docstring said so.
+
+    The answer is unchanged, not merely similar. gtfs._baked_stations_frame()
+    bakes `pd.concat([stations(f) for f in FEEDS], ignore_index=True)` with
+    an `ord` column preserving exactly that order, and stations_in_bbox()
+    reads it back `ORDER BY ord` -- so this returns the same stations, in
+    the same order, with the same route lists the feed-order loop produced.
+    tests/test_reach.py asserts that equality against a real live
+    gtfs.stations() parse rather than trusting it.
+
+    The bbox is a prefilter, not the answer: a lat/lng box of half-width
+    `radius_m` strictly contains the circle of radius `radius_m`, so the
+    haversine test below still decides membership and nothing real is lost
+    at the corners.
     """
+    bbox = _bbox_for(lat, lng, radius_m)
     out: list[dict] = []
-    for feed in gtfs.FEEDS:
-        for row in gtfs.stations(feed).itertuples():
-            d = _haversine_m((lat, lng), (row.lat, row.lng))
-            if d > radius_m:
-                continue
-            band = _band_for(d)
-            if band is None:
-                continue
-            out.append(
-                {
-                    "name": row.name,
-                    "lat": float(row.lat),
-                    "lng": float(row.lng),
-                    "routes": list(row.routes),
-                    "band_minutes": band,
-                }
-            )
+    for station in gtfs.stations_in_bbox(bbox):
+        d = _haversine_m((lat, lng), (station["lat"], station["lng"]))
+        if d > radius_m:
+            continue
+        band = _band_for(d)
+        if band is None:
+            continue
+        out.append(
+            {
+                "name": station["name"],
+                "lat": float(station["lat"]),
+                "lng": float(station["lng"]),
+                "routes": list(station["routes"]),
+                "band_minutes": band,
+            }
+        )
     return out
 
 
