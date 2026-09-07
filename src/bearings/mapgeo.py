@@ -84,7 +84,6 @@ from datetime import datetime, timedelta, timezone
 
 import duckdb
 import h3
-import pandas as pd
 
 from bearings import cells, config, transit
 from bearings.sources import basemap, buildings, gtfs, hpd, overture, pluto, socrata, streets
@@ -174,34 +173,27 @@ def _subway_lines(bbox: dict) -> list[dict]:
     coordinates loaded right here (the whole subway layer is fetched once
     per address) -- filtering this existing array client-side by shape_id
     means the highlighted-route feature needs no second geometry endpoint.
+
+    Reads the build-time-baked subway_shapes.parquet (via
+    gtfs.shape_candidates_in_bbox()) rather than re-parsing both feeds'
+    shapes.txt/trips.txt/routes.txt per request, which is what this
+    function used to do -- see sources/gtfs.py's own "Bake vs. per-request"
+    docstring section for the measured cost and why an @lru_cache on the
+    raw frames was rejected. The output is unchanged: the candidate query
+    is a strict superset filtered by the same _shape_touches_bbox() test
+    this function always applied, in the same order.
     """
     lines: list[dict] = []
-    for feed in gtfs.FEEDS:
-        routes = gtfs.shape_routes(feed)
-        for row in gtfs.shapes(feed).itertuples():
-            if _shape_touches_bbox(row.coords, bbox):
-                lines.append(
-                    {
-                        "coords": [[lat, lng] for lat, lng in row.coords],
-                        "route": routes.get(row.shape_id, ""),
-                        "shape_id": row.shape_id,
-                    }
-                )
+    for cand in gtfs.shape_candidates_in_bbox(bbox):
+        if _shape_touches_bbox(cand["coords"], bbox):
+            lines.append(
+                {
+                    "coords": cand["coords"],
+                    "route": cand["route"],
+                    "shape_id": cand["shape_id"],
+                }
+            )
     return lines
-
-
-def _stations_in_bbox(bbox: dict) -> list[dict]:
-    all_stations = pd.concat(
-        [gtfs.stations(feed) for feed in gtfs.FEEDS], ignore_index=True
-    )
-    hit = all_stations[
-        all_stations["lat"].between(bbox["south"], bbox["north"])
-        & all_stations["lng"].between(bbox["west"], bbox["east"])
-    ]
-    return [
-        {"name": r.name, "lat": r.lat, "lng": r.lng, "routes": r.routes}
-        for r in hit.itertuples()
-    ]
 
 
 def _bucket_points_by_cell(
@@ -370,7 +362,7 @@ def map_geometry(lat: float, lng: float, bbl: str | None) -> dict:
     """
     subject_cell = cells.cell_for(lat, lng)
     bbox = _bbox_for(lat, lng, radius_m=BBOX_RADIUS_M)
-    stations = _stations_in_bbox(bbox)
+    stations = gtfs.stations_in_bbox(bbox)
 
     return {
         "subject": {"lat": lat, "lng": lng, "bbl": bbl, "cell": subject_cell},
@@ -386,11 +378,13 @@ def map_geometry(lat: float, lng: float, bbl: str | None) -> dict:
 
 
 def warm_caches() -> None:
-    """Bake the building-footprint and street-centreline Parquet files if
-    they don't already exist. Called once by Dockerfile's build-time step
-    and by api.py's startup handler (mirroring profile.warm_caches()'s own
-    pattern) so the first real /api/map request never pays the ~4-minute
-    citywide-fetch cost -- see sources/buildings.py and sources/streets.py.
-    Safe to call more than once; a no-op once both files exist."""
+    """Bake the building-footprint, street-centreline and subway Parquet
+    files if they don't already exist. Called once by Dockerfile's
+    build-time step and by api.py's startup handler (mirroring
+    profile.warm_caches()'s own pattern) so the first real /api/map request
+    never pays the ~4-minute citywide-fetch cost -- see
+    sources/buildings.py, sources/streets.py and sources/gtfs.py. Safe to
+    call more than once; a no-op once the files exist."""
     buildings.warm_cache()
     streets.warm_cache()
+    gtfs.warm_cache()

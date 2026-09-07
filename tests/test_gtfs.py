@@ -240,3 +240,106 @@ def test_hop_routes_shape_ids_are_namespaced_for_path_feed():
     shape_ids = {v["shape_id"] for v in hops.values() if v["shape_id"]}
     assert shape_ids, "no PATH ride-edge resolved to a shape_id at all"
     assert all(sid.startswith("PATH:") for sid in shape_ids)
+
+
+# ---------------------------------------------------------------------------
+# Baked subway geometry (2026-09-07 /api/map latency fix, Change A).
+#
+# gtfs.stations()/shapes()/shape_routes() are pure functions of a static,
+# build-time-cached zip, but mapgeo called all three on EVERY /api/map
+# request -- re-reading and re-merging the same four GTFS tables per call.
+# Measured on this machine 2026-09-07: 1.32s of every request.
+#
+# The fix bakes the two derived artefacts /api/map actually needs (a
+# stations table and a shape-geometry table, both with the route labels
+# already joined and a per-row bbox precomputed) to Parquet at build time,
+# then slices them per request with DuckDB -- the same bake-once /
+# bbox-slice-per-request pattern sources/buildings.py and sources/streets.py
+# already use, and deliberately NOT an @lru_cache on the raw frames, which
+# measured +13.23MB retained (dominated by shapes('mta') at +15.03MB single
+# item) against Render's 512MB cap.
+#
+# The contract these tests lock down is that the baked path returns
+# EXACTLY what the live-parse path returned -- same rows, same order, same
+# coordinates. A silent station-dedup regression is this module's own worst
+# historical bug (2026-07-18, Queensboro Plaza).
+# ---------------------------------------------------------------------------
+
+MIDTOWN_BBOX = {
+    "south": 40.7421,
+    "north": 40.7547,
+    "west": -73.9950,
+    "east": -73.9763,
+}
+
+
+@pytest.fixture(scope="module")
+def baked():
+    gtfs.warm_cache()
+
+
+def test_warm_cache_bakes_both_subway_parquets(baked):
+    assert gtfs.SUBWAY_STATIONS_PATH.exists()
+    assert gtfs.SUBWAY_SHAPES_PATH.exists()
+
+
+def test_stations_in_bbox_matches_the_live_gtfs_parse(baked):
+    import pandas as pd
+
+    live = pd.concat([gtfs.stations(f) for f in gtfs.FEEDS], ignore_index=True)
+    hit = live[
+        live["lat"].between(MIDTOWN_BBOX["south"], MIDTOWN_BBOX["north"])
+        & live["lng"].between(MIDTOWN_BBOX["west"], MIDTOWN_BBOX["east"])
+    ]
+    expected = [
+        {"name": r.name, "lat": r.lat, "lng": r.lng, "routes": r.routes}
+        for r in hit.itertuples()
+    ]
+    assert expected, "fixture bbox must contain real stations, not zero"
+    assert gtfs.stations_in_bbox(MIDTOWN_BBOX) == expected
+
+
+def test_shape_candidates_are_a_superset_that_reproduces_the_live_geometry(baked):
+    live: dict[str, dict] = {}
+    for feed in gtfs.FEEDS:
+        routes = gtfs.shape_routes(feed)
+        for row in gtfs.shapes(feed).itertuples():
+            live[row.shape_id] = {
+                "coords": [[lat, lng] for lat, lng in row.coords],
+                "route": routes.get(row.shape_id, ""),
+            }
+
+    def touches(coords):
+        return any(
+            MIDTOWN_BBOX["south"] <= lat <= MIDTOWN_BBOX["north"]
+            and MIDTOWN_BBOX["west"] <= lng <= MIDTOWN_BBOX["east"]
+            for lat, lng in coords
+        )
+
+    really_touching = {sid for sid, v in live.items() if touches(v["coords"])}
+    assert really_touching, "fixture bbox must contain real subway shapes"
+
+    candidates = gtfs.shape_candidates_in_bbox(MIDTOWN_BBOX)
+    candidate_ids = [c["shape_id"] for c in candidates]
+    # A per-row bbox overlap can only ever be a SUPERSET of "has a vertex
+    # inside the box" -- never a subset. Losing a real line is the failure
+    # this asserts against.
+    assert really_touching <= set(candidate_ids)
+    # And every candidate must carry byte-identical geometry and label.
+    for c in candidates:
+        assert c["coords"] == live[c["shape_id"]]["coords"]
+        assert c["route"] == live[c["shape_id"]]["route"]
+
+
+def test_the_per_request_bbox_queries_never_reparse_the_gtfs_zip(baked, monkeypatch):
+    """The whole point of Change A: a /api/map request must not touch the
+    zip at all. `_read()` is the single chokepoint every GTFS table read
+    goes through, so making it explode proves the request path is clean."""
+
+    def explode(*_a, **_kw):
+        raise AssertionError("_read() called on the per-request path -- the "
+                             "GTFS zip is being re-parsed per request again")
+
+    monkeypatch.setattr(gtfs, "_read", explode)
+    assert gtfs.stations_in_bbox(MIDTOWN_BBOX)
+    assert gtfs.shape_candidates_in_bbox(MIDTOWN_BBOX)

@@ -148,9 +148,17 @@ def _places_near(lat: float, lng: float, radius_m: float) -> list[dict]:
 
 def _stations_near(lat: float, lng: float, radius_m: float) -> list[dict]:
     """Every real subway/PATH station within `radius_m` of (lat, lng), each
-    tagged with the smallest real band it falls inside -- reuses the same
-    per-feed gtfs.stations() call mapgeo._stations_in_bbox() already makes,
-    no new fetch."""
+    tagged with the smallest real band it falls inside.
+
+    Still a live per-request gtfs.stations() parse of both feeds. That used
+    to be shared work -- mapgeo's own station lookup made the identical
+    call on the same request -- but as of 2026-09-07 the map reads the
+    build-time-baked subway_stations.parquet instead
+    (gtfs.stations_in_bbox()), so this is now the last caller re-parsing
+    the feeds at request time. GET /api/reach was deliberately out of scope
+    for that change; moving this to gtfs.stations_in_bbox() (or a radius
+    variant of it) is a known, un-done follow-up, not an oversight.
+    """
     out: list[dict] = []
     for feed in gtfs.FEEDS:
         for row in gtfs.stations(feed).itertuples():
