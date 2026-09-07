@@ -98,16 +98,60 @@ RUN curl -sL \
 # render.yaml's own documented ~260-270MB free-tier memory headroom; see
 # this dispatch's agent-report for the full measurement).
 #
-# GEOFILES/LD_LIBRARY_PATH values match nycplanning/docker-geosupport's own
-# image Config.Env exactly (confirmed via `docker inspect`), not guessed --
-# the version string ("version-26b_26.2") is baked into the path by NYC
-# Planning's own image, so this is intentionally not made "self-resolving"
-# the way OVERTURE_RELEASE/PMTILES_BUILD_HOST are elsewhere in this repo:
-# there is nothing to resolve, it's whatever path the upstream image
-# actually contains, read directly rather than pattern-guessed.
+# GEOFILES/LD_LIBRARY_PATH are RESOLVED AT BUILD TIME, not hardcoded, and
+# that correction cost a real production defect to learn.
+#
+# This block used to read `ENV GEOFILES=/geocode/version-26b_26.2/fls/`,
+# with a comment arguing that pinning the literal path was the *narrow*
+# choice: "the version string is baked into the path by NYC Planning's own
+# image, so this is intentionally not made self-resolving ... there is
+# nothing to resolve." That reasoning was wrong, because the stage above
+# pulls `nycplanning/docker-geosupport:latest` -- a MOVING tag. NYC
+# Planning ships a new Geosupport release and the directory name moves with
+# it. Confirmed live 2026-09-07: the image now contains ONLY
+# /geocode/version-26c_26.3, and no version-26b_26.2 anywhere in it.
+#
+# The failure mode is silent by construction, which is why it went
+# unnoticed. src/bearings/geosupport_geocode.py's `_engine()` catches the
+# load failure, logs one WARNING ("libgeo.so: cannot open shared object
+# file"), and returns None; geocode.py then falls back to the live NYC
+# GeoSearch HTTP API for **every single geocode**, which is exactly what
+# the Geosupport copy here exists to avoid. Nothing 500s, nothing crashes,
+# the app just quietly stops using its own fast offline geocoder and takes
+# on a hard per-request dependency on a third-party service instead.
+#
+# Verified against the real deployment at bearings.onrender.com on
+# 2026-09-07, during a window when GeoSearch itself was returning 503:
+# every address the live process had not already memoised in geocode.py's
+# own @lru_cache came back 500 -- including borough-qualified ones ("1 Wall
+# St, Manhattan", "89 Bowery, Manhattan") that Geosupport parses and
+# resolves with no network at all. A working Geosupport serves those
+# offline; the live service could not serve one.
+#
+# So: glob the version directory, fail the build LOUDLY if the assumption
+# ("exactly one version-* directory, containing lib/libgeo.so and fls/")
+# ever breaks again, and symlink it to a stable /geocode/current that the
+# two static ENV lines below point at. The build-time smoke check further
+# down (see "Prove Geosupport actually loads") turns a silent fallback into
+# a failed build.
 COPY --from=geosupport-data /geocode /geocode
-ENV GEOFILES=/geocode/version-26b_26.2/fls/
-ENV LD_LIBRARY_PATH=:/geocode/version-26b_26.2/lib/
+RUN set -eu; \
+    found="$(find /geocode -maxdepth 1 -type d -name 'version-*' | sort)"; \
+    count="$(printf '%s' "$found" | grep -c . || true)"; \
+    if [ "$count" != "1" ]; then \
+      echo "FATAL: expected exactly one /geocode/version-* directory in" \
+           "nycplanning/docker-geosupport, found $count:" >&2; \
+      ls -la /geocode >&2; \
+      exit 1; \
+    fi; \
+    ln -s "$found" /geocode/current; \
+    test -f /geocode/current/lib/libgeo.so \
+      || { echo "FATAL: $found has no lib/libgeo.so" >&2; exit 1; }; \
+    test -d /geocode/current/fls \
+      || { echo "FATAL: $found has no fls/ data directory" >&2; exit 1; }; \
+    echo "geosupport resolved: $found -> /geocode/current"
+ENV GEOFILES=/geocode/current/fls/
+ENV LD_LIBRARY_PATH=:/geocode/current/lib/
 
 WORKDIR /app
 
@@ -125,6 +169,30 @@ RUN uv sync --frozen --no-install-project --no-dev
 COPY src/ ./src/
 COPY README.md ./
 RUN uv sync --frozen --no-dev
+
+# ----------------------------------------------------------------------
+# Prove Geosupport actually loads, at build time, in this exact image.
+#
+# The ENV/symlink block above makes a WRONG path fail the build. This makes
+# a path that is right-but-unusable -- a glibc mismatch, a truncated COPY,
+# a future upstream layout change that keeps the directory name but moves
+# libgeo.so -- fail the build too. Both are the same defect from the app's
+# point of view: geosupport_geocode._engine() returns None, logs one
+# WARNING, and every geocode silently falls through to the live GeoSearch
+# HTTP API forever after.
+#
+# A real address through the real native library, not an import check:
+# `import geosupport` succeeds fine without the C library present (see
+# src/bearings/geosupport_geocode.py's own module docstring on exactly that
+# point), so importing it proves nothing. 350 5TH AVE, MANHATTAN is the
+# Empire State Building -- this repo's standard fixture, used the same way
+# in tests/test_reach.py and tests/test_mapgeo.py.
+# ----------------------------------------------------------------------
+RUN uv run python -c "\
+from bearings import geosupport_geocode as g; \
+r = g.try_geocode('350 5TH AVE, MANHATTAN'); \
+assert r.bbl and r.lat and r.lng, (r.label, r.bbl, r.lat, r.lng); \
+print('geosupport smoke ok:', r.label, r.bbl, r.lat, r.lng)"
 
 # The built frontend from stage 1 -- api.py mounts this at "/" if present.
 COPY --from=frontend-build /app/web/dist ./web/dist
