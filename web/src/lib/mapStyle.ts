@@ -3,9 +3,10 @@ import type { StyleSpecification } from "maplibre-gl";
 // The tDR steel-set MapLibre style, authored ourselves (VISUAL.md §5,
 // REVISED 2026-07-15): "we author the entire map style ourselves (land
 // bone, water/parks steel, streets ink, labels in our grotesk), so the
-// base is tDR, not someone else's look". Every colour here is one of the
-// four locked tokens (web/src/styles/index.css's --bone/--ink/--steel/
-// --red) -- no gradients, no third colour.
+// base is tDR, not someone else's look". Every colour here is a locked
+// token (web/src/styles/index.css's --bone/--ink/--steel/--red, plus the
+// two GROUND-ONLY tones --park/--water added 2026-09-07 -- see PARK/WATER
+// below) -- no gradients, no literal that isn't a token.
 //
 // Source-layer names (earth/water/landuse/roads) and their `kind` values
 // are the real Protomaps Basemap v4 schema -- confirmed live 2026-07-15
@@ -27,6 +28,30 @@ const BONE = "#EDE9DE";
 const INK = "#111111";
 const STEEL = "#8A8D8F";
 const RED = "#D7263D";
+
+// MAP-COLOUR PASS (2026-09-07; retro 2026-08-13 decision #5, Noah: "muted
+// desaturated green/water -- amends the four-value palette"; VISUAL.md §2
+// "Ground tones -- REVISED 2026-09-07"). Two GROUND-ONLY tokens for the
+// basemap's open space and water. Before this pass both were STEEL washes
+// over BONE (0.22 / 0.5 fill-opacity), i.e. zero chroma: the river read as
+// a flat grey slab the same family as the steel building mass, and parks
+// as a faint grey smudge. These are the on-screen colours those washes
+// composited to (OKLab L 0.871 / 0.791 -- unchanged), with a little
+// chroma added in the hue direction of the thing they stand for (sage
+// green / grey-blue; OKLCH C 0.045 -- RED's is 0.209, so the accent stays
+// the only saturated thing on the sheet). Chosen by measurement, not eye
+// (this pass's contrast.py, archived in its report): INK-label and STEEL-
+// building contrast against the new ground is unchanged to within 0.15
+// (WCAG), while ground-vs-bone and red-vs-ground OKLab separation both
+// rise. Painted fully OPAQUE (not a wash) so the same token reads
+// identically everywhere -- over plain earth, over nj-mask-fill's dim, and
+// for the Newtown Creek centreline repaint -- no double-blend seams.
+// Ground only: no data layer (buildings, streets, subway, reach, crime
+// tint, citywide grid, previews) may use these -- mapStyle.test.ts pins
+// that. Mirrored as --park/--water in index.css's token block (MapLibre
+// paints from JS strings; it cannot read a CSS custom property).
+const PARK = "#CBDBBD";
+const WATER = "#9DC2D1";
 
 // MOTION WAVE (2026-08-03, SPEC "data-viz animations wave" item 3, "zone-
 // preview fades/scales in (~200ms) and out faster"). Exported (not a
@@ -144,8 +169,8 @@ const NEWTOWN_CREEK_BAD_ZONE: [number, number][] = [
 ];
 
 // Real Protomaps Basemap `landuse` `kind` values that read as green/open
-// space -- steel, not a fifth colour, per VISUAL.md §2's "no colour
-// outside the four".
+// space -- painted with the PARK ground token (2026-09-07; was a STEEL
+// wash under the original four-colour rule -- see PARK's own comment).
 const OPEN_SPACE_KINDS = [
   "park",
   "forest",
@@ -255,14 +280,14 @@ export function buildMapStyle(tilesUrl: string): StyleSpecification {
         source: "basemap",
         "source-layer": "landuse",
         filter: ["in", ["get", "kind"], ["literal", OPEN_SPACE_KINDS]],
-        paint: { "fill-color": STEEL, "fill-opacity": 0.22 },
+        paint: { "fill-color": PARK, "fill-opacity": 1 },
       },
       {
         id: "water",
         type: "fill",
         source: "basemap",
         "source-layer": "water",
-        paint: { "fill-color": STEEL, "fill-opacity": 0.5 },
+        paint: { "fill-color": WATER, "fill-opacity": 1 },
       },
       ROADS_MINOR,
       ROADS_MAJOR,
@@ -306,7 +331,7 @@ export function buildMapStyle(tilesUrl: string): StyleSpecification {
         type: "fill",
         source: "basemap",
         "source-layer": "water",
-        paint: { "fill-color": STEEL, "fill-opacity": 0.5 },
+        paint: { "fill-color": WATER, "fill-opacity": 1 },
       },
       {
         // WAVE 6f item 9 -- see NEWTOWN_CREEK_BAD_ZONE's own comment above
@@ -364,14 +389,17 @@ export function buildMapStyle(tilesUrl: string): StyleSpecification {
         // were never part of the bug -- only the `kind: "water"`/`"ocean"`
         // POLYGON features were. A real river/stream centreline, not a
         // guessed or hand-plotted shape. Painted last (topmost) so it's
-        // never hidden under the road repaint above.
+        // never hidden under the road repaint above. Same WATER token as
+        // the fill it stands in for (2026-09-07), so where the centreline
+        // meets un-masked water at the rectangle's edge there is no hue
+        // seam between the two -- mapStyle.test.ts pins the equality.
         id: "newtown-creek-line",
         type: "line",
         source: "basemap",
         "source-layer": "water",
         filter: ["in", ["get", "kind"], ["literal", ["river", "stream", "strait"]]],
         layout: { "line-cap": "round", "line-join": "round" },
-        paint: { "line-color": STEEL, "line-width": 2, "line-opacity": 0.8 },
+        paint: { "line-color": WATER, "line-width": 2, "line-opacity": 1 },
       },
     ],
   };

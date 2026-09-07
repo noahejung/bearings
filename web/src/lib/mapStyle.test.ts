@@ -494,3 +494,67 @@ describe("buildDestinationPreviewLayers (getting-around zone preview, §5.3)", (
     expect(ids.indexOf("destination-rings-fill")).toBeGreaterThan(ids.indexOf("tile-highlight-points"));
   });
 });
+
+// MAP-COLOUR PASS (2026-09-07, retro 2026-08-13 decision #5: "muted
+// desaturated green/water -- amends the four-value palette"; VISUAL.md §2
+// "Ground tones -- REVISED 2026-09-07"). Before this pass the basemap's
+// parks and water were STEEL washes over BONE (0.22 / 0.5 opacity) -- zero
+// chroma, so water read as a flat grey slab and parks as a faint grey
+// smudge. Two new GROUND-ONLY tokens replace them; every DATA layer
+// (buildings, streets, subway, reach, crime tint, citywide grid, previews)
+// keeps ink/steel/red/bone exactly, so the data reads MORE clearly against
+// the ground, not less. Picked by measurement (contrast.py, this pass's
+// report): same OKLab lightness as the old composites (INK/STEEL contrast
+// vs ground unchanged to within 0.15), chroma 0.045 (RED's is 0.209).
+const PARK = "#CBDBBD";
+const WATER = "#9DC2D1";
+const GROUND_LAYERS = ["open-space", "water", "water-unmasked", "newtown-creek-line"];
+
+function paintJson(layer: { paint?: unknown }): string {
+  return JSON.stringify(layer.paint ?? {}).toUpperCase();
+}
+
+describe("ground tones (map-colour pass, 2026-09-07)", () => {
+  const style = buildMapStyle("https://example.com/tiles/nyc-basemap.pmtiles");
+  const byId = (id: string) =>
+    style.layers.find((l) => l.id === id) as { paint: Record<string, unknown> } | undefined;
+
+  it("paints open space with the PARK token, fully opaque (a real ground colour, not a wash)", () => {
+    expect(byId("open-space")?.paint["fill-color"]).toBe(PARK);
+    expect(byId("open-space")?.paint["fill-opacity"]).toBe(1);
+  });
+
+  it("paints water and water-unmasked with the WATER token, fully opaque", () => {
+    for (const id of ["water", "water-unmasked"]) {
+      expect(byId(id)?.paint["fill-color"]).toBe(WATER);
+      expect(byId(id)?.paint["fill-opacity"]).toBe(1);
+    }
+  });
+
+  it("the Newtown Creek centreline repaint uses the SAME water token as the fill it stands in for (no seam)", () => {
+    expect(byId("newtown-creek-line")?.paint["line-color"]).toBe(byId("water")?.paint["fill-color"]);
+  });
+
+  it("no other basemap layer uses a ground token (bg/earth/masks stay BONE, roads stay INK)", () => {
+    for (const layer of style.layers) {
+      if (GROUND_LAYERS.includes(layer.id)) continue;
+      expect(paintJson(layer), layer.id).not.toContain(PARK);
+      expect(paintJson(layer), layer.id).not.toContain(WATER);
+    }
+  });
+
+  it("no DATA layer uses a ground token -- buildings/streets/subway/grid/highlight/reach/preview keep ink/steel/red", () => {
+    const dataLayers = [
+      ...(buildOverlayLayers() ?? []),
+      ...(buildCitywideGridLayers() ?? []),
+      ...(buildTileHighlightLayers() ?? []),
+      ...(buildReachLayers() ?? []),
+      ...(buildDestinationPreviewLayers() ?? []),
+    ];
+    expect(dataLayers.length).toBeGreaterThan(5);
+    for (const layer of dataLayers) {
+      expect(paintJson(layer), layer.id).not.toContain(PARK);
+      expect(paintJson(layer), layer.id).not.toContain(WATER);
+    }
+  });
+});
