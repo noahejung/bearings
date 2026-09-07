@@ -403,25 +403,18 @@ const MAP_GEOMETRY = {
     { coords: [[40.748, -73.986], [40.75, -73.984]], route: "B/D/F/M" },
   ],
   stations: [{ name: "34 St-Herald Sq", lat: 40.7497, lng: -73.9877, routes: ["B", "D", "F", "M"] }],
-  cells: Array.from({ length: 37 }, (_, i) => ({
-    h3: i === 0 ? ESB_CELL : `892a100d2d7ff${i.toString().padStart(2, "0")}`,
-    noise: i === 0 ? 42 : i,
-    amenities: i === 0 ? 12 : i % 5,
-    trees: i === 0 ? 8 : i % 4,
-    building_age_years: i === 3 ? null : 1930 + i,
-    transit_access: i === 0 ? 3 : i % 2,
-  })),
+  // No `cells` array and no 311/amenity/tree/transit_access source
+  // entries: GET /api/map stopped returning both on 2026-09-07 (nothing
+  // read them, and they cost three live Socrata calls per request). This
+  // fixture mirrors the real response, so it dropped them too.
   basemap_note: "Every layer is real, drawn from public records...",
   sources: {
     basemap: { name: "Protomaps Basemap (OpenStreetMap + Natural Earth)", url: "https://docs.protomaps.com/basemaps/downloads" },
     subway: { name: "MTA GTFS + PATH GTFS", url: "http://web.mta.info/developers/data/nyct/subway/google_transit.zip" },
-    cells: { name: "NYC 311", url: "https://data.cityofnewyork.us/d/erm2-nwe9" },
     buildings: { name: "NYC Building Footprints", url: "https://data.cityofnewyork.us/d/5zhs-2jue" },
     streets: { name: "NYC Street Centerline (CSCL)", url: "https://data.cityofnewyork.us/d/inkn-q76z" },
-    amenities: { name: "Overture Maps Places", url: "https://docs.overturemaps.org/guides/places/" },
-    trees: { name: "NYC Street Tree Census", url: "https://data.cityofnewyork.us/d/uvpi-gqnh" },
     building_age: { name: "NYC PLUTO", url: "https://data.cityofnewyork.us/d/64uk-42ks" },
-    transit_access: { name: "MTA GTFS + PATH GTFS", url: "http://web.mta.info/developers/data/nyct/subway/google_transit.zip" },
+    hazards: { name: "NYC HPD", url: "https://data.cityofnewyork.us/d/wvxf-dwi5" },
   },
 };
 

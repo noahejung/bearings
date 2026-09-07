@@ -248,11 +248,13 @@ def test_map_returns_the_contract_shape(client):
         "streets",
         "subway_lines",
         "stations",
-        "cells",
         "basemap_note",
         "sources",
     }
-    assert len(body["cells"]) == 37
+    # No `cells` key (removed 2026-09-07 -- see mapgeo.py's own docstring:
+    # five per-cell metrics nothing read, costing three live Socrata calls
+    # per request; GET /api/cells serves the same five, baked, citywide).
+    assert "cells" not in body
     assert len(body["subway_lines"]) > 0
     # Empire State's block is dense -- both new base layers must carry real
     # geometry here, not just a structurally-present empty list.

@@ -2,10 +2,10 @@
 
 Empire State Building (350 5th Ave) is the fixture address -- it sits
 directly on top of dense subway service (B/D/F/M/N/Q/R/W all within a few
-hundred metres) and inside one of the noisiest 311 corridors in the city
-(factcheck.py's own threshold-calibration comment cites 1,297 complaints
-in a 400m radius here), so both the subway layer and the cell-density
-layer have a real, non-trivial signal to assert against -- not just zeros.
+hundred metres) and dense enough that the building-footprint and street
+layers have a real, non-trivial signal to assert against -- not just
+zeros. (It was also chosen for a per-cell 311 noise layer this endpoint
+carried until 2026-09-07; see the removal note further down.)
 """
 
 import pytest
@@ -13,7 +13,6 @@ import pytest
 from bearings import geocode, mapgeo, profile
 
 EMPIRE_STATE = "350 5th Ave, Manhattan"
-QUIET_RIVERDALE = "3220 Netherland Ave, Bronx"
 
 
 @pytest.fixture(scope="module", autouse=True)
@@ -46,7 +45,6 @@ def test_returns_the_contract_shape(geo):
         "streets",
         "subway_lines",
         "stations",
-        "cells",
         "basemap_note",
         "sources",
     }
@@ -133,90 +131,68 @@ def test_stations_carry_their_real_served_routes(geo):
     assert set(herald["routes"]) >= {"B", "D", "F", "M"}
 
 
-def test_cells_cover_the_full_k3_disk_and_include_the_subject_cell(geo):
-    # k=3 disk around one cell = 1 + 3*k*(k+1) = 37 cells.
-    assert len(geo["cells"]) == 37
-    h3_indices = {c["h3"] for c in geo["cells"]}
-    assert geo["subject"]["cell"] in h3_indices
+# ---------------------------------------------------------------------------
+# The per-cell metric block that used to live here is gone (2026-09-07).
+#
+# map_geometry() used to return a `cells` array: five metrics
+# (noise/amenities/trees/building_age_years/transit_access) for all 37
+# cells of a k=3 disk, which cost three live, uncached Socrata round trips
+# on every single GET /api/map request. Nothing rendered it. A repo-wide
+# grep on 2026-09-07 -- web/src including *.test.tsx, web/src/types.ts,
+# the Python tests, README.md, Dockerfile, render.yaml -- found no reader
+# of `geo.cells` anywhere; the only remaining consumers were these tests
+# and a fixture. The five numbers the map DOES render come from
+# GET /api/cells (cellprofile.cells_index(), a baked flat-file read),
+# which carries the identical five metrics for every real cell citywide,
+# not just the 37 in one address's disk. So this was duplicated compute,
+# on the request path, feeding nothing.
+#
+# Coverage did not disappear with it: cellprofile.py computes the same
+# five metrics at bake time and tests/test_cellprofile.py asserts on them
+# (including the same "not just zeros" and "None means no record" guards
+# these tests carried). What is asserted here now is the negative -- that
+# the endpoint no longer ships the field and no longer makes the calls.
+# ---------------------------------------------------------------------------
 
 
-def test_every_cell_carries_all_five_real_metrics(geo):
-    # Every cell was actually queried for every metric -- a real 0 (or,
-    # for building_age_years only, a real None when no PLUTO lot with a
-    # recorded year falls in that cell) is a valid value, but no metric
-    # may ever be a missing key (VISUAL.md §5's metric-dropdown revision:
-    # noise, amenities, trees, building age, transit access).
-    for c in geo["cells"]:
-        assert set(c) == {"h3", "noise", "amenities", "trees", "building_age_years", "transit_access"}
-        assert isinstance(c["noise"], int)
-        assert isinstance(c["amenities"], int)
-        assert isinstance(c["trees"], int)
-        assert isinstance(c["transit_access"], int)
-        assert c["building_age_years"] is None or isinstance(c["building_age_years"], float)
+def test_map_geometry_no_longer_returns_a_cells_field(geo):
+    assert "cells" not in geo
 
 
-def test_a_dense_noisy_address_has_at_least_one_loud_cell(geo):
-    # Guards against the "only ever observes zeros" trap: at least one
-    # cell in this genuinely loud neighbourhood must carry a real,
-    # non-trivial count -- not just structurally-present zeros everywhere.
-    assert max(c["noise"] for c in geo["cells"]) > 20
+def test_map_geometry_makes_no_live_socrata_call(loc, monkeypatch):
+    """The point of the removal: /api/map must be pure local compute over
+    baked files. socrata.fetch() is the single chokepoint all three of the
+    old live calls (311 noise, street trees, PLUTO building age) went
+    through, so making it explode proves none of them is left."""
 
+    def explode(*_a, **_kw):
+        raise AssertionError(
+            "map_geometry() made a live Socrata call -- /api/map is supposed "
+            "to read only baked files now"
+        )
 
-def test_a_quiet_address_has_real_low_or_zero_cells():
-    loc = geocode.geocode(QUIET_RIVERDALE)
+    monkeypatch.setattr("bearings.sources.socrata.fetch", explode)
     geo = mapgeo.map_geometry(loc.lat, loc.lng, loc.bbl)
-    # Riverdale is one of the quietest addresses this project has on
-    # record (factcheck.py's calibration comment: 318 complaints in a
-    # 400m radius, vs. Empire State's 1,297) -- most res-9 cells here
-    # (0.105 km^2 each, much smaller than that 400m radius) should carry
-    # single-digit or zero counts.
-    values = [c["noise"] for c in geo["cells"]]
-    assert min(values) == 0 or sorted(values)[len(values) // 2] < 20
+    # and it still returns the real layers, not an empty husk
+    assert len(geo["buildings"]) > 50
+    assert len(geo["streets"]) > 10
+    assert len(geo["subway_lines"]) > 0
+    assert len(geo["stations"]) > 0
 
 
-# --- the four new per-cell metrics (VISUAL.md §5, REVISED 2026-07-15) ---
-
-
-def test_dense_midtown_block_has_real_nontrivial_amenity_density(geo):
-    # Empire State's own 700m disk carries hundreds of real Overture POIs
-    # across the eight daily-life categories (confirmed live 2026-07-15:
-    # ~692 in a comparable box) -- guards against the "only ever zeros"
-    # trap the same way the noise test above does.
-    assert sum(c["amenities"] for c in geo["cells"]) > 100
-
-
-def test_dense_midtown_block_has_real_nontrivial_tree_density(geo):
-    # Confirmed live 2026-07-15 against the old 2015 Street Tree Census:
-    # 830 living trees in a comparable box. After the 2026-08-02 swap to
-    # NYC Parks' ForMS 2.0 Forestry Tree Points (sources/trees.py), a
-    # comparable box (this one reaches into Bryant Park) sees materially
-    # more -- confirmed live post-swap at ~2,000+ -- because this dataset's
-    # scope is Parks' full tree inventory, not curbside street trees only
-    # (see trees.py's module docstring). The >100 bound below still holds
-    # either way; not tightened, since the exact count depends on which
-    # cells the live geocode resolves into.
-    assert sum(c["trees"] for c in geo["cells"]) > 100
-
-
-def test_building_age_is_a_real_median_not_fabricated_for_empty_cells(geo):
-    with_age = [c for c in geo["cells"] if c["building_age_years"] is not None]
-    without_age = [c for c in geo["cells"] if c["building_age_years"] is None]
-    # A dense Midtown block must have real PLUTO coverage in most cells --
-    # but at least allowing that some genuinely have no lot centred there
-    # (e.g. a cell that's mostly street/park) keeps this an honest test,
-    # not one that would break the first time a real gap appears.
-    assert len(with_age) > 20
-    for c in with_age:
-        assert 1600 < c["building_age_years"] <= 2026
-    # None is a real "no record for this cell", never a fabricated 0/1900.
-    assert all(c["building_age_years"] is None for c in without_age)
-
-
-def test_transit_access_is_nonzero_near_a_dense_transit_address(geo):
-    # Empire State's own disk sits on top of several real subway stations
-    # (see test_finds_real_stations_near_a_dense_transit_address above) --
-    # at least one cell in the disk must show a real, nonzero station count.
-    assert max(c["transit_access"] for c in geo["cells"]) > 0
+def test_sources_no_longer_cite_data_the_response_does_not_carry(geo):
+    """A citation for a number that is not in the payload is the mirror of
+    this project's own "a number with no citation is a bug" rule. The 311
+    noise / Overture amenity / street-tree / transit-access citations went
+    with the `cells` field they described."""
+    assert set(geo["sources"]) == {
+        "basemap",
+        "subway",
+        "buildings",
+        "streets",
+        "building_age",
+        "hazards",
+    }
 
 
 def test_basemap_note_is_present_and_does_not_claim_an_absence(geo):
