@@ -36,7 +36,7 @@ from pathlib import Path
 import duckdb
 import pandas as pd
 
-from bearings import config, staleness
+from bearings import config, duckconn, staleness
 from bearings.sources import socrata
 
 SOURCE = {
@@ -194,7 +194,7 @@ def segments_in_bbox(bbox: dict) -> list[dict]:
             "warm_cache() first (Dockerfile's build-time step / api.py's startup "
             "handler do this automatically)."
         )
-    con = duckdb.connect()
+    con = duckconn.connect()
     try:
         rows = con.execute(
             f"""

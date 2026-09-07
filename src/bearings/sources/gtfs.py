@@ -45,7 +45,7 @@ import duckdb
 import httpx
 import pandas as pd
 
-from bearings import cells, config, staleness
+from bearings import cells, config, duckconn, staleness
 
 FEEDS: dict[str, dict[str, str | None]] = {
     "mta": {
@@ -389,7 +389,7 @@ def stations_in_bbox(bbox: dict) -> list[dict]:
     to filtering the live parse the same way."""
     if not SUBWAY_STATIONS_PATH.exists():
         raise _not_baked(SUBWAY_STATIONS_PATH)
-    con = duckdb.connect()
+    con = duckconn.connect()
     try:
         rows = con.execute(
             f"""
@@ -435,7 +435,7 @@ def shape_candidates_in_bbox(bbox: dict) -> list[dict]:
     """
     if not SUBWAY_SHAPES_PATH.exists():
         raise _not_baked(SUBWAY_SHAPES_PATH)
-    con = duckdb.connect()
+    con = duckconn.connect()
     try:
         rows = con.execute(
             f"""

@@ -32,9 +32,7 @@ the UI, with the same straight-line caveat the amenities card already uses.
 
 import math
 
-import duckdb
-
-from bearings import config
+from bearings import config, duckconn
 from bearings.geocode import geocode
 from bearings.mapgeo import AMENITY_CATEGORIES, _bbox_for
 from bearings.sources import gtfs, overture
@@ -122,7 +120,7 @@ def _places_near(lat: float, lng: float, radius_m: float) -> list[dict]:
             "warm_caches() first (api.py's startup handler does this automatically)."
         )
     bbox = _bbox_for(lat, lng, radius_m)
-    con = duckdb.connect()
+    con = duckconn.connect()
     try:
         cat_placeholders = ",".join("?" for _ in AMENITY_CATEGORIES)
         rows = con.execute(
