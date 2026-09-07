@@ -36,7 +36,7 @@ from pathlib import Path
 import duckdb
 import pandas as pd
 
-from bearings import config, staleness
+from bearings import config, duckconn, staleness
 from bearings.sources import socrata
 
 SOURCE = {
@@ -85,25 +85,31 @@ def _line_parts(the_geom: dict | None) -> list[list[list[float]]]:
     return out
 
 
-def _bbox_of(coords: list[list[float]]) -> tuple[float, float, float, float]:
-    lats = [p[0] for p in coords]
-    lngs = [p[1] for p in coords]
-    return min(lats), max(lats), min(lngs), max(lngs)
-
-
 def fetch_centerlines() -> pd.DataFrame:
     """Every real street-centreline part citywide (ferry routes excluded),
-    as a flat DataFrame ready to bake to Parquet: physicalid, coords, a
-    live-derived road-class rank, and a precomputed min/max lat/lng bbox
-    for fast row-group pruning later."""
+    as a flat DataFrame ready to bake to Parquet: `ord`, physicalid, the
+    part's geometry as two FLAT `lats`/`lngs` columns, a live-derived
+    road-class rank, and a precomputed min/max lat/lng bbox for fast
+    row-group pruning later.
+
+    Flat `lats`/`lngs` LIST<DOUBLE> columns rather than one nested
+    LIST<LIST<DOUBLE>> `coords` column, and `order=":id"` on the paginated
+    fetch, for exactly the reasons sources/buildings.py's own
+    fetch_footprints() docstring gives -- same change, same measurement,
+    same wave. `ord` is the bake order, so segments_in_bbox() can ORDER BY
+    it and be byte-deterministic across two identical requests.
+    """
     raw = socrata.fetch(
         "centerlines",
         select="the_geom,physicalid,rw_type,number_total_lanes",
         where=f"rw_type != '{_FERRY_RW_TYPE}'",
+        order=":id",
     )
 
+    ords: list[int] = []
     physicalids: list[str] = []
-    coords_col: list[list[list[float]]] = []
+    lats_col: list[list[float]] = []
+    lngs_col: list[list[float]] = []
     ranks: list[int] = []
     min_lats: list[float] = []
     max_lats: list[float] = []
@@ -118,19 +124,24 @@ def fetch_centerlines() -> pd.DataFrame:
         rank = _rank(row.rw_type, lanes)
 
         for part in _line_parts(row.the_geom):
-            min_lat, max_lat, min_lng, max_lng = _bbox_of(part)
+            lats = [p[0] for p in part]
+            lngs = [p[1] for p in part]
+            ords.append(len(ords))
             physicalids.append(row.physicalid)
-            coords_col.append(part)
+            lats_col.append(lats)
+            lngs_col.append(lngs)
             ranks.append(rank)
-            min_lats.append(min_lat)
-            max_lats.append(max_lat)
-            min_lngs.append(min_lng)
-            max_lngs.append(max_lng)
+            min_lats.append(min(lats))
+            max_lats.append(max(lats))
+            min_lngs.append(min(lngs))
+            max_lngs.append(max(lngs))
 
     return pd.DataFrame(
         {
+            "ord": ords,
             "physicalid": physicalids,
-            "coords": coords_col,
+            "lats": lats_col,
+            "lngs": lngs_col,
             "rank": ranks,
             "min_lat": min_lats,
             "max_lat": max_lats,
@@ -154,6 +165,9 @@ def warm_cache() -> None:
     segments vs. ~1.08M footprints), bakes in well under a minute."""
     if _PATH.exists():
         staleness.warn_if_stale(_PATH, config.CENTERLINES_CACHE_MAX_AGE_S, "street centrelines")
+        staleness.require_baked_columns(
+            _PATH, {"ord", "lats", "lngs"}, "baked street centrelines"
+        )
         return
     _write_parquet(fetch_centerlines(), _PATH)
 
@@ -165,6 +179,14 @@ def segments_in_bbox(bbox: dict) -> list[dict]:
     Requires warm_cache() to have baked the Parquet file first -- raises
     FileNotFoundError otherwise, matching buildings.footprints_in_bbox()'s
     loud-guard behaviour.
+
+    Reads the two flat `lats`/`lngs` columns and zips them back into the
+    same [[lat, lng], ...] shape this function has always returned -- the
+    GET /api/map JSON contract is unchanged, only the on-disk
+    representation moved (see fetch_centerlines()). `ORDER BY ord` makes
+    two identical requests byte-identical; `strict=True` on the zip makes a
+    length mismatch between the two columns fail loudly instead of drawing
+    a real street short.
     """
     if not _PATH.exists():
         raise FileNotFoundError(
@@ -172,12 +194,13 @@ def segments_in_bbox(bbox: dict) -> list[dict]:
             "warm_cache() first (Dockerfile's build-time step / api.py's startup "
             "handler do this automatically)."
         )
-    con = duckdb.connect()
+    con = duckconn.connect()
     try:
         rows = con.execute(
             f"""
-            SELECT physicalid, coords, rank FROM read_parquet('{_PATH.as_posix()}')
+            SELECT physicalid, lats, lngs, rank FROM read_parquet('{_PATH.as_posix()}')
             WHERE max_lat >= ? AND min_lat <= ? AND max_lng >= ? AND min_lng <= ?
+            ORDER BY ord
             """,
             [bbox["south"], bbox["north"], bbox["west"], bbox["east"]],
         ).fetchall()
@@ -186,8 +209,8 @@ def segments_in_bbox(bbox: dict) -> list[dict]:
     return [
         {
             "physicalid": pid,
-            "coords": [[float(p[0]), float(p[1])] for p in coords],
+            "coords": [[float(a), float(b)] for a, b in zip(lats, lngs, strict=True)],
             "rank": int(rank),
         }
-        for pid, coords, rank in rows
+        for pid, lats, lngs, rank in rows
     ]

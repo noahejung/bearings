@@ -38,7 +38,7 @@ from pathlib import Path
 import duckdb
 import pandas as pd
 
-from bearings import config, staleness
+from bearings import config, duckconn, staleness
 from bearings.sources import hpd, pluto, socrata
 
 SOURCE = {
@@ -95,20 +95,45 @@ def _ring_coords(the_geom: dict | None) -> list[list[float]] | None:
     return [[float(lat), float(lng)] for lng, lat in ring]
 
 
-def _bbox_of(coords: list[list[float]]) -> tuple[float, float, float, float]:
-    lats = [p[0] for p in coords]
-    lngs = [p[1] for p in coords]
-    return min(lats), max(lats), min(lngs), max(lngs)
-
-
 def fetch_footprints() -> pd.DataFrame:
     """Every real building footprint citywide, as a flat DataFrame ready to
-    bake to Parquet: bbl, coords (the exterior ring), and a precomputed
-    min/max lat/lng bbox for fast row-group pruning later."""
-    raw = socrata.fetch("buildings", select="the_geom,base_bbl", where=_STATUS_FILTER)
+    bake to Parquet: `ord`, bbl, the exterior ring as two FLAT `lats`/`lngs`
+    columns, and a precomputed min/max lat/lng bbox for fast row-group
+    pruning later.
 
+    **Geometry is two flat LIST<DOUBLE> columns, not one nested
+    LIST<LIST<DOUBLE>> `coords` column, and that is a measurement, not a
+    style choice.** DuckDB's Python conversion of a doubly-nested LIST
+    allocates a large transient buffer per query; a single-level LIST does
+    not. sources/gtfs.py's _baked_shapes_frame() found the same thing for
+    the (much smaller) subway-shapes file on 2026-09-07; this is that same
+    change applied to the two big files. Measured 2026-09-07 in a real
+    `docker run --memory=512m --memory-swap=512m` container (cgroup v2
+    accounting, the way Render's own 512MB cap is enforced -- see this
+    repo's agent-report for the full table): with the nested column, six
+    sequential GET /api/map calls returned HTTP 500 every single time,
+    because DuckDB refuses the allocation against the 409.5 MiB
+    memory_limit it derives from the 512MB cgroup, and three concurrent
+    light-browsing clients got the container OOM-killed outright (exit
+    137). With flat columns the identical drive completes.
+
+    `ord` is the bake order, and it exists so footprints_in_bbox() can
+    ORDER BY it -- without it that function's LEFT JOIN has no ordering
+    guarantee at all, so two identical GET /api/map requests could return
+    the same buildings in a different order. See its own docstring.
+
+    `order=":id"` on the paginated fetch is the fix for the duplicate rows
+    the 2026-07-14 bake carried; sources/socrata.py's fetch() docstring has
+    the mechanism and the measurement.
+    """
+    raw = socrata.fetch(
+        "buildings", select="the_geom,base_bbl", where=_STATUS_FILTER, order=":id"
+    )
+
+    ords: list[int] = []
     bbls: list[str | None] = []
-    coords_col: list[list[list[float]]] = []
+    lats_col: list[list[float]] = []
+    lngs_col: list[list[float]] = []
     min_lats: list[float] = []
     max_lats: list[float] = []
     min_lngs: list[float] = []
@@ -118,19 +143,24 @@ def fetch_footprints() -> pd.DataFrame:
         coords = _ring_coords(row.the_geom)
         if coords is None:
             continue
-        min_lat, max_lat, min_lng, max_lng = _bbox_of(coords)
+        lats = [p[0] for p in coords]
+        lngs = [p[1] for p in coords]
         bbl = row.base_bbl if isinstance(row.base_bbl, str) else None
+        ords.append(len(ords))
         bbls.append(bbl)
-        coords_col.append(coords)
-        min_lats.append(min_lat)
-        max_lats.append(max_lat)
-        min_lngs.append(min_lng)
-        max_lngs.append(max_lng)
+        lats_col.append(lats)
+        lngs_col.append(lngs)
+        min_lats.append(min(lats))
+        max_lats.append(max(lats))
+        min_lngs.append(min(lngs))
+        max_lngs.append(max(lngs))
 
     return pd.DataFrame(
         {
+            "ord": ords,
             "bbl": bbls,
-            "coords": coords_col,
+            "lats": lats_col,
+            "lngs": lngs_col,
             "min_lat": min_lats,
             "max_lat": max_lats,
             "min_lng": min_lngs,
@@ -211,6 +241,9 @@ def warm_cache() -> None:
     call more than once -- a no-op once both files exist."""
     if _PATH.exists():
         staleness.warn_if_stale(_PATH, config.BUILDINGS_CACHE_MAX_AGE_S, "building footprints")
+        staleness.require_baked_columns(
+            _PATH, {"ord", "lats", "lngs"}, "baked building footprints"
+        )
     else:
         _write_parquet(fetch_footprints(), _PATH)
 
@@ -240,6 +273,25 @@ def footprints_in_bbox(bbox: dict) -> list[dict]:
     FileNotFoundError otherwise (a loud, named guard) rather than silently
     returning an empty/unattributed layer that looks like "no buildings
     here" or "no record for this real building" instead of "not baked yet".
+
+    Geometry comes back out of two flat `lats`/`lngs` LIST<DOUBLE> columns
+    and is zipped into the same [[lat, lng], ...] shape this function has
+    always returned -- the JSON contract at GET /api/map is unchanged, only
+    the on-disk representation moved. See fetch_footprints()' docstring for
+    the measured reason. `strict=True` on that zip is deliberate, matching
+    gtfs.shape_candidates_in_bbox(): the two columns are written from the
+    same coordinate list and must stay the same length, so a silent
+    truncation to the shorter of the two would draw a real building's
+    outline short rather than fail.
+
+    `ORDER BY ord` is what makes two identical requests byte-identical.
+    Without it this query had no ordering guarantee whatsoever -- DuckDB is
+    free to return a LEFT JOIN's rows in whatever order its hash join
+    produces, which varies with thread count and scheduling -- so GET
+    /api/map was not deterministic across two identical calls. That is
+    invisible on screen (the map draws the same buildings either way) and
+    exactly the kind of thing that makes a before/after payload diff
+    useless, which is how it was found.
     """
     if not _PATH.exists():
         raise FileNotFoundError(
@@ -253,14 +305,16 @@ def footprints_in_bbox(bbox: dict) -> list[dict]:
             "warm_cache() first (Dockerfile's build-time step / api.py's startup "
             "handler do this automatically)."
         )
-    con = duckdb.connect()
+    con = duckconn.connect()
     try:
         rows = con.execute(
             f"""
-            SELECT b.bbl, b.coords, a.year_built, a.era, a.residential, a.hazard_class_c
+            SELECT b.bbl, b.lats, b.lngs, a.year_built, a.era, a.residential,
+                   a.hazard_class_c
             FROM read_parquet('{_PATH.as_posix()}') b
             LEFT JOIN read_parquet('{_ATTR_PATH.as_posix()}') a ON b.bbl = a.bbl
             WHERE b.max_lat >= ? AND b.min_lat <= ? AND b.max_lng >= ? AND b.min_lng <= ?
+            ORDER BY b.ord
             """,
             [bbox["south"], bbox["north"], bbox["west"], bbox["east"]],
         ).fetchall()
@@ -269,11 +323,11 @@ def footprints_in_bbox(bbox: dict) -> list[dict]:
     return [
         {
             "bbl": bbl,
-            "coords": [[float(p[0]), float(p[1])] for p in coords],
+            "coords": [[float(a), float(b)] for a, b in zip(lats, lngs, strict=True)],
             "year_built": int(year_built) if year_built is not None else None,
             "era": era,
             "residential": bool(residential) if residential is not None else None,
             "hazard_class_c": int(hazard_class_c) if hazard_class_c is not None else None,
         }
-        for bbl, coords, year_built, era, residential, hazard_class_c in rows
+        for bbl, lats, lngs, year_built, era, residential, hazard_class_c in rows
     ]
