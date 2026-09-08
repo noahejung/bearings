@@ -213,6 +213,65 @@ describe("buildMapStyle (basemap)", () => {
     expect(checked).toBeGreaterThanOrEqual(2);
   });
 
+  // FIXED 2026-09-07 (PR #2 branch, East River mask fix): the Wave 6f mask
+  // was a rectangle whose west edge (-73.978) sat on MANHATTAN's east
+  // shore, so its opaque BONE cancel erased the entire real East River from
+  // the Williamsburg Bridge to about E 61st St (~4.2 km2 of correctly-
+  // rendered water), ending in a hard horizontal line at its north edge --
+  // a worse regression than the wedge it hid, and one the old grey water
+  // wash disguised as a tone change. The mask is now a polygon following the
+  // MEASURED wedge (see NEWTOWN_CREEK_BAD_ZONE's own comment in mapStyle.ts
+  // for the per-zoom measurement). These fixed reference points pin both
+  // sides of that measurement: real mid-river East River points that must
+  // stay OUTSIDE the mask, and points on Greenpoint land that the z11/z12
+  // wedge paints as water and that must stay INSIDE it -- so a future edit
+  // can neither re-erase the river nor quietly shrink the mask off the bug.
+  function pointInRing(pt: [number, number], ring: [number, number][]): boolean {
+    // Even-odd ray cast (the same rule MapLibre's own queryRenderedFeatures
+    // uses for fill layers).
+    let inside = false;
+    for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+      const [xi, yi] = ring[i];
+      const [xj, yj] = ring[j];
+      if (yi > pt[1] !== yj > pt[1] && pt[0] < ((xj - xi) * (pt[1] - yi)) / (yj - yi) + xi) inside = !inside;
+    }
+    return inside;
+  }
+  const EAST_RIVER_REFERENCE_POINTS: [number, number][] = [
+    [-73.968, 40.745], // mid-river off E 40th St (the dispatch's reference point)
+    [-73.9715, 40.7355], // mid-river off E 23rd St
+    [-73.9725, 40.7125], // mid-river at the Williamsburg Bridge
+  ];
+  const WEDGE_REFERENCE_POINTS: [number, number][] = [
+    [-73.945, 40.725], // Greenpoint land; painted WATER by the z11/z12 wedge (live, 2026-09-07)
+    [-73.9515, 40.73], // Greenpoint land nearer the creek mouth; same
+  ];
+  function newtownCreekMaskRing(): [number, number][] {
+    const style = buildMapStyle("https://example.com/tiles/nyc-basemap.pmtiles");
+    const source = style.sources["newtown-creek-mask"] as unknown as { data: { geometry: { coordinates: [number, number][][] } } };
+    return source.data.geometry.coordinates[0];
+  }
+
+  it("the Newtown Creek mask leaves the real East River alone (fixed mid-river reference points stay outside it)", () => {
+    const ring = newtownCreekMaskRing();
+    for (const pt of EAST_RIVER_REFERENCE_POINTS) {
+      expect(
+        pointInRing(pt, ring),
+        `[${pt}] is real East River water and must NOT be inside NEWTOWN_CREEK_BAD_ZONE -- the mask's opaque BONE cancel would erase the river there again (the 2026-08-11..2026-09-07 regression)`,
+      ).toBe(false);
+    }
+  });
+
+  it("the Newtown Creek mask still covers the malformed wedge (fixed on-land wedge points stay inside it)", () => {
+    const ring = newtownCreekMaskRing();
+    for (const pt of WEDGE_REFERENCE_POINTS) {
+      expect(
+        pointInRing(pt, ring),
+        `[${pt}] is inside the live-measured malformed water wedge and MUST be inside NEWTOWN_CREEK_BAD_ZONE -- otherwise the Wave 6f band comes back`,
+      ).toBe(true);
+    }
+  });
+
   // WAVE 6f item 9 -- the mitigation's own layering contract: the cancel
   // fill is fully opaque and sits above roads-minor/roads-major (painted
   // near the top of this style), so without a repaint, real streets inside
@@ -492,5 +551,69 @@ describe("buildDestinationPreviewLayers (getting-around zone preview, §5.3)", (
     const ids = buildOverlayLayers().map((l) => l.id);
     expect(ids[ids.length - 1]).toBe("destination-point");
     expect(ids.indexOf("destination-rings-fill")).toBeGreaterThan(ids.indexOf("tile-highlight-points"));
+  });
+});
+
+// MAP-COLOUR PASS (2026-09-07, retro 2026-08-13 decision #5: "muted
+// desaturated green/water -- amends the four-value palette"; VISUAL.md §2
+// "Ground tones -- REVISED 2026-09-07"). Before this pass the basemap's
+// parks and water were STEEL washes over BONE (0.22 / 0.5 opacity) -- zero
+// chroma, so water read as a flat grey slab and parks as a faint grey
+// smudge. Two new GROUND-ONLY tokens replace them; every DATA layer
+// (buildings, streets, subway, reach, crime tint, citywide grid, previews)
+// keeps ink/steel/red/bone exactly, so the data reads MORE clearly against
+// the ground, not less. Picked by measurement (contrast.py, this pass's
+// report): same OKLab lightness as the old composites (INK/STEEL contrast
+// vs ground unchanged to within 0.15), chroma 0.045 (RED's is 0.209).
+const PARK = "#CBDBBD";
+const WATER = "#9DC2D1";
+const GROUND_LAYERS = ["open-space", "water", "water-unmasked", "newtown-creek-line"];
+
+function paintJson(layer: { paint?: unknown }): string {
+  return JSON.stringify(layer.paint ?? {}).toUpperCase();
+}
+
+describe("ground tones (map-colour pass, 2026-09-07)", () => {
+  const style = buildMapStyle("https://example.com/tiles/nyc-basemap.pmtiles");
+  const byId = (id: string) =>
+    style.layers.find((l) => l.id === id) as { paint: Record<string, unknown> } | undefined;
+
+  it("paints open space with the PARK token, fully opaque (a real ground colour, not a wash)", () => {
+    expect(byId("open-space")?.paint["fill-color"]).toBe(PARK);
+    expect(byId("open-space")?.paint["fill-opacity"]).toBe(1);
+  });
+
+  it("paints water and water-unmasked with the WATER token, fully opaque", () => {
+    for (const id of ["water", "water-unmasked"]) {
+      expect(byId(id)?.paint["fill-color"]).toBe(WATER);
+      expect(byId(id)?.paint["fill-opacity"]).toBe(1);
+    }
+  });
+
+  it("the Newtown Creek centreline repaint uses the SAME water token as the fill it stands in for (no seam)", () => {
+    expect(byId("newtown-creek-line")?.paint["line-color"]).toBe(byId("water")?.paint["fill-color"]);
+  });
+
+  it("no other basemap layer uses a ground token (bg/earth/masks stay BONE, roads stay INK)", () => {
+    for (const layer of style.layers) {
+      if (GROUND_LAYERS.includes(layer.id)) continue;
+      expect(paintJson(layer), layer.id).not.toContain(PARK);
+      expect(paintJson(layer), layer.id).not.toContain(WATER);
+    }
+  });
+
+  it("no DATA layer uses a ground token -- buildings/streets/subway/grid/highlight/reach/preview keep ink/steel/red", () => {
+    const dataLayers = [
+      ...(buildOverlayLayers() ?? []),
+      ...(buildCitywideGridLayers() ?? []),
+      ...(buildTileHighlightLayers() ?? []),
+      ...(buildReachLayers() ?? []),
+      ...(buildDestinationPreviewLayers() ?? []),
+    ];
+    expect(dataLayers.length).toBeGreaterThan(5);
+    for (const layer of dataLayers) {
+      expect(paintJson(layer), layer.id).not.toContain(PARK);
+      expect(paintJson(layer), layer.id).not.toContain(WATER);
+    }
   });
 });

@@ -67,7 +67,14 @@ table {
   width: 100%;
 }
 
-/* ---------- design tokens: four colours, no exceptions ---------- */
+/* ---------- design tokens: four colours + two map-ground tones ----------
+   The four below are the tDR steel set (VISUAL.md §2) and are the only
+   colours any UI surface or map DATA layer may use. --park/--water were
+   added 2026-09-07 (retro 2026-08-13 decision #5, VISUAL.md §2 "Ground
+   tones -- REVISED 2026-09-07") and are GROUND ONLY: the basemap's open
+   space and water in lib/mapStyle.ts, which mirrors these exact hexes as
+   PARK/WATER because MapLibre paints from JS strings and cannot read a CSS
+   custom property. Nothing else may use them; no CSS rule does today. */
 :root {
   color-scheme: light;
 
@@ -75,6 +82,8 @@ table {
   --ink: #111111;
   --steel: #8a8d8f;
   --red: #d7263d;
+  --park: #cbdbbd;
+  --water: #9dc2d1;
 
   --font-display: "Bahnschrift", "DIN Alternate", "Archivo", sans-serif;
   --font-mono: "Cascadia Mono", "Consolas", ui-monospace, "SFMono-Regular", monospace;
