@@ -154,18 +154,74 @@ const NJ_MASK_POLYGON: [number, number][] = [
 // established precedent for a real, confirmed-live MapLibre/tile
 // rendering defect that can't be fixed at the source (WAVE 6c item 1's
 // maxPitch cap, this file's own comment above it): a small, honestly-
-// documented, narrowly-scoped mitigation, not a guessed one. Verified
-// live across zoom 11-15 and multiple pan positions (west/east/north/
-// south) that this rectangle comfortably covers every screen position the
-// defect ever painted, without being large enough to swallow unrelated,
-// correctly-rendered water elsewhere (the Hudson, Jamaica Bay, the
-// Rockaways are all far outside it).
+// documented, narrowly-scoped mitigation, not a guessed one.
+//
+// REVISED 2026-09-07 (East River mask fix, PR #2 branch). Wave 6f shipped
+// this zone as a hand-plotted RECTANGLE, lng -73.978..-73.915 x lat
+// 40.705..40.755, and claimed it did not "swallow unrelated, correctly-
+// rendered water". That claim was wrong in the one direction that
+// mattered: -73.978 is MANHATTAN's east shore at those latitudes (the FDR
+// runs at about -73.972 off E 23rd), so the opaque cancel below erased the
+// entire real East River from the Williamsburg Bridge (40.713) to about
+// E 61st St / the south tip of Roosevelt Island (40.755) -- measured
+// against the z15 tiles as 14,540 grid cells of about 17 m, ~4.2 km2 of
+// real water -- leaving only the 2 px "strait" centreline and a hard
+// horizontal edge at 40.755. The grey STEEL wash read it as a tone
+// change; the WATER token (2026-09-07) made it read as the river stopping
+// dead. The polygon below replaces it, from a MEASUREMENT rather than an
+// eyeballed box:
+//   - The malformed wedge is a different shape at every tile zoom (the
+//     tile pipeline simplifies the ring differently per zoom, so earcut
+//     mistriangulates it differently), and it exists at tile zooms 9-14;
+//     the z15 tiles -- the archive's maxzoom, so the least-simplified
+//     data this map ever draws -- render the real, narrow creek with no
+//     stray geometry at all. Overzoomed views (z>15) reuse z15 tiles.
+//   - So, with the four mask layers hidden, every tile zoom 9-15 was
+//     rendered over a fixed 0.0002 x 0.00015 deg grid (about 17 m) and
+//     the WebGL buffer read back; a grid point painted WATER at zoom Z
+//     with no z15 water within ~1.5 of that zoom's pixels is stray.
+//     (`queryRenderedFeatures` cannot make this call: its even-odd
+//     point-in-ring test says the z12 wedge IS inside the malformed ring,
+//     which is precisely why that ring is malformed.)
+//   - Union of the stray wedge over z9-14: lng -73.9616..-73.9246, lat
+//     40.7125..40.7423 -- it starts at the Brooklyn/Queens shore at the
+//     creek mouth (-73.9616 at lat 40.733, the westernmost stray point,
+//     z12) and sweeps south-east across Greenpoint toward Maspeth/English
+//     Kills. West of the creek mouth is real East River; the wedge never
+//     reaches it.
+//   - This ring is the convex hull of that union, Douglas-Peucker
+//     simplified to 9 vertices, buffered outward by 80 m (about 1.4 px at
+//     z11, 0.7 px at z10; the z9/z10 wedges sit inside the z11/z12
+//     footprint), rounded to 1e-4 deg. Every stray cell dilated by ~70 m
+//     lies inside it. Cost, measured the same way: 44 grid cells (~0.01
+//     km2) of real East River at the very mouth plus the creek's own
+//     polygon inside the hull (repainted as newtown-creek-line, as
+//     before) -- versus the rectangle's ~4.2 km2 of river. A rectangle
+//     with its west edge merely moved to the shore (-73.962) would still
+//     have erased ~0.1 km2 along the Greenpoint and Hunters Point
+//     waterfronts, because the wedge's own boundary runs diagonally over
+//     land there, not along the shore.
+//   - A separate, unrelated effect is deliberately NOT masked: at tile
+//     zooms <= 13 Roosevelt Island is generalised thin and the East River
+//     channel fills over its z15 footprint (lat 40.751-40.770). That is
+//     ordinary low-zoom simplification of a narrow island, not a bowtie,
+//     and masking it would erase the whole channel.
+// mapStyle.test.ts pins both sides: three fixed mid-river East River
+// points must stay OUTSIDE this ring, two fixed on-land wedge points must
+// stay INSIDE it. Measurement scripts, per-zoom composites and before/
+// after screenshots: `Claude/agent-reports/2026-09-07-bearings-east-river-
+// mask-fix.md` (vault) and its screenshots directory.
 const NEWTOWN_CREEK_BAD_ZONE: [number, number][] = [
-  [-73.978, 40.705],
-  [-73.915, 40.705],
-  [-73.915, 40.755],
-  [-73.978, 40.755],
-  [-73.978, 40.705],
+  [-73.9626, 40.7329], // creek mouth, north lip (the wedge's west limit + 80 m)
+  [-73.9614, 40.7311], // creek mouth, south lip (Greenpoint's north tip)
+  [-73.9285, 40.7115], // south-east tip, past English Kills
+  [-73.9236, 40.7156], // east limit
+  [-73.9245, 40.7196],
+  [-73.9271, 40.7251],
+  [-73.9397, 40.7432], // north limit: the Dutch Kills sliver (z12-14)
+  [-73.9578, 40.7392], // Hunters Point, over land
+  [-73.9621, 40.7352], // back to the mouth
+  [-73.9626, 40.7329],
 ];
 
 // Real Protomaps Basemap `landuse` `kind` values that read as green/open
@@ -338,8 +394,10 @@ export function buildMapStyle(tilesUrl: string): StyleSpecification {
         // for the full live diagnosis. Painted directly above BOTH "water"
         // and "water-unmasked" (the two layers confirmed live to jointly
         // paint the malformed geometry) -- a flat, fully OPAQUE BONE wash
-        // cancels whatever those two just painted within this one hand-
-        // verified rectangle, the same "recede to the base colour"
+        // cancels whatever those two just painted within this one live-
+        // measured polygon (a rectangle until 2026-09-07 -- see the
+        // REVISED block above for why that erased the East River), the
+        // same "recede to the base colour"
         // technique nj-mask-fill above already uses for out-of-scope New
         // Jersey. Fully opaque (not nj-mask-fill's 0.72) deliberately --
         // this has to WIN completely against a real, confirmed rendering
@@ -349,7 +407,7 @@ export function buildMapStyle(tilesUrl: string): StyleSpecification {
         // Being fully opaque means this ALSO erases roads-minor/
         // roads-major (both painted earlier, above) and the real,
         // correctly-shaped part of Newtown Creek, wherever any of them
-        // fall inside this rectangle -- an honest, fully-repainted cost,
+        // fall inside this polygon -- an honest, fully-repainted cost,
         // not a hidden one: "roads-minor-repaint"/"roads-major-repaint"
         // immediately below restore the real streets (identical paint,
         // repainted on top of this cancel -- imperceptible where they

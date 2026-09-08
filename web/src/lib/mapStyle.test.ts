@@ -213,6 +213,65 @@ describe("buildMapStyle (basemap)", () => {
     expect(checked).toBeGreaterThanOrEqual(2);
   });
 
+  // FIXED 2026-09-07 (PR #2 branch, East River mask fix): the Wave 6f mask
+  // was a rectangle whose west edge (-73.978) sat on MANHATTAN's east
+  // shore, so its opaque BONE cancel erased the entire real East River from
+  // the Williamsburg Bridge to about E 61st St (~4.2 km2 of correctly-
+  // rendered water), ending in a hard horizontal line at its north edge --
+  // a worse regression than the wedge it hid, and one the old grey water
+  // wash disguised as a tone change. The mask is now a polygon following the
+  // MEASURED wedge (see NEWTOWN_CREEK_BAD_ZONE's own comment in mapStyle.ts
+  // for the per-zoom measurement). These fixed reference points pin both
+  // sides of that measurement: real mid-river East River points that must
+  // stay OUTSIDE the mask, and points on Greenpoint land that the z11/z12
+  // wedge paints as water and that must stay INSIDE it -- so a future edit
+  // can neither re-erase the river nor quietly shrink the mask off the bug.
+  function pointInRing(pt: [number, number], ring: [number, number][]): boolean {
+    // Even-odd ray cast (the same rule MapLibre's own queryRenderedFeatures
+    // uses for fill layers).
+    let inside = false;
+    for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+      const [xi, yi] = ring[i];
+      const [xj, yj] = ring[j];
+      if (yi > pt[1] !== yj > pt[1] && pt[0] < ((xj - xi) * (pt[1] - yi)) / (yj - yi) + xi) inside = !inside;
+    }
+    return inside;
+  }
+  const EAST_RIVER_REFERENCE_POINTS: [number, number][] = [
+    [-73.968, 40.745], // mid-river off E 40th St (the dispatch's reference point)
+    [-73.9715, 40.7355], // mid-river off E 23rd St
+    [-73.9725, 40.7125], // mid-river at the Williamsburg Bridge
+  ];
+  const WEDGE_REFERENCE_POINTS: [number, number][] = [
+    [-73.945, 40.725], // Greenpoint land; painted WATER by the z11/z12 wedge (live, 2026-09-07)
+    [-73.9515, 40.73], // Greenpoint land nearer the creek mouth; same
+  ];
+  function newtownCreekMaskRing(): [number, number][] {
+    const style = buildMapStyle("https://example.com/tiles/nyc-basemap.pmtiles");
+    const source = style.sources["newtown-creek-mask"] as unknown as { data: { geometry: { coordinates: [number, number][][] } } };
+    return source.data.geometry.coordinates[0];
+  }
+
+  it("the Newtown Creek mask leaves the real East River alone (fixed mid-river reference points stay outside it)", () => {
+    const ring = newtownCreekMaskRing();
+    for (const pt of EAST_RIVER_REFERENCE_POINTS) {
+      expect(
+        pointInRing(pt, ring),
+        `[${pt}] is real East River water and must NOT be inside NEWTOWN_CREEK_BAD_ZONE -- the mask's opaque BONE cancel would erase the river there again (the 2026-08-11..2026-09-07 regression)`,
+      ).toBe(false);
+    }
+  });
+
+  it("the Newtown Creek mask still covers the malformed wedge (fixed on-land wedge points stay inside it)", () => {
+    const ring = newtownCreekMaskRing();
+    for (const pt of WEDGE_REFERENCE_POINTS) {
+      expect(
+        pointInRing(pt, ring),
+        `[${pt}] is inside the live-measured malformed water wedge and MUST be inside NEWTOWN_CREEK_BAD_ZONE -- otherwise the Wave 6f band comes back`,
+      ).toBe(true);
+    }
+  });
+
   // WAVE 6f item 9 -- the mitigation's own layering contract: the cancel
   // fill is fully opaque and sits above roads-minor/roads-major (painted
   // near the top of this style), so without a repaint, real streets inside
