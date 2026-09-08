@@ -159,7 +159,7 @@ describe("building record rows", () => {
     expect(values(state)).toEqual({
       bedbugs: "9 of 135 units",
       rodents: "3 of 4 failed",
-      heat: "9 311 complaints",
+      heat: "9 complaints",
       flood: "Zone AE, high risk",
       pavement: "7.7 of 10",
     });

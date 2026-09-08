@@ -155,7 +155,10 @@ function heatRow(heat: BuildingRecord["heat"]): RecordRow {
   return {
     key: "heat",
     label: LABELS.heat,
-    value: `${heat.complaints} 311 complaint${heat.complaints === 1 ? "" : "s"}`,
+    // Not "5 311 complaints" -- two numbers running together read as one
+    // (measured on the real card at 375px: "5 311 complaints"). The row's
+    // own label already says Heat and the sources line already says 311.
+    value: `${heat.complaints} complaint${heat.complaints === 1 ? "" : "s"}`,
     tone: "flag",
     detail: `${season}${heat.caveat}`,
   };
