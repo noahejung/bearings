@@ -750,3 +750,114 @@ def test_tiles_serves_the_real_basemap_archive_with_range_support(client):
     assert len(resp.content) == 16
     # PMTiles v3 magic bytes: "PMTiles" + version byte 3.
     assert resp.content[:7] == b"PMTiles"
+
+
+# ---------------------------------------------------------------------------
+# GET /api/building/{bbl} -- SPEC-building-card-v2.md Part A. The five
+# per-building sources that were built, tested, and unreachable from any
+# endpoint until this wave (2026-08-11 codebase audit, finding M1).
+# ---------------------------------------------------------------------------
+
+# 60 West 36 St, Manhattan -- tests/test_bedbugs.py's own fixture: six bedbug
+# filings on record, most recent covering the period ending 2025-10-31.
+BEDBUG_BBL = "1008370078"
+
+# 1040B East 217 St, Bronx -- tests/test_heat.py's own fixture: 2,401
+# HEAT/HOT WATER complaints in the closed 2025-10-01..2026-05-31 season, the
+# worst building in the city that season. A closed season, so the number
+# cannot drift on a re-run.
+HEAT_BBL = "2046990051"
+
+# 1 Wall St, Manhattan -- a real Manhattan tower with exactly one baked
+# footprint, so both per-point sources resolve.
+WALL_ST_BBL = "1000470001"
+
+
+def test_building_returns_all_five_sources_and_never_a_missing_key(client):
+    resp = client.get(f"/api/building/{BEDBUG_BBL}")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert set(body) == {
+        "bbl",
+        "point",
+        "bedbugs",
+        "rodents",
+        "heat",
+        "flood",
+        "pavement",
+        "sources",
+    }
+    assert body["bbl"] == BEDBUG_BBL
+
+
+def test_building_bedbugs_carry_the_real_live_filing_numbers(client):
+    body = client.get(f"/api/building/{BEDBUG_BBL}").json()
+    assert body["bedbugs"]["filings"] == 6
+    assert body["bedbugs"]["units_total"] == 135
+    assert body["bedbugs"]["units_infested"] == 9
+    assert body["bedbugs"]["period_end"] == "2025-10-31"
+
+
+def test_building_no_record_is_null_not_a_dict_of_zeros(client):
+    # This building has never filed a bedbug report. `null` is the honest
+    # answer; a dict of zeros would claim a filed, clean report that does
+    # not exist.
+    body = client.get(f"/api/building/{HEAT_BBL}").json()
+    assert body["bedbugs"] is None
+
+
+def test_building_heat_is_a_measured_zero_not_a_null(client):
+    # The bake counts the whole city for the whole season, so absence from
+    # it is a real zero -- "we looked at every heat complaint in NYC and
+    # none name this building". The other direction of the same rule.
+    body = client.get(f"/api/building/{BEDBUG_BBL}").json()
+    assert body["heat"]["complaints"] == 0
+    body = client.get(f"/api/building/{HEAT_BBL}").json()
+    assert body["heat"]["complaints"] == 2401
+
+
+def test_building_every_source_is_cited_with_a_url_and_an_as_of(client):
+    body = client.get(f"/api/building/{WALL_ST_BBL}").json()
+    for key in ("bedbugs", "rodents", "heat", "flood", "pavement"):
+        src = body["sources"][key]
+        assert src["name"], key
+        assert src["url"].startswith("https://"), key
+        assert src["as_of"], key
+        assert isinstance(src["baked"], bool), key
+
+
+def test_building_live_fields_are_a_value_a_null_or_an_unavailable(client):
+    body = client.get(f"/api/building/{WALL_ST_BBL}").json()
+    for key in ("rodents", "flood", "pavement"):
+        field = body[key]
+        if field is None:
+            continue
+        assert isinstance(field, dict), key
+        if field.get("unavailable"):
+            # "Could not look" must carry its own reason and must never be
+            # mistakeable for "looked, found nothing".
+            assert field["reason"], key
+        else:
+            assert "unavailable" not in field, key
+
+
+def test_building_malformed_bbl_is_404_not_500(client):
+    for bad in ("not-a-bbl", "123", "9008350041", "10083500411"):
+        resp = client.get(f"/api/building/{bad}")
+        assert resp.status_code == 404, bad
+        assert "detail" in resp.json()
+
+
+def test_building_stays_inside_its_own_deadline(client):
+    # Three live sources in parallel behind one shared deadline, plus a
+    # baked DuckDB point lookup. The endpoint's wall clock is its slowest
+    # single source, never their sum. Generous headroom over the deadline
+    # itself so slow dev/CI hardware cannot make this flaky, while still
+    # failing loudly if the parallelism ever silently became serial.
+    from bearings import buildingrecord
+
+    start = time.monotonic()
+    resp = client.get(f"/api/building/{WALL_ST_BBL}")
+    elapsed = time.monotonic() - start
+    assert resp.status_code == 200
+    assert elapsed < buildingrecord.LIVE_DEADLINE_S + 3.0, f"{elapsed:.2f}s"
