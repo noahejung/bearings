@@ -72,6 +72,10 @@ _NO_BFE = -9999.0
 
 _MAX_ATTEMPTS = 5
 _RETRY_BACKOFF_S = 1.0
+# The read timeout this module has always used. Named rather than left as a
+# literal now that `zone()` lets a caller override it -- see `_query()`'s own
+# note on why a request-path caller needs a much shorter one.
+TIMEOUT_S = 30.0
 
 # Base description per zone letter, from FEMA's published glossary
 # (fema.gov/about/glossary/flood-zones). Zone X is intentionally split by
@@ -112,27 +116,54 @@ def _describe(fld_zone: str, zone_subty: str | None) -> str:
     return zone_subty or f"FEMA flood zone {fld_zone} (no further description on record)."
 
 
-def _query(params: dict[str, object]) -> httpx.Response:
+def _query(
+    params: dict[str, object],
+    *,
+    timeout: float = TIMEOUT_S,
+    attempts: int = _MAX_ATTEMPTS,
+    retry_backoff_s: float = _RETRY_BACKOFF_S,
+) -> httpx.Response:
     """GET with a bounded retry -- see module docstring for why this host
-    specifically needs one when nothing else in this codebase does."""
+    specifically needs one when nothing else in this codebase does.
+
+    The three keyword arguments default to exactly what this function has
+    always used, so `profile.py`'s call is unchanged. They exist for
+    bearings.buildingrecord, which calls this on a *request* path behind a
+    hard 3s deadline: 5 attempts at a 30s timeout is a 150s worst case,
+    which is the right budget for a bake and completely wrong for a click.
+    Note the shape of this host's own failure mode (module docstring: a
+    mid-handshake connection reset, not a slow response) is what makes
+    "several short attempts" strictly better here than "one long one" --
+    a reset fails in milliseconds, so the retries are nearly free.
+    """
     last_exc: Exception | None = None
-    for attempt in range(_MAX_ATTEMPTS):
+    for attempt in range(attempts):
         try:
-            resp = httpx.get(config.FEMA_NFHL_QUERY_URL, params=params, timeout=30.0)
+            resp = httpx.get(config.FEMA_NFHL_QUERY_URL, params=params, timeout=timeout)
             resp.raise_for_status()
             return resp
         except httpx.TransportError as exc:
             last_exc = exc
-            if attempt < _MAX_ATTEMPTS - 1:
-                time.sleep(_RETRY_BACKOFF_S * (attempt + 1))
+            if attempt < attempts - 1:
+                time.sleep(retry_backoff_s * (attempt + 1))
     assert last_exc is not None
     raise last_exc
 
 
-def zone(lat: float, lng: float) -> dict | None:
+def zone(
+    lat: float,
+    lng: float,
+    *,
+    timeout: float = TIMEOUT_S,
+    attempts: int = _MAX_ATTEMPTS,
+    retry_backoff_s: float = _RETRY_BACKOFF_S,
+) -> dict | None:
     """The FEMA flood zone at an exact point, or `None` if no NFHL flood
     study covers this location (see module docstring -- that is a
-    different fact from "studied, zone X")."""
+    different fact from "studied, zone X").
+
+    The three keyword arguments pass straight through to `_query()`; see
+    its docstring for the request-path caller they exist for."""
     params = {
         "geometry": f"{lng},{lat}",
         "geometryType": "esriGeometryPoint",
@@ -142,7 +173,9 @@ def zone(lat: float, lng: float) -> dict | None:
         "returnGeometry": "false",
         "f": "json",
     }
-    resp = _query(params)
+    resp = _query(
+        params, timeout=timeout, attempts=attempts, retry_backoff_s=retry_backoff_s
+    )
     features = resp.json().get("features", [])
     if not features:
         return None

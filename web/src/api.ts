@@ -1,5 +1,6 @@
 import type {
   AutocompleteResult,
+  BuildingRecord,
   CellProfile,
   CellsIndex,
   Citywide,
@@ -166,6 +167,18 @@ export function getRoute(
     params.set("dest_lng", String(destination.destLng));
   }
   return request<RouteResult>(`/api/route?${params.toString()}`);
+}
+
+// SPEC-building-card-v2.md Part A: everything this project knows about one
+// building, by the BBL the map's own building layer already carries -- so a
+// click costs no geocode. Two of the five sources are baked (bedbugs, 311
+// heat) and three are live behind a shared 3.5s deadline (rodents, FEMA
+// flood, DOT pavement), which is why any of the live three can legitimately
+// come back as `{unavailable: true, reason}` rather than a value or a null.
+// See bearings/buildingrecord.py's module docstring for the measurements
+// behind that split.
+export function getBuildingRecord(bbl: string): Promise<BuildingRecord> {
+  return request<BuildingRecord>(`/api/building/${encodeURIComponent(bbl)}`);
 }
 
 // The 5/10/15-minute reach rings for a searched address (SPEC-lens-report.md

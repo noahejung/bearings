@@ -2617,6 +2617,99 @@ button.search__save:disabled {
   color: var(--steel);
 }
 
+/* ---------- building record block (SPEC-building-card-v2.md Part A) ----------
+   Five per-building sources appended below the year/hazard lines the card
+   already showed. Deliberately reuses the card's own type scale and chrome
+   -- no new sizes, no new colours, no widening of `.buildinginfo` itself
+   (its 148-200px min/max stays exactly as it was; the spec's instruction is
+   that five rows must fit the existing popup, not grow it).
+
+   The label/value pair grid is `auto 1fr` rather than two equal columns so
+   the value column keeps every pixel the labels do not need -- "not
+   inspected in 24 months" is the longest string any row can produce, and at
+   200px it wraps to two lines rather than being clipped. */
+.buildinginfo__record {
+  margin-top: var(--space-2);
+  padding-top: var(--space-2);
+  border-top: 1px solid var(--steel);
+}
+
+.buildinginfo__record-heading {
+  font-size: var(--text-3xs);
+  letter-spacing: var(--tracking-wider);
+  text-transform: uppercase;
+  color: var(--steel);
+  margin: 0 0 var(--space-1);
+}
+
+.buildinginfo__record-grid {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  column-gap: var(--space-2);
+  row-gap: 1px;
+  margin: 0;
+}
+
+.buildinginfo__record-grid dt,
+.buildinginfo__record-grid dd {
+  margin: 0;
+}
+
+.buildinginfo__record-label {
+  font-size: var(--text-3xs);
+  letter-spacing: var(--tracking-wide);
+  text-transform: uppercase;
+  color: var(--steel);
+  line-height: 1.35;
+}
+
+.buildinginfo__record-value {
+  font-size: var(--text-3xs);
+  font-weight: 700;
+  color: var(--ink);
+  line-height: 1.35;
+}
+
+/* "We looked and this source has no record for this building." Same
+   de-emphasis `.buildinginfo__value--empty` already uses for the card's own
+   no-record lines, so the two read as the same kind of statement. */
+.buildinginfo__record-value--empty {
+  font-weight: 400;
+  color: var(--steel);
+}
+
+/* A real adverse finding -- an infested unit, a failed inspection, a
+   Special Flood Hazard Area. Never used for "unavailable": a source being
+   down is not bad news about the building. */
+.buildinginfo__record-value--flag {
+  color: var(--red);
+}
+
+/* "We could not look." This must not read as "no record" -- that conflation
+   is this project's own recurring bug (bearings/buildingrecord.py's module
+   docstring). The copy carries the distinction first ("not available" vs
+   "no filing on record"); the dashed rule is the second, non-verbal signal,
+   and the `title` attribute carries the actual reason. */
+.buildinginfo__record-value--unavailable {
+  font-weight: 400;
+  color: var(--steel);
+  border-bottom: 1px dashed var(--steel);
+  align-self: start;
+  justify-self: start;
+  cursor: help;
+}
+
+.buildinginfo__record-value--loading {
+  font-weight: 400;
+  color: var(--steel);
+}
+
+.buildinginfo__record-sources .buildinginfo__source:not(:first-child) {
+  margin-top: var(--space-1);
+  padding-top: 0;
+  border-top: none;
+}
+
 /* ---------- responsive ---------- */
 @media (max-width: 640px) {
   .wrap {

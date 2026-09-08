@@ -203,6 +203,97 @@ export interface MapStreet {
   rank: 0 | 1 | 2 | 3; // 3 = highway, 0 = local -- see sources/streets.py
 }
 
+// ---------------------------------------------------------------------------
+// GET /api/building/{bbl} -- SPEC-building-card-v2.md Part A. Five
+// per-building sources that were built and tested since July and could not
+// reach a reader until now (bearings/buildingrecord.py's module docstring).
+//
+// The three-state rule below is the contract, and it is not decoration: a
+// field is a real value, or `null` meaning "we looked and this source has no
+// record for this building", or `Unavailable` meaning "we could not look".
+// Collapsing the last two is this project's own recurring bug -- a building
+// whose rodent lookup timed out has not passed an inspection.
+// ---------------------------------------------------------------------------
+export interface Unavailable {
+  unavailable: true;
+  reason: string;
+}
+
+export type Field<T> = T | null | Unavailable;
+
+export function isUnavailable<T>(field: Field<T>): field is Unavailable {
+  return (
+    typeof field === "object" &&
+    field !== null &&
+    "unavailable" in field &&
+    (field as Unavailable).unavailable === true
+  );
+}
+
+export interface BedbugRecord {
+  filings: number;
+  period_end: string | null;
+  units_total: number | null;
+  units_infested: number | null;
+  units_reinfested: number | null;
+  units_eradicated: number | null;
+}
+
+export interface RodentRecord {
+  inspections: number;
+  failed: number;
+  last_result: string;
+  last_date: string;
+  months: number;
+}
+
+// Never `null`: the bake counts every heat complaint in the city for the
+// whole heating season, so a building absent from it has a measured zero,
+// not a missing value. Typed as a plain object rather than Field<> for
+// exactly that reason -- see buildingrecord.py's own docstring.
+export interface HeatRecord {
+  complaints: number;
+  seasons: number;
+  season_start: string | null;
+  season_end: string | null;
+  caveat: string;
+}
+
+export interface FloodRecord {
+  zone: string;
+  description: string;
+  in_special_flood_hazard_area: boolean;
+  base_flood_elevation_ft: number | null;
+}
+
+export interface PavementRecord {
+  segments_rated: number;
+  average_rating: number;
+  good: number;
+  fair: number;
+  poor: number;
+  most_recent_inspection: string;
+}
+
+// `as_of` is the bake date for a baked source and today's date for a live
+// one; `baked` says which, so the card's sources line can be honest about
+// how old each number is instead of implying they share one vintage.
+export interface BuildingSource extends Source {
+  as_of: string | null;
+  baked: boolean;
+}
+
+export interface BuildingRecord {
+  bbl: string;
+  point: { lat: number; lng: number } | null;
+  bedbugs: Field<BedbugRecord>;
+  rodents: Field<RodentRecord>;
+  heat: HeatRecord;
+  flood: Field<FloodRecord>;
+  pavement: Field<PavementRecord>;
+  sources: Record<string, BuildingSource>;
+}
+
 export interface MapGeometry {
   subject: MapSubject;
   bbox: MapBbox;

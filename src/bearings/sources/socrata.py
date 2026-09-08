@@ -34,9 +34,19 @@ PAGE = 50_000
 _MAX_ATTEMPTS = 3
 _RETRY_BACKOFF_S = 3.0
 _RETRYABLE_STATUS = {429, 502, 503, 504}
+# The read timeout every bake-path caller has always used, named rather than
+# left as a literal now that it is overridable (see _get_with_retry below).
+TIMEOUT_S = 120.0
 
 
-def _get_with_retry(url: str, params: dict) -> httpx.Response:
+def _get_with_retry(
+    url: str,
+    params: dict,
+    *,
+    timeout: float = TIMEOUT_S,
+    attempts: int = _MAX_ATTEMPTS,
+    retry_backoff_s: float = _RETRY_BACKOFF_S,
+) -> httpx.Response:
     """GET with retry-on-transient-failure.
 
     Retries `httpx.TransportError` (covers ReadTimeout/ConnectTimeout/
@@ -45,20 +55,31 @@ def _get_with_retry(url: str, params: dict) -> httpx.Response:
     overloaded, try again" status codes. Does NOT retry on 4xx client
     errors (bad dataset key, malformed $where, etc.) -- those are real
     code defects and should fail immediately, not be masked by a retry
-    loop."""
+    loop.
+
+    `timeout`/`attempts`/`retry_backoff_s` default to exactly the values
+    this function has always used, so every existing caller behaves
+    identically. They exist for the one caller that runs on a *request*
+    path rather than a bake path -- bearings.buildingrecord, which serves
+    live per-building sources behind a hard 3s deadline and needs the
+    socket itself bounded, not just the future it waits on. A 120s read
+    timeout inside a 3s budget would leave a worker thread running long
+    after the response it belongs to has already been sent, which on a
+    512MB Render instance is a real leak, not a theoretical one.
+    """
     last_exc: Exception | None = None
-    for attempt in range(_MAX_ATTEMPTS):
+    for attempt in range(attempts):
         try:
-            resp = httpx.get(url, params=params, timeout=120.0)
+            resp = httpx.get(url, params=params, timeout=timeout)
         except httpx.TransportError as exc:
             last_exc = exc
-            if attempt == _MAX_ATTEMPTS - 1:
+            if attempt == attempts - 1:
                 raise
-            time.sleep(_RETRY_BACKOFF_S * (attempt + 1))
+            time.sleep(retry_backoff_s * (attempt + 1))
             continue
 
-        if resp.status_code in _RETRYABLE_STATUS and attempt < _MAX_ATTEMPTS - 1:
-            time.sleep(_RETRY_BACKOFF_S * (attempt + 1))
+        if resp.status_code in _RETRYABLE_STATUS and attempt < attempts - 1:
+            time.sleep(retry_backoff_s * (attempt + 1))
             continue
 
         resp.raise_for_status()
@@ -75,6 +96,9 @@ def fetch(
     where: str | None = None,
     limit: int | None = None,
     order: str | None = None,
+    timeout: float = TIMEOUT_S,
+    attempts: int = _MAX_ATTEMPTS,
+    retry_backoff_s: float = _RETRY_BACKOFF_S,
 ) -> pd.DataFrame:
     """Fetch a NYC Open Data set as a DataFrame.
 
@@ -103,6 +127,11 @@ def fetch(
     2026-09-07), and the callers that fetch a single page, or that
     client-aggregate a whole dataset into counts where row identity does
     not matter, do not need it.
+
+    `timeout`/`attempts`/`retry_backoff_s` pass straight through to
+    `_get_with_retry` and default to its own long-standing bake-path
+    values -- see that function's docstring for the one request-path
+    caller they exist for.
     """
     dataset_id = config.SOCRATA_DATASETS[dataset_key]  # KeyError on typo, by design
     url = f"https://{config.SOCRATA_DOMAIN}/resource/{dataset_id}.json"
@@ -123,7 +152,13 @@ def fetch(
         if order:
             params["$order"] = order
 
-        resp = _get_with_retry(url, params)
+        resp = _get_with_retry(
+            url,
+            params,
+            timeout=timeout,
+            attempts=attempts,
+            retry_backoff_s=retry_backoff_s,
+        )
         rows = resp.json()
 
         if not rows:

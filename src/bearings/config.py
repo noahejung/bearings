@@ -188,6 +188,13 @@ CENTERLINES_CACHE_MAX_AGE_S = 30 * 86400
 # rather than the slower 30-day one above, which was picked for geometry that
 # genuinely doesn't change week to week.
 BUILDING_ATTRIBUTES_CACHE_MAX_AGE_S = CELL_PROFILE_CACHE_MAX_AGE_S
+# Per-building hazard aggregate (bearings.buildingrecord's
+# building_hazards.parquet -- bedbug filings + 311 heat/hot-water complaints,
+# keyed by BBL). The 311 half is the binding constraint: complaints are filed
+# daily and the file counts one heating season, so this gets the same 10-day
+# window CELL_PROFILE_CACHE_MAX_AGE_S already uses for the other 311-derived
+# bake, not the 30-day geometry window above.
+BUILDING_HAZARDS_CACHE_MAX_AGE_S = CELL_PROFILE_CACHE_MAX_AGE_S
 
 NYPD_PCT_PDF = (
     "https://www.nyc.gov/assets/nypd/downloads/pdf/crime_statistics/"

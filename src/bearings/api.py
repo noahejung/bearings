@@ -25,7 +25,19 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from bearings import cellprofile, cells, citywide, config, factcheck, geocode, mapgeo, profile, reach, transit
+from bearings import (
+    buildingrecord,
+    cellprofile,
+    cells,
+    citywide,
+    config,
+    factcheck,
+    geocode,
+    mapgeo,
+    profile,
+    reach,
+    transit,
+)
 from bearings.sources import basemap, compstat, overture
 
 logging.basicConfig(
@@ -108,6 +120,9 @@ async def lifespan(_app: FastAPI):
 
     logger.info("  per-cell profiles (block-level report precompute, GET /api/cell/{h3})...")
     cellprofile.warm_caches()
+
+    logger.info("  per-building hazards (bedbug + 311 heat aggregate, GET /api/building/{bbl})...")
+    buildingrecord.warm_cache()
 
     _state["warm"] = True
     logger.info("all caches warm in %.1fs -- ready to serve", time.monotonic() - start)
@@ -220,6 +235,43 @@ def get_cell(h3: str) -> dict:
     if prof is None:
         raise HTTPException(status_code=404, detail=f"no baked profile for cell {h3!r}")
     return prof
+
+
+@app.get("/api/building/{bbl}")
+def get_building(bbl: str) -> dict:
+    """Everything this project knows about one building, by BBL -- the five
+    per-building sources SPEC.md calls the differentiator (bedbug filings,
+    rodent inspections, 311 heat/hot-water complaints, FEMA flood zone, DOT
+    street pavement rating). Built and tested since July; unreachable from
+    any endpoint until now, because /api/profile's `_to_contract()` strips
+    all five (2026-08-11 codebase audit, finding M1).
+
+    Every top-level source key is always present, in exactly one of three
+    states -- a real value, `null` for "we looked and this source has no
+    record for this building", or `{"unavailable": true, "reason": "..."}`
+    for "we could not look". See bearings.buildingrecord's module docstring
+    for why those last two must never collapse into each other, which of the
+    five are baked vs. served live, and the 2026-09-07 measurements behind
+    that split.
+
+    404s a BBL that isn't shaped like one (borough 1-5 + 5-digit block +
+    4-digit lot), matching GET /api/cell/{h3}'s own garbage-input guard --
+    never an empty-but-200 record, which would read as "we checked this
+    building and it is clean."
+
+    This endpoint deliberately does NOT geocode: it takes the BBL the map's
+    own building layer already carries (GET /api/map's `buildings[].bbl`, a
+    baked value), so a click costs no GeoSearch call.
+    """
+    if not buildingrecord.is_wellformed_bbl(bbl):
+        raise HTTPException(
+            status_code=404,
+            detail=(
+                f"{bbl!r} is not a NYC BBL. A BBL is a borough digit (1-5) followed "
+                "by a 5-digit block and a 4-digit lot, zero-padded to 10 digits."
+            ),
+        )
+    return buildingrecord.record_for(bbl)
 
 
 @app.get("/api/commute")

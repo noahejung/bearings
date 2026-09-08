@@ -78,17 +78,33 @@ _GOOD_AT_OR_ABOVE = 8.0
 _POOR_BELOW = 4.0
 
 
-def near(lat: float, lng: float, radius_m: float = 250) -> dict | None:
+def near(
+    lat: float,
+    lng: float,
+    radius_m: float = 250,
+    *,
+    timeout: float = socrata.TIMEOUT_S,
+    attempts: int = socrata._MAX_ATTEMPTS,
+    retry_backoff_s: float = socrata._RETRY_BACKOFF_S,
+) -> dict | None:
     """Street pavement condition on segments within `radius_m` metres of a
     point, based on each segment's own most recent real inspection.
     Returns `None` if no segment near this point has ever carried a real
     rating (a genuine "no record" case -- e.g. a private or gated street,
-    or simply no DOT-rated pavement in range) -- never a fabricated 0."""
+    or simply no DOT-rated pavement in range) -- never a fabricated 0.
+
+    The three timeout keywords pass straight through to `socrata.fetch()`
+    and default to its own bake-path values, so `profile.py`'s call is
+    unchanged; see that function's docstring for the request-path caller
+    (bearings.buildingrecord) they exist for."""
     where = f"within_circle(the_geom, {lat}, {lng}, {radius_m})"
     df = socrata.fetch(
         "pavement",
         select="oftcode,systemrating,nonratingreason,inspection",
         where=where,
+        timeout=timeout,
+        attempts=attempts,
+        retry_backoff_s=retry_backoff_s,
     )
     if df.empty:
         return None
