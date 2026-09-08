@@ -35,6 +35,8 @@ columns already rely on for the (much larger) Overture Places query.
 
 from pathlib import Path
 
+import math
+
 import duckdb
 import pandas as pd
 
@@ -45,6 +47,11 @@ SOURCE = {
     "name": "NYC Building Footprints",
     "url": "https://data.cityofnewyork.us/d/5zhs-2jue",
 }
+
+# How far apart the footprints sharing one BBL may sit before this module
+# refuses to name a single point for that BBL. See point_for_bbl() for the
+# measurement behind it.
+MAX_BBL_FOOTPRINT_SPREAD_M = 500.0
 
 _PATH = config.DERIVED_DIR / "buildings.parquet"
 # Per-building attribute join (LAYOUT-V3 WAVE 1e, SPEC-layout-v3.md §8, Noah:
@@ -253,6 +260,93 @@ def warm_cache() -> None:
         )
     else:
         _write_parquet(fetch_attributes(), _ATTR_PATH)
+
+
+def _spread_m(min_lat: float, max_lat: float, min_lng: float, max_lng: float) -> float:
+    """The diagonal of a lat/lng box, in metres. Equirectangular rather than
+    haversine: this is used only to decide whether a group of footprints is
+    plausibly one building lot or obviously not, and at NYC's latitude over
+    box sizes of metres-to-kilometres the two agree to well within the
+    precision that decision needs."""
+    mid_lat = math.radians((min_lat + max_lat) / 2)
+    dy = (max_lat - min_lat) * 111_320.0
+    dx = (max_lng - min_lng) * 111_320.0 * math.cos(mid_lat)
+    return math.hypot(dx, dy)
+
+
+def point_for_bbl(bbl: str) -> tuple[float, float] | None:
+    """One real (lat, lng) for a BBL, taken from its own baked footprint(s),
+    or `None` when this file cannot name one honestly.
+
+    Two per-point sources in this codebase -- FEMA's flood zone and DOT's
+    pavement rating -- are queried by point, not by BBL, so the per-building
+    endpoint (bearings.buildingrecord) needs a way to turn the BBL it was
+    asked about into a point. This is that way, and it refuses in two real,
+    measured cases rather than returning a plausible wrong answer:
+
+    1. **No footprint carries this BBL.** Measured 2026-09-07 against the
+       baked file: 53,904 of PLUTO's 858,602 lots have no footprint row at
+       all, and one of them is a fixture this repo already tests against --
+       346 East 4 St, Manhattan (bbl 1003730026), a real building with four
+       real rodent inspections on record. There is no point to hand FEMA
+       for it, and inventing one from the block would be a different
+       building's answer.
+
+    2. **The BBL is a placeholder shared by scattered buildings.** The
+       footprint dataset's `base_bbl` is not unique: 816,102 distinct BBLs
+       cover 1,079,670 footprints, and 23 unrelated footprints citywide
+       carry `3999999999` (borough 3, block 99999, lot 9999 -- DOB's own
+       unknown-lot placeholder), spanning 40.5716-40.7333 latitude, roughly
+       18 km. A centroid over that group is a perfectly-computed,
+       completely-wrong point. Refused, loudly, by
+       MAX_BBL_FOOTPRINT_SPREAD_M -- the same "guard, don't guess" shape as
+       transit.py's AnchorSnapTooFar, which exists because an anchor once
+       silently snapped to a subway station 2.3 km away.
+
+       500 m is picked against what the point is *for*: pavement.near()'s
+       own default query radius is 250 m, so a group already spread wider
+       than twice that radius cannot be represented by any one point at the
+       resolution these two sources answer at. Normal lots are far below
+       it: 597,339 BBLs carry exactly one footprint and 210,165 carry two
+       (a house and its garage, a building and its annex).
+
+    A BBL that passes both checks gets the centre of its footprints' union
+    bounding box -- a point on its own lot. Confirmed live 2026-09-07
+    against 161 Newel St, Greenpoint (bbl 3026230011): this returns
+    (40.72773, -73.94927) against the bedbug dataset's own published
+    latitude/longitude for the same building, (40.72768, -73.94903) -- 21 m
+    apart, well inside the resolution either consumer works at.
+
+    Returns `None`, never raises, because "we could not name a point" is a
+    normal state the caller has to render honestly ("unavailable"), not an
+    error -- but it is a state the caller must be able to *see*, which is
+    why it is `None` and not a silently-plausible pair of floats.
+    """
+    if not _PATH.exists():
+        raise FileNotFoundError(
+            f"{_PATH} has not been baked yet -- call bearings.sources.buildings."
+            "warm_cache() first (Dockerfile's build-time step / api.py's startup "
+            "handler do this automatically)."
+        )
+    con = duckconn.connect()
+    try:
+        row = con.execute(
+            f"""
+            SELECT count(*), min(min_lat), max(max_lat), min(min_lng), max(max_lng)
+            FROM read_parquet('{_PATH.as_posix()}')
+            WHERE bbl = ?
+            """,
+            [bbl],
+        ).fetchone()
+    finally:
+        con.close()
+
+    if row is None or not row[0]:
+        return None
+    _, min_lat, max_lat, min_lng, max_lng = row
+    if _spread_m(min_lat, max_lat, min_lng, max_lng) > MAX_BBL_FOOTPRINT_SPREAD_M:
+        return None
+    return ((min_lat + max_lat) / 2, (min_lng + max_lng) / 2)
 
 
 def footprints_in_bbox(bbox: dict) -> list[dict]:

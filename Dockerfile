@@ -302,6 +302,24 @@ RUN uv run python -c "from bearings import citywide; citywide.warm_caches()"
 # GET /api/cell/{h3} -- see api.py.
 RUN uv run python -c "from bearings import cellprofile; cellprofile.warm_caches()"
 
+# Per-building hazard aggregate -- SPEC-building-card-v2.md Part A
+# (src/bearings/buildingrecord.py), the file GET /api/building/{bbl} reads.
+# Two citywide Socrata pulls, client-aggregated by BBL: the bedbug filing
+# dataset (720,493 rows across 125,391 distinct BBLs) and one legal heating
+# season of 311 heat/hot-water complaints (341,824 rows, 340,628 of them
+# carrying a BBL). See that module's docstring for the measured per-page
+# costs and -- more load-bearing -- for the three sources deliberately NOT
+# baked here: rodent inspections (a citywide pull measured 6-13 minutes on
+# 2026-09-07, past the bake budget), and FEMA flood + DOT pavement, which
+# are per-point lookups this codebase has no spatial library to bake
+# correctly.
+#
+# Without this step the image ships no building_hazards.parquet and every
+# /api/building call raises the loud, named FileNotFoundError _baked_row()
+# carries -- deliberately, rather than quietly reporting a city in which no
+# building has ever filed a bedbug report.
+RUN uv run python -c "from bearings import buildingrecord; buildingrecord.warm_cache()"
+
 ENV PATH="/app/.venv/bin:$PATH"
 EXPOSE 8000
 

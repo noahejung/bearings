@@ -57,13 +57,30 @@ def _bbl_parts(bbl: str) -> tuple[str, str, str]:
     return boro, block, lot
 
 
-def inspections(bbl: str, months: int = 24) -> dict | None:
+def inspections(
+    bbl: str,
+    months: int = 24,
+    *,
+    timeout: float = socrata.TIMEOUT_S,
+    attempts: int = socrata._MAX_ATTEMPTS,
+    retry_backoff_s: float = socrata._RETRY_BACKOFF_S,
+) -> dict | None:
     """Inspection summary for a building over the trailing `months`
     months, counting only `Initial`/`Compliance` visits -- the ones that
     carry a real pass/fail verdict (see module docstring). Returns `None`
     if the property has never been inspected in that window; this is a
     different fact from "inspected and passed every time", which is a
-    real dict with `inspections > 0` and `failed == 0`."""
+    real dict with `inspections > 0` and `failed == 0`.
+
+    The three timeout keywords pass straight through to `socrata.fetch()`
+    and default to its own bake-path values, so `profile.py`'s call is
+    unchanged. bearings.buildingrecord serves this source LIVE per request
+    (measured 2026-09-07: a citywide bake of this dataset is 6-13 minutes,
+    far past the bake budget -- see that module's docstring), so it needs
+    the socket bounded. Real measured per-BBL latency across ten live
+    calls the same day: 0.16s-5.73s, two of them past 3s -- which is
+    precisely why the request path has to be able to say "unavailable"
+    rather than wait."""
     boro, block, lot = _bbl_parts(bbl)
     cutoff = (datetime.now(timezone.utc) - timedelta(days=months * 30)).strftime(
         "%Y-%m-%dT%H:%M:%S"
@@ -73,7 +90,13 @@ def inspections(bbl: str, months: int = 24) -> dict | None:
         f"AND inspection_date > '{cutoff}' "
         f"AND inspection_type IN ({_VERDICT_TYPES})"
     )
-    df = socrata.fetch("rodents", where=where)
+    df = socrata.fetch(
+        "rodents",
+        where=where,
+        timeout=timeout,
+        attempts=attempts,
+        retry_backoff_s=retry_backoff_s,
+    )
     if df.empty:
         return None
 
