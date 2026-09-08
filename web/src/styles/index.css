@@ -2558,6 +2558,16 @@ button.search__save:disabled {
   position: relative;
   min-width: 148px;
   max-width: 200px;
+  /* MapView.tsx gives this card an inline max-height + overflow-y: auto
+     sized to the room above the building it is anchored to, which makes it a
+     scroll container -- and a scroll container gets Chrome's scroll
+     anchoring, which is wrong here. Measured on the real app: the hotlinked
+     Commons thumbnail arrives after the card is already on screen and grows
+     its box from nothing to 120px, so scroll anchoring "helpfully" scrolled
+     the card down by exactly that much to hold the record block still, and
+     the × button, the year built and the hazard line went out of sight at
+     the top. The card must always open at its own beginning. */
+  overflow-anchor: none;
   padding: var(--space-3);
   border: 1.5px solid var(--ink);
   border-radius: var(--radius-sm);
@@ -2615,6 +2625,86 @@ button.search__save:disabled {
   font-size: var(--text-3xs);
   letter-spacing: var(--tracking-wide);
   color: var(--steel);
+}
+
+/* ---------- Commons photo block (SPEC-building-card-v2.md Part B) ----------
+   One hotlinked Wikimedia Commons thumbnail above the record block, or a
+   single plain sentence saying why there isn't one. Same bone/ink/mono
+   chrome and same type scale as everything else on this card -- no new
+   sizes, no new colours, and `.buildinginfo`'s own 148-200px min/max width
+   is untouched.
+
+   The image is capped in BOTH directions on purpose. `max-width: 100%` is
+   the card's inner width, per the spec. The `max-height` is the addition,
+   and it is load-bearing rather than decorative: Commons photographs are
+   frequently portrait (the Empire State Building's nearest file is 480x715,
+   a 1:1.49 ratio), so a width-only cap would render a 172px-wide column as
+   a 256px-tall image and push an already-tall card past the bottom of a
+   375x812 viewport. `width/height: auto` keeps the aspect exactly -- the
+   image letterboxes itself inside the box rather than being cropped, so
+   nothing about the photograph is silently hidden. */
+.buildinginfo__photo {
+  margin-top: var(--space-2);
+  padding-top: var(--space-2);
+  border-top: 1px solid var(--steel);
+}
+
+.buildinginfo__photo-figure {
+  margin: 0;
+}
+
+.buildinginfo__photo-img {
+  display: block;
+  margin: 0 auto;
+  max-width: 100%;
+  max-height: 120px;
+  width: auto;
+  height: auto;
+  border: 1px solid var(--steel);
+  /* A visible box while the hotlinked image is still in flight, so the
+     caption below it does not appear to belong to nothing. */
+  background: var(--bone);
+}
+
+.buildinginfo__photo-caption {
+  margin-top: var(--space-2);
+  font-size: var(--text-3xs);
+  line-height: 1.35;
+  color: var(--steel);
+}
+
+/* "Cataloged 20 m away -- 'Carroll Street Station Mosaic Tile'". Its own
+   line, above the credit, because it is the honest part: nothing in the
+   Commons API says what a photograph depicts, so the card states where the
+   file was cataloged and lets the reader judge whether it is their
+   building. */
+.buildinginfo__photo-provenance {
+  display: block;
+}
+
+.buildinginfo__photo-credit {
+  display: block;
+  margin-top: var(--space-1);
+  color: var(--steel);
+}
+
+a.buildinginfo__photo-credit:hover {
+  color: var(--ink);
+}
+
+/* The three no-image states. The words carry the distinction -- "No photo
+   cataloged" versus "Photo lookup not available" -- and the dashed rule is
+   only the second signal, exactly as it is for the record rows below. */
+.buildinginfo__photo-note {
+  margin: 0;
+  font-size: var(--text-3xs);
+  line-height: 1.35;
+  color: var(--steel);
+}
+
+.buildinginfo__photo-note--unavailable {
+  border-bottom: 1px dashed var(--steel);
+  cursor: help;
 }
 
 /* ---------- building record block (SPEC-building-card-v2.md Part A) ----------

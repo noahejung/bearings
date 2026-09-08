@@ -274,6 +274,44 @@ def get_building(bbl: str) -> dict:
     return buildingrecord.record_for(bbl)
 
 
+@app.get("/api/building/{bbl}/photo")
+def get_building_photo(bbl: str) -> dict:
+    """A freely-licensed Wikimedia Commons photograph cataloged near this
+    building, or an honest nothing -- SPEC-building-card-v2.md Part B.
+
+    A SEPARATE endpoint from GET /api/building/{bbl}, deliberately. Commons
+    is a live external source on a click path (measured 0.67-1.13s per call,
+    2026-09-07), and this project's own doctrine is that a slow source must
+    not delay the ones that are fast: folding the photo into the record
+    would put Commons' latency in front of five hazard fields that do not
+    need it and its failures inside their payload. Two endpoints means the
+    card fires both at once and each block fills in when its own answer
+    arrives.
+
+    `photo` follows the same three-state rule as every field on the record
+    endpoint: a real file, `null` for "we asked Commons and it has nothing
+    here we can show", or `{"unavailable": true, "reason": "..."}` for "we
+    could not ask". `candidates` and `usable` keep "Commons has nothing
+    here" distinguishable from "Commons has something here we cannot
+    attribute", and are `null` -- not 0 -- when the lookup was not answered.
+
+    Nothing is downloaded and nothing is stored: the response carries
+    Wikimedia's own thumbnail URL, which the browser hotlinks. Coverage is
+    landmark-biased and the honest fallback is the common case -- 56 of 60
+    randomly-sampled NYC building footprints have no Commons file within 40
+    m (measured 2026-09-07; see sources/commons.py).
+    """
+    if not buildingrecord.is_wellformed_bbl(bbl):
+        raise HTTPException(
+            status_code=404,
+            detail=(
+                f"{bbl!r} is not a NYC BBL. A BBL is a borough digit (1-5) followed "
+                "by a 5-digit block and a 4-digit lot, zero-padded to 10 digits."
+            ),
+        )
+    return buildingrecord.photo_for(bbl)
+
+
 @app.get("/api/commute")
 def get_commute(
     cell: str = Query(..., min_length=1),

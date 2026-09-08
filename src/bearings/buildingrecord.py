@@ -69,6 +69,19 @@ The three live sources run in parallel against one shared deadline, so this
 endpoint's wall clock is bounded by its slowest single source rather than
 their sum.
 
+And one photograph, on a separate endpoint
+==========================================
+SPEC-building-card-v2.md Part B adds a Wikimedia Commons photo to the same
+card. It is deliberately NOT a sixth field on `record_for()`: Commons is a
+live external source measured at 0.67-1.13s per call, and folding it in
+would add its latency to the response that carries the five hazard fields
+and put its failures inside that payload. `photo_for()` below answers
+`GET /api/building/{bbl}/photo` instead, with its own 2s budget and its own
+`lru_cache`, so a slow or unreachable Commons delays nothing and poisons
+nothing. The card fires both fetches at once and fills each block in as it
+lands. See sources/commons.py for the API mechanics, all of which were
+verified live before being written.
+
 Why a per-request thread pool and not asyncio
 =============================================
 FastAPI already runs a synchronous endpoint in its own worker thread, and
@@ -88,13 +101,23 @@ import logging
 import math
 import time
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timezone
+from datetime import datetime
 from functools import lru_cache
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 
 from bearings import config, duckconn, staleness
-from bearings.sources import bedbugs, buildings, flood, heat, pavement, rodents, socrata
+from bearings.sources import (
+    bedbugs,
+    buildings,
+    commons,
+    flood,
+    heat,
+    pavement,
+    rodents,
+    socrata,
+)
 
 logger = logging.getLogger("bearings.buildingrecord")
 
@@ -159,6 +182,28 @@ SOURCES = {
     "flood": {**flood.SOURCE, "baked": False},
     "pavement": {**pavement.SOURCE, "baked": False},
 }
+
+# Deliberately NOT one of SOURCES above. The five there are the hazard record
+# and share one deadline and one response; Wikimedia Commons is a sixth,
+# slower, entirely optional source answered by its own endpoint so that a
+# Commons outage cannot delay or blank a single hazard field. See photo_for()
+# and GET /api/building/{bbl}/photo.
+PHOTO_SOURCE = {**commons.SOURCE, "baked": False}
+
+
+def _today() -> str:
+    """Today's date in New York, as a plain `YYYY-MM-DD` string.
+
+    Not UTC. Every date this endpoint hands a reader is a date about New
+    York, and a UTC calendar day is a different day here for four or five
+    hours of every evening: a card opened at 21:38 on 2026-09-07 was citing
+    its live sources as "live 2026-09-08", a day that had not started yet
+    for anyone looking at it. Computed server-side and shipped as a date
+    string rather than a timestamp, so the card stays a plain renderer and
+    two readers in different timezones see the same, correct, New York date
+    for a New York fact.
+    """
+    return datetime.now(ZoneInfo(config.PROJECT_TZ)).strftime("%Y-%m-%d")
 
 
 def is_wellformed_bbl(bbl: str) -> bool:
@@ -282,7 +327,7 @@ def bake() -> dict:
 
     start, end = heat._season_bounds(HEAT_SEASONS)
     meta = {
-        "baked_at": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
+        "baked_at": _today(),
         "rows": int(len(merged)),
         "bedbugs": {
             "bbls": int(len(bedbug_frame)),
@@ -524,7 +569,7 @@ def record_for(bbl: str) -> dict:
     live = _live_blocks(bbl, point)
 
     baked_as_of = bake_meta().get("baked_at")
-    live_as_of = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    live_as_of = _today()
 
     return {
         "bbl": bbl,
@@ -541,16 +586,109 @@ def record_for(bbl: str) -> dict:
     }
 
 
+
+# --------------------------------------------------------------------------
+# The photo (SPEC-building-card-v2.md Part B), on its own endpoint.
+# --------------------------------------------------------------------------
+
+
+@lru_cache(maxsize=512)
+def _photo_lookup(bbl: str) -> dict:
+    """This BBL's Commons lookup, cached by BBL.
+
+    The no-representative-point case returns a value rather than raising,
+    because it is a stable fact read out of a baked file -- this BBL will
+    still have no usable footprint on the next click, and re-deriving it is
+    pointless. A Commons transport failure, by contrast, propagates out of
+    this function so `lru_cache` never stores it: `lru_cache` remembers
+    returned values and never exceptions, so a timed-out lookup is retried
+    on the next click instead of being remembered as an answer. Same rule
+    as _rodents_for_bbl() above.
+    """
+    point = buildings.point_for_bbl(bbl)
+    if point is None:
+        return {"point": None}
+    result = commons.photo_near(point[0], point[1], timeout=commons.TIMEOUT_S)
+    return {"point": point, **result}
+
+
+def photo_for(bbl: str) -> dict:
+    """A freely-licensed Wikimedia Commons photograph cataloged near this
+    building, in the same three states record_for() uses.
+
+    `photo` is a real file, or `None` meaning "we asked Commons and it has
+    nothing within the radius that this card can display and attribute", or
+    `{"unavailable": True, "reason": ...}` meaning "we could not ask". The
+    second and third must never collapse into each other: telling a reader
+    that Commons holds no photograph of their building when the request in
+    fact failed is the same bug class as reporting a timed-out rodent lookup
+    as a passed inspection.
+
+    `candidates` and `usable` say how many files Commons returned and how
+    many of those were displayable, so "Commons has nothing here" and
+    "Commons has something here we cannot attribute" stay distinguishable in
+    words. Both are `None` when the lookup was not answered -- we do not know
+    the count, and 0 would claim we did.
+    """
+    as_of = _today()
+    envelope = {
+        "bbl": bbl,
+        "point": None,
+        "photo": None,
+        "candidates": None,
+        "usable": None,
+        "radius_m": commons.SEARCH_RADIUS_M,
+        "source": {**PHOTO_SOURCE, "as_of": as_of},
+    }
+
+    try:
+        result = _photo_lookup(bbl)
+    except Exception as exc:  # noqa: BLE001 -- any upstream failure is "unavailable"
+        logger.info("commons photo lookup failed for bbl %s: %r", bbl, exc)
+        return {
+            **envelope,
+            "photo": _unavailable(
+                f"{commons.SOURCE['name']} could not be reached "
+                f"({type(exc).__name__}). This is not a record of "
+                "'no photograph exists' -- the source was not reachable."
+            ),
+        }
+
+    point = result["point"]
+    if point is None:
+        return {
+            **envelope,
+            "photo": _unavailable(
+                "no single baked building footprint represents this BBL, so "
+                "there is no point to search around -- either no footprint "
+                "carries it, or its footprints are spread too far apart to "
+                "stand for one building (see sources/buildings.py's "
+                "point_for_bbl)."
+            ),
+        }
+
+    return {
+        **envelope,
+        "point": {"lat": point[0], "lng": point[1]},
+        "photo": result["photo"],
+        "candidates": result["candidates"],
+        "usable": result["usable"],
+        "radius_m": result["radius_m"],
+    }
+
+
 __all__ = [
     "BAKED_COLUMNS",
     "HEAT_CAVEAT",
     "HEAT_SEASONS",
     "LIVE_DEADLINE_S",
+    "PHOTO_SOURCE",
     "RODENT_MONTHS",
     "SOURCES",
     "bake",
     "bake_meta",
     "is_wellformed_bbl",
+    "photo_for",
     "record_for",
     "warm_cache",
 ]

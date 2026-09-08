@@ -6,6 +6,7 @@ import { Protocol } from "pmtiles";
 import { useEffect, useRef, useState } from "react";
 import {
   ApiError,
+  getBuildingPhoto,
   getBuildingRecord,
   getCellsIndex,
   getCitywide,
@@ -15,6 +16,11 @@ import {
 import { buildMapStyle, buildOverlayLayers, DESTINATION_ENTER_MS, DESTINATION_EXIT_MS } from "../lib/mapStyle";
 import type { SavedPlace } from "../lib/preferences";
 import type { CellsIndexEntry, Citywide, Era, MapGeometry, Reach, Source } from "../types";
+import { buildPhotoBlock } from "./buildingPhoto";
+import {
+  addressOverlaySources,
+  EMPTY_FC,
+} from "./mapOverlay";
 import { buildRecordBlock } from "./buildingRecord";
 import type { TileHighlightKey } from "./CellReportView";
 import { colorFor } from "./RouteBullet";
@@ -191,66 +197,6 @@ function citywideCellsGeoJSON(entries: CellsIndexEntry[]): FeatureCollection {
   return { type: "FeatureCollection", features };
 }
 
-// LAYOUT-V3 WAVE 1e: every footprint now carries its own real bbl/year/era/
-// residential/hazard properties (MapGeometry's MapBuilding, see types.ts's
-// own comment for the None-vs-0 rules) -- mapStyle.ts's per-building layers
-// read `residential`/`hazard_class_c` straight off these properties (via
-// `["get", ...]`), and the click/hover handlers below read all five off
-// whichever feature `queryRenderedFeatures`/the mousemove hit returns. A
-// real numeric top-level `id` (index into this one fetch's own array,
-// stable only within it -- same convention citywideCellsGeoJSON() already
-// uses, same reason: MapLibre's `setFeatureState` only works against a
-// real numeric GeoJSON feature id) drives the hover fill in
-// mapStyle.ts's buildOverlayLayers().
-function buildingsGeoJSON(geo: MapGeometry): FeatureCollection {
-  return {
-    type: "FeatureCollection",
-    features: geo.buildings.map((b, i) => ({
-      type: "Feature",
-      id: i,
-      properties: {
-        bbl: b.bbl,
-        year_built: b.year_built,
-        era: b.era,
-        residential: b.residential,
-        hazard_class_c: b.hazard_class_c,
-      },
-      geometry: {
-        type: "Polygon",
-        coordinates: [b.coords.map(([lat, lng]): [number, number] => [lng, lat])],
-      },
-    })),
-  };
-}
-
-function streetsGeoJSON(geo: MapGeometry): FeatureCollection {
-  return {
-    type: "FeatureCollection",
-    features: geo.streets.map((s) => ({
-      type: "Feature",
-      properties: { rank: s.rank },
-      geometry: {
-        type: "LineString",
-        coordinates: s.coords.map(([lat, lng]): [number, number] => [lng, lat]),
-      },
-    })),
-  };
-}
-
-function subwayGeoJSON(geo: MapGeometry): FeatureCollection {
-  return {
-    type: "FeatureCollection",
-    features: geo.subway_lines.map((line) => ({
-      type: "Feature",
-      properties: { route: line.route },
-      geometry: {
-        type: "LineString",
-        coordinates: line.coords.map(([lat, lng]): [number, number] => [lng, lat]),
-      },
-    })),
-  };
-}
-
 // WAVE 4 (2026-08-11, SPEC-layout-v3.md Wave 4): the route-line preview --
 // filters the SAME already-loaded subway_lines array (fetched once per
 // address, no second geometry request) down to just the real shape_id(s)
@@ -335,8 +281,6 @@ function reachDotsGeoJSON(reach: Reach, activeCategories: Set<string>): FeatureC
   }
   return { type: "FeatureCollection", features };
 }
-
-const EMPTY_FC: FeatureCollection = { type: "FeatureCollection", features: [] };
 
 // MOTION WAVE (2026-08-03, SPEC "data-viz animations wave" item 3): "map
 // layers... ease opacity rather than snapping" -- for MapLibre's own native
@@ -687,6 +631,15 @@ const BUILDING_ERA_LABELS: Record<string, string> = {
   modern: "Modern",
 };
 
+// How much of the MAP CANVAS the per-building card must leave clear above
+// itself, and the smallest height it is allowed to be squeezed to. The card
+// is bottom-anchored to the building it describes, so a click high on the
+// map leaves it very little room; without a cap it simply grows off the top
+// of the canvas and disappears under the app header, which paints over it.
+// See showBuildingInfo()'s own comment for the measurement.
+const MIN_CARD_MAP_GAP_PX = 12;
+const MIN_CARD_HEIGHT_PX = 180;
+
 interface BuildingFeatureProps {
   bbl: string | null;
   year_built: number | null;
@@ -766,6 +719,15 @@ function buildBuildingInfoElement(
   // added, rather than rendered as five "unavailable" rows, which would
   // claim five source lookups that never happened.
   if (props.bbl) {
+    // SPEC-building-card-v2.md Part B: the Commons photo, above the record
+    // block and on its own fetch. Two requests rather than one, fired
+    // together: Wikimedia Commons is a live external source measured at
+    // 0.67-1.13s and the five hazard rows must not queue behind it, so each
+    // block fills in when its own answer lands. See
+    // GET /api/building/{bbl}/photo.
+    const photo = buildPhotoBlock({ status: "loading" });
+    el.appendChild(photo.el);
+
     const block = buildRecordBlock({ status: "loading" });
     el.appendChild(block.el);
     let live = true;
@@ -774,7 +736,7 @@ function buildBuildingInfoElement(
     // not write ANOTHER building's numbers into a card the user is now
     // looking at. `onClose` runs on every teardown path (the × button, a
     // click elsewhere, a different building), so it is the one place that
-    // has to flip this.
+    // has to flip this. One flag covers both fetches below.
     onDetach(() => {
       live = false;
     });
@@ -789,6 +751,16 @@ function buildBuildingInfoElement(
             ? err.message
             : "The building record could not be loaded.";
         block.update({ status: "error", message });
+      });
+    getBuildingPhoto(props.bbl)
+      .then((response) => {
+        if (live) photo.update({ status: "ready", response });
+      })
+      .catch((err: unknown) => {
+        if (!live) return;
+        const message =
+          err instanceof ApiError ? err.message : "The photo lookup could not be reached.";
+        photo.update({ status: "error", message });
       });
   }
 
@@ -1123,6 +1095,33 @@ export function MapView({
           buildingRecordCancelRef.current = cancel;
         },
       );
+      // The card is anchored to the building's own footprint and grows
+      // UPWARD from it, so its height is bounded by the room between the
+      // clicked point and the top of the map canvas -- and nothing was
+      // bounding it. Two things were measured on the real app, in this
+      // order, and the first fix was not enough:
+      //
+      // 1. At 1366x768 with the Part B photo block in, clicking the Dakota
+      //    put the card's top at **-72px** -- the × button, the year built
+      //    and the hazard line were off the window entirely.
+      // 2. Capping against the WINDOW top fixed that number (top: 12) and
+      //    the card still opened showing the photo first, because the app
+      //    header is painted over the map: everything between the window top
+      //    and the canvas top (126px at 1366, ~160px at 375) is hidden
+      //    behind the search bar. The cap has to be measured from the canvas.
+      //
+      // `map.project()` returns canvas-relative pixels, so its `y` IS the
+      // room above this click. Capped here rather than in CSS because the
+      // limit is not a constant -- it is whatever this particular click left
+      // above itself. The card scrolls inside the cap rather than being
+      // clipped, so no content is ever silently lost, and the floor keeps a
+      // click near the top of the map from producing a card too short to
+      // read (that card does tuck under the header; a click 20px below the
+      // canvas top has nowhere else to put 180px of card).
+      const spaceAbove = map.project(lngLat).y - MIN_CARD_MAP_GAP_PX;
+      el.style.maxHeight = `${Math.max(MIN_CARD_HEIGHT_PX, spaceAbove)}px`;
+      el.style.overflowY = "auto";
+
       buildingInfoMarkerRef.current = new maplibregl.Marker({ element: el, anchor: "bottom" })
         .setLngLat(lngLat)
         .addTo(map);
@@ -1363,11 +1362,34 @@ export function MapView({
     // PREVIOUS cell's tiles were in" rule, applied to this marker instead.
     clearBuildingInfo();
 
-    if (!geo) return;
+    // BUG FIX (2026-09-07), pre-existing and reproduced live before it was
+    // touched: this used to read `if (!geo) return;` HERE, before the three
+    // setData() calls below. `geo` goes null on every bare grid click
+    // (App.handleCellClick() calls setSearchedAddress(null)), so the
+    // previous address's footprints, streets, subway lines and station
+    // markers all stayed on the map -- and the footprints stayed CLICKABLE
+    // with `geoRef.current === null`, which made showBuildingInfo() read
+    // `sources.building_age`/`.hazards` off nothing and render a card
+    // showing a year built and a hazard count with no source line at all.
+    // Measured on the running app: the same click before a bare cell click
+    // produced a card citing "NYC PLUTO · NYC HPD", and after one produced
+    // a card citing neither.
+    //
+    // The three sources now go empty instead, which is what the map created
+    // them as (see effect 2's addSource calls) and what every other
+    // geometry helper in this file already does with a missing input.
+    // See mapOverlay.ts's addressOverlaySources() for the whole argument.
+    const overlay = addressOverlaySources(geo);
+    (map.getSource("buildings") as maplibregl.GeoJSONSource | undefined)?.setData(overlay.buildings);
+    (map.getSource("streets") as maplibregl.GeoJSONSource | undefined)?.setData(overlay.streets);
+    (map.getSource("subway") as maplibregl.GeoJSONSource | undefined)?.setData(overlay.subway);
 
-    (map.getSource("buildings") as maplibregl.GeoJSONSource | undefined)?.setData(buildingsGeoJSON(geo));
-    (map.getSource("streets") as maplibregl.GeoJSONSource | undefined)?.setData(streetsGeoJSON(geo));
-    (map.getSource("subway") as maplibregl.GeoJSONSource | undefined)?.setData(subwayGeoJSON(geo));
+    stationMarkersRef.current.forEach((m) => m.remove());
+    stationMarkersRef.current = [];
+
+    // Everything past here is about WHERE to look, not what to draw, and
+    // there is nowhere to look without an address.
+    if (!geo) return;
 
     map.fitBounds(
       [
@@ -1377,9 +1399,7 @@ export function MapView({
       { padding: 48, duration: 600 },
     );
 
-    stationMarkersRef.current.forEach((m) => m.remove());
-    stationMarkersRef.current = [];
-    for (const s of geo.stations) {
+    for (const s of overlay.stations) {
       const el = document.createElement("div");
       el.className = "mapstation";
       el.title = s.name;

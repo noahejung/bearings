@@ -10,6 +10,7 @@ it. Every non-failure assertion below runs against the real live/baked data.
 """
 
 import time
+from datetime import datetime
 
 import pytest
 
@@ -376,3 +377,60 @@ def test_freshness_window_is_configured_and_warns_when_crossed(tmp_path, monkeyp
     (tmp_path / "building_hazards.json").write_text("{}")
     with pytest.warns(Warning, match="building hazards"):
         buildingrecord.warm_cache()
+
+
+# --------------------------------------------------------------------------
+# The dates this endpoint hands a reader are New York dates.
+# --------------------------------------------------------------------------
+
+
+def test_a_new_york_evening_is_already_tomorrow_in_utc():
+    """The bug, pinned to the exact instant it was observed at. 21:38 on
+    2026-09-07 in New York is 01:38 on 2026-09-08 in UTC, so a UTC-formatted
+    calendar day labels that evening's live lookups with a day that has not
+    started yet for anyone reading them. Clock-independent: it asserts the
+    conversion, not the current time."""
+    from datetime import timezone
+    from zoneinfo import ZoneInfo
+
+    from bearings import config
+
+    instant = datetime(2026, 9, 8, 1, 38, tzinfo=timezone.utc)
+    assert instant.strftime("%Y-%m-%d") == "2026-09-08"
+    assert instant.astimezone(ZoneInfo(config.PROJECT_TZ)).strftime("%Y-%m-%d") == "2026-09-07"
+
+
+def test_today_is_the_new_york_date():
+    from datetime import timezone
+    from zoneinfo import ZoneInfo
+
+    from bearings import config
+
+    new_york = datetime.now(ZoneInfo(config.PROJECT_TZ)).strftime("%Y-%m-%d")
+    utc = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    assert buildingrecord._today() == new_york
+    if new_york != utc:
+        # Only reachable during the hours the two disagree, which is exactly
+        # the window this exists for -- so it is asserted when it can be.
+        assert buildingrecord._today() != utc
+
+
+def test_live_sources_are_dated_in_new_york_not_utc():
+    from zoneinfo import ZoneInfo
+
+    from bearings import config
+
+    new_york = datetime.now(ZoneInfo(config.PROJECT_TZ)).strftime("%Y-%m-%d")
+    rec = buildingrecord.record_for(BROOKLYN_BBL)
+    for key, src in rec["sources"].items():
+        if not src["baked"]:
+            assert src["as_of"] == new_york, key
+
+
+def test_the_photo_endpoints_as_of_is_a_new_york_date_too():
+    from zoneinfo import ZoneInfo
+
+    from bearings import config
+
+    new_york = datetime.now(ZoneInfo(config.PROJECT_TZ)).strftime("%Y-%m-%d")
+    assert buildingrecord.photo_for(BROOKLYN_BBL)["source"]["as_of"] == new_york

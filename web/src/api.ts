@@ -1,5 +1,6 @@
 import type {
   AutocompleteResult,
+  BuildingPhotoResponse,
   BuildingRecord,
   CellProfile,
   CellsIndex,
@@ -179,6 +180,18 @@ export function getRoute(
 // behind that split.
 export function getBuildingRecord(bbl: string): Promise<BuildingRecord> {
   return request<BuildingRecord>(`/api/building/${encodeURIComponent(bbl)}`);
+}
+
+// SPEC-building-card-v2.md Part B: a freely-licensed Wikimedia Commons photo
+// cataloged near this building, or an honest nothing.
+//
+// A SEPARATE call from getBuildingRecord() above, deliberately. Commons is a
+// live external source on a click path, measured at 0.67-1.13s, and the five
+// hazard fields must not wait behind it -- if Commons is slow or down, the
+// record still lands at its own speed and the photo block says so on its
+// own. The card fires both at once and each fills in when it arrives.
+export function getBuildingPhoto(bbl: string): Promise<BuildingPhotoResponse> {
+  return request<BuildingPhotoResponse>(`/api/building/${encodeURIComponent(bbl)}/photo`);
 }
 
 // The 5/10/15-minute reach rings for a searched address (SPEC-lens-report.md

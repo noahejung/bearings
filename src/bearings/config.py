@@ -11,6 +11,16 @@ NYC_BBOX = {
     "ymax": 40.93,
 }
 
+# --- time ---
+# Every date this project shows a reader is a New York date, because every
+# fact it reports is about New York. Formatting a timestamp in UTC instead
+# labels anything after 20:00 local (19:00 during standard time) with
+# TOMORROW's calendar day -- observed live on 2026-09-07, when the card's
+# sources line read "live 2026-09-08" on a card opened at 21:38 local.
+# Only user-facing dates use this; the Socrata `$where` cutoffs elsewhere
+# stay in UTC, where a few hours of window edge carries no meaning.
+PROJECT_TZ = "America/New_York"
+
 # --- paths ---
 DATA_DIR = Path(__file__).resolve().parents[2] / "data"
 RAW_DIR = DATA_DIR / "raw"
