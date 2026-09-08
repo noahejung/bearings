@@ -6,6 +6,7 @@ import { Protocol } from "pmtiles";
 import { useEffect, useRef, useState } from "react";
 import {
   ApiError,
+  getBuildingPhoto,
   getBuildingRecord,
   getCellsIndex,
   getCitywide,
@@ -15,6 +16,7 @@ import {
 import { buildMapStyle, buildOverlayLayers, DESTINATION_ENTER_MS, DESTINATION_EXIT_MS } from "../lib/mapStyle";
 import type { SavedPlace } from "../lib/preferences";
 import type { CellsIndexEntry, Citywide, Era, MapGeometry, Reach, Source } from "../types";
+import { buildPhotoBlock } from "./buildingPhoto";
 import { buildRecordBlock } from "./buildingRecord";
 import type { TileHighlightKey } from "./CellReportView";
 import { colorFor } from "./RouteBullet";
@@ -687,6 +689,15 @@ const BUILDING_ERA_LABELS: Record<string, string> = {
   modern: "Modern",
 };
 
+// How much of the MAP CANVAS the per-building card must leave clear above
+// itself, and the smallest height it is allowed to be squeezed to. The card
+// is bottom-anchored to the building it describes, so a click high on the
+// map leaves it very little room; without a cap it simply grows off the top
+// of the canvas and disappears under the app header, which paints over it.
+// See showBuildingInfo()'s own comment for the measurement.
+const MIN_CARD_MAP_GAP_PX = 12;
+const MIN_CARD_HEIGHT_PX = 180;
+
 interface BuildingFeatureProps {
   bbl: string | null;
   year_built: number | null;
@@ -766,6 +777,15 @@ function buildBuildingInfoElement(
   // added, rather than rendered as five "unavailable" rows, which would
   // claim five source lookups that never happened.
   if (props.bbl) {
+    // SPEC-building-card-v2.md Part B: the Commons photo, above the record
+    // block and on its own fetch. Two requests rather than one, fired
+    // together: Wikimedia Commons is a live external source measured at
+    // 0.67-1.13s and the five hazard rows must not queue behind it, so each
+    // block fills in when its own answer lands. See
+    // GET /api/building/{bbl}/photo.
+    const photo = buildPhotoBlock({ status: "loading" });
+    el.appendChild(photo.el);
+
     const block = buildRecordBlock({ status: "loading" });
     el.appendChild(block.el);
     let live = true;
@@ -774,7 +794,7 @@ function buildBuildingInfoElement(
     // not write ANOTHER building's numbers into a card the user is now
     // looking at. `onClose` runs on every teardown path (the × button, a
     // click elsewhere, a different building), so it is the one place that
-    // has to flip this.
+    // has to flip this. One flag covers both fetches below.
     onDetach(() => {
       live = false;
     });
@@ -789,6 +809,16 @@ function buildBuildingInfoElement(
             ? err.message
             : "The building record could not be loaded.";
         block.update({ status: "error", message });
+      });
+    getBuildingPhoto(props.bbl)
+      .then((response) => {
+        if (live) photo.update({ status: "ready", response });
+      })
+      .catch((err: unknown) => {
+        if (!live) return;
+        const message =
+          err instanceof ApiError ? err.message : "The photo lookup could not be reached.";
+        photo.update({ status: "error", message });
       });
   }
 
@@ -1123,6 +1153,33 @@ export function MapView({
           buildingRecordCancelRef.current = cancel;
         },
       );
+      // The card is anchored to the building's own footprint and grows
+      // UPWARD from it, so its height is bounded by the room between the
+      // clicked point and the top of the map canvas -- and nothing was
+      // bounding it. Two things were measured on the real app, in this
+      // order, and the first fix was not enough:
+      //
+      // 1. At 1366x768 with the Part B photo block in, clicking the Dakota
+      //    put the card's top at **-72px** -- the × button, the year built
+      //    and the hazard line were off the window entirely.
+      // 2. Capping against the WINDOW top fixed that number (top: 12) and
+      //    the card still opened showing the photo first, because the app
+      //    header is painted over the map: everything between the window top
+      //    and the canvas top (126px at 1366, ~160px at 375) is hidden
+      //    behind the search bar. The cap has to be measured from the canvas.
+      //
+      // `map.project()` returns canvas-relative pixels, so its `y` IS the
+      // room above this click. Capped here rather than in CSS because the
+      // limit is not a constant -- it is whatever this particular click left
+      // above itself. The card scrolls inside the cap rather than being
+      // clipped, so no content is ever silently lost, and the floor keeps a
+      // click near the top of the map from producing a card too short to
+      // read (that card does tuck under the header; a click 20px below the
+      // canvas top has nowhere else to put 180px of card).
+      const spaceAbove = map.project(lngLat).y - MIN_CARD_MAP_GAP_PX;
+      el.style.maxHeight = `${Math.max(MIN_CARD_HEIGHT_PX, spaceAbove)}px`;
+      el.style.overflowY = "auto";
+
       buildingInfoMarkerRef.current = new maplibregl.Marker({ element: el, anchor: "bottom" })
         .setLngLat(lngLat)
         .addTo(map);

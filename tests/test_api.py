@@ -861,3 +861,183 @@ def test_building_stays_inside_its_own_deadline(client):
     elapsed = time.monotonic() - start
     assert resp.status_code == 200
     assert elapsed < buildingrecord.LIVE_DEADLINE_S + 3.0, f"{elapsed:.2f}s"
+
+
+# ---------------------------------------------------------------------------
+# GET /api/building/{bbl}/photo -- SPEC-building-card-v2.md Part B. A
+# Wikimedia Commons photograph cataloged near the building, or an honest
+# nothing. Its own endpoint so a slow Commons cannot delay the five hazard
+# fields above (bearings/buildingrecord.py's photo_for()).
+# ---------------------------------------------------------------------------
+
+# 350 5th Ave -- the Empire State Building. Confirmed live 2026-09-07: three
+# Commons files within 40 m of its footprint centroid, nearest 1.2 m.
+LANDMARK_BBL = "1008350041"
+
+# 161 Newel St, Greenpoint -- an ordinary rowhouse. Confirmed live: zero
+# Commons files within 40 m, which is the common case (56 of 60 randomly
+# sampled NYC footprints).
+NO_PHOTO_BBL = "3026230011"
+
+# DOB's own unknown-lot placeholder, carried by 23 unrelated footprints
+# spread ~18 km apart, so buildings.point_for_bbl() refuses to name a point
+# for it -- the "we could not look" state, reached without breaking anything.
+NO_POINT_BBL = "3999999999"
+
+
+def test_photo_endpoint_returns_every_key_whatever_the_answer(client):
+    resp = client.get(f"/api/building/{LANDMARK_BBL}/photo")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert set(body) == {
+        "bbl",
+        "point",
+        "photo",
+        "candidates",
+        "usable",
+        "radius_m",
+        "source",
+    }
+    assert body["bbl"] == LANDMARK_BBL
+
+
+def test_photo_landmark_returns_a_hotlinkable_thumbnail_with_attribution(client):
+    body = client.get(f"/api/building/{LANDMARK_BBL}/photo").json()
+    photo = body["photo"]
+    assert photo is not None
+    assert photo["thumb_url"].startswith("https://")
+    # Wikimedia's own thumbnail CDN -- nothing is downloaded or stored here.
+    assert "wikimedia.org" in photo["thumb_url"]
+    assert photo["license"]
+    assert photo["title"]
+    assert photo["description_url"].startswith("https://commons.wikimedia.org/wiki/File:")
+    assert 0.0 <= photo["distance_m"] <= body["radius_m"]
+    assert body["candidates"] >= 1
+    assert body["usable"] >= 1
+
+
+def test_photo_ordinary_rowhouse_is_null_with_a_zero_candidate_count(client):
+    # `null` is a real answer here -- "we asked Commons and it has nothing
+    # within 40 m" -- and `candidates: 0` is what makes it a measured zero
+    # rather than an unknown.
+    body = client.get(f"/api/building/{NO_PHOTO_BBL}/photo").json()
+    assert body["photo"] is None
+    assert body["candidates"] == 0
+    assert body["usable"] == 0
+
+
+def test_photo_unavailable_when_no_point_can_be_named_for_the_bbl(client):
+    # 23 unrelated footprints across ~18 km carry this placeholder BBL, so
+    # there is no honest centre to search around. "Could not look" -- never
+    # "no photo", which would be a claim about Commons nobody made.
+    body = client.get(f"/api/building/{NO_POINT_BBL}/photo").json()
+    assert body["photo"]["unavailable"] is True
+    assert body["photo"]["reason"]
+    assert body["point"] is None
+    # We do not know how many files are near a point we could not derive.
+    assert body["candidates"] is None
+    assert body["usable"] is None
+
+
+def test_photo_source_is_cited_with_a_url_and_an_as_of(client):
+    body = client.get(f"/api/building/{LANDMARK_BBL}/photo").json()
+    src = body["source"]
+    assert src["name"] == "Wikimedia Commons"
+    assert src["url"].startswith("https://")
+    assert src["as_of"]
+    assert src["baked"] is False
+
+
+def test_photo_unreachable_commons_is_unavailable_not_no_photo(client, monkeypatch):
+    """The state that matters most. A reader who is told "no photo cataloged"
+    when the request actually failed has been told something false about the
+    dataset, which is this project's own recurring bug class."""
+    import httpx as _httpx
+
+    from bearings import buildingrecord
+    from bearings.sources import commons
+
+    def boom(*args, **kwargs):
+        raise _httpx.ReadTimeout("forced")
+
+    buildingrecord._photo_lookup.cache_clear()
+    monkeypatch.setattr(commons.httpx, "get", boom)
+    try:
+        body = client.get(f"/api/building/{LANDMARK_BBL}/photo").json()
+    finally:
+        buildingrecord._photo_lookup.cache_clear()
+
+    assert body["photo"]["unavailable"] is True
+    assert "ReadTimeout" in body["photo"]["reason"]
+    assert body["candidates"] is None
+    assert body["usable"] is None
+
+
+def test_photo_failure_is_not_cached_as_an_answer(client, monkeypatch):
+    """`lru_cache` stores returned values and never exceptions, so a failed
+    lookup must be retried on the next click rather than remembered."""
+    import httpx as _httpx
+
+    from bearings import buildingrecord
+    from bearings.sources import commons
+
+    def boom(*args, **kwargs):
+        raise _httpx.ReadTimeout("forced")
+
+    buildingrecord._photo_lookup.cache_clear()
+    monkeypatch.setattr(commons.httpx, "get", boom)
+    assert client.get(f"/api/building/{LANDMARK_BBL}/photo").json()["photo"]["unavailable"]
+    monkeypatch.undo()
+
+    body = client.get(f"/api/building/{LANDMARK_BBL}/photo").json()
+    assert body["photo"] is not None
+    assert body["photo"].get("unavailable") is None
+
+
+def test_photo_malformed_bbl_is_404_not_500(client):
+    for bad in ("not-a-bbl", "123", "9008350041", "10083500411"):
+        resp = client.get(f"/api/building/{bad}/photo")
+        assert resp.status_code == 404, bad
+        assert "detail" in resp.json()
+
+
+def test_photo_stays_inside_its_own_budget(client):
+    from bearings import buildingrecord
+    from bearings.sources import commons
+
+    buildingrecord._photo_lookup.cache_clear()
+    start = time.monotonic()
+    resp = client.get(f"/api/building/{LANDMARK_BBL}/photo")
+    elapsed = time.monotonic() - start
+    assert resp.status_code == 200
+    # Generous headroom over the 2s budget so slow dev/CI hardware cannot
+    # make this flaky, while still failing loudly if the timeout split ever
+    # stopped bounding the call.
+    assert elapsed < commons.TIMEOUT_S + 3.0, f"{elapsed:.2f}s"
+
+
+def test_photo_does_not_slow_down_the_hazard_record(client):
+    """The whole reason these are two endpoints. The record must answer at
+    its own speed whether or not Commons is reachable."""
+    import httpx as _httpx
+
+    from bearings import buildingrecord
+    from bearings.sources import commons
+
+    def hang(*args, **kwargs):
+        time.sleep(5)
+        raise _httpx.ReadTimeout("forced")
+
+    buildingrecord._photo_lookup.cache_clear()
+    original = commons.httpx.get
+    commons.httpx.get = hang
+    try:
+        start = time.monotonic()
+        resp = client.get(f"/api/building/{WALL_ST_BBL}")
+        elapsed = time.monotonic() - start
+    finally:
+        commons.httpx.get = original
+        buildingrecord._photo_lookup.cache_clear()
+
+    assert resp.status_code == 200
+    assert elapsed < buildingrecord.LIVE_DEADLINE_S + 3.0, f"{elapsed:.2f}s"

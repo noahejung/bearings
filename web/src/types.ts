@@ -283,6 +283,65 @@ export interface BuildingSource extends Source {
   baked: boolean;
 }
 
+// ---------------------------------------------------------------------------
+// GET /api/building/{bbl}/photo -- SPEC-building-card-v2.md Part B.
+//
+// A freely-licensed photograph Wikimedia Commons has cataloged near this
+// building's footprint centroid, or an honest nothing. Its own endpoint
+// rather than a field on the record below, so a slow or unreachable Commons
+// cannot delay the five hazard fields (bearings/sources/commons.py).
+//
+// `distance_m` and `title` are on every hit and are not decoration: nothing
+// in the Commons API says what a photograph depicts, so the card introduces
+// each one by where it was cataloged and lets the reader judge. A real
+// Brooklyn rowhouse's only neighbouring file is a subway mosaic 20 m away.
+// ---------------------------------------------------------------------------
+export interface BuildingPhoto {
+  /** The Commons file title, with the "File:" namespace prefix stripped and
+   *  its extension intact (the card drops the extension for display). */
+  title: string;
+  /** Wikimedia's own thumbnail URL, hotlinked. Never downloaded, never
+   *  stored. */
+  thumb_url: string;
+  /** The thumbnail box that was REQUESTED, not the bytes served -- Wikimedia
+   *  rounds a request up to a cached bucket, so asking for 480 returns a
+   *  real 500px-wide file. The ratio is preserved, so these are useful for
+   *  aspect ratio and nothing else. */
+  thumb_width: number | null;
+  thumb_height: number | null;
+  /** The Commons file page, where the full license terms live. */
+  description_url: string | null;
+  artist: string | null;
+  /** Always present -- a file whose license Commons does not publish is
+   *  dropped server-side rather than shown without correct attribution. */
+  license: string;
+  license_url: string | null;
+  /** Metres from this building's footprint centroid, measured by Commons'
+   *  own `codistancefrompoint`. `null` when the API returned no coordinate
+   *  to measure against -- never 0, which would be a number nobody
+   *  measured. */
+  distance_m: number | null;
+}
+
+export interface BuildingPhotoResponse {
+  bbl: string;
+  point: { lat: number; lng: number } | null;
+  /** A photo, or `null` for "we asked Commons and it has nothing here we can
+   *  show", or `Unavailable` for "we could not ask". The last two must never
+   *  collapse: telling a reader Commons has no photo of their building when
+   *  the request simply failed is the same bug class as reporting a timed-out
+   *  rodent lookup as a passed inspection. */
+  photo: Field<BuildingPhoto>;
+  /** How many files Commons returned in the radius, and how many of those
+   *  this card could display and attribute. Both `null` when the lookup was
+   *  not answered. `candidates > 0` with `photo === null` is a real and
+   *  different state from `candidates === 0`. */
+  candidates: number | null;
+  usable: number | null;
+  radius_m: number;
+  source: BuildingSource;
+}
+
 export interface BuildingRecord {
   bbl: string;
   point: { lat: number; lng: number } | null;
