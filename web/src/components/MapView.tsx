@@ -4,10 +4,18 @@ import maplibregl, { type LngLat, type Map as MapLibreMap, type Marker } from "m
 import "maplibre-gl/dist/maplibre-gl.css";
 import { Protocol } from "pmtiles";
 import { useEffect, useRef, useState } from "react";
-import { ApiError, getCellsIndex, getCitywide, getMapGeometry, getReach } from "../api";
+import {
+  ApiError,
+  getBuildingRecord,
+  getCellsIndex,
+  getCitywide,
+  getMapGeometry,
+  getReach,
+} from "../api";
 import { buildMapStyle, buildOverlayLayers, DESTINATION_ENTER_MS, DESTINATION_EXIT_MS } from "../lib/mapStyle";
 import type { SavedPlace } from "../lib/preferences";
 import type { CellsIndexEntry, Citywide, Era, MapGeometry, Reach, Source } from "../types";
+import { buildRecordBlock } from "./buildingRecord";
 import type { TileHighlightKey } from "./CellReportView";
 import { colorFor } from "./RouteBullet";
 
@@ -690,6 +698,11 @@ function buildBuildingInfoElement(
   props: BuildingFeatureProps,
   sources: { building_age?: Source; hazards?: Source },
   onClose: () => void,
+  // Called with a callback the caller must run when this card leaves the
+  // screen, however it leaves. The in-flight GET /api/building/{bbl} below
+  // uses it to stop writing into a card that is no longer the one on
+  // screen -- see that block's own comment.
+  onDetach: (cancel: () => void) => void = () => {},
 ): HTMLDivElement {
   const el = document.createElement("div");
   el.className = "buildinginfo";
@@ -741,6 +754,42 @@ function buildBuildingInfoElement(
     sourceP.className = "buildinginfo__source mono";
     sourceP.textContent = sourceNames.join(" · ");
     el.appendChild(sourceP);
+  }
+
+  // SPEC-building-card-v2.md Part A: the five per-building sources that were
+  // built and tested since July and could not reach a reader until now. The
+  // two fields above come free with GET /api/map's payload and render
+  // instantly; these need their own fetch, so the block goes on screen in
+  // its loading state immediately and fills in when the record lands.
+  //
+  // No BBL means there is nothing to ask about -- the block is simply not
+  // added, rather than rendered as five "unavailable" rows, which would
+  // claim five source lookups that never happened.
+  if (props.bbl) {
+    const block = buildRecordBlock({ status: "loading" });
+    el.appendChild(block.el);
+    let live = true;
+    // The card is torn down on the next click; a fetch still in flight must
+    // not write into a detached element, and -- more to the point -- must
+    // not write ANOTHER building's numbers into a card the user is now
+    // looking at. `onClose` runs on every teardown path (the × button, a
+    // click elsewhere, a different building), so it is the one place that
+    // has to flip this.
+    onDetach(() => {
+      live = false;
+    });
+    getBuildingRecord(props.bbl)
+      .then((record) => {
+        if (live) block.update({ status: "ready", record });
+      })
+      .catch((err: unknown) => {
+        if (!live) return;
+        const message =
+          err instanceof ApiError
+            ? err.message
+            : "The building record could not be loaded.";
+        block.update({ status: "error", message });
+      });
   }
 
   return el;
@@ -866,6 +915,21 @@ export function MapView({
   // anywhere that isn't a residential building's own footprint, replaces
   // or clears it -- see effect 2's own onCitywideCellClick comment).
   const buildingInfoMarkerRef = useRef<Marker | null>(null);
+  // SPEC-building-card-v2.md Part A: the open card's own "stop writing into
+  // me" switch, held beside the marker because it has exactly the same
+  // lifetime. GET /api/building/{bbl} is in flight for a few hundred
+  // milliseconds and the user can click a second building inside that
+  // window; without this the first response would land in the second
+  // building's card and read as that building's record. Every place that
+  // removes the marker calls this first -- see clearBuildingInfo().
+  const buildingRecordCancelRef = useRef<(() => void) | null>(null);
+
+  const clearBuildingInfo = () => {
+    buildingRecordCancelRef.current?.();
+    buildingRecordCancelRef.current = null;
+    buildingInfoMarkerRef.current?.remove();
+    buildingInfoMarkerRef.current = null;
+  };
 
   // Always-current ref for the click callback -- effect 2 (below) registers
   // its MapLibre click listener exactly once per `mapReady` transition, not
@@ -942,8 +1006,7 @@ export function MapView({
       savedMarkersRef.current = [];
       subjectMarkerRef.current?.remove();
       subjectMarkerRef.current = null;
-      buildingInfoMarkerRef.current?.remove();
-      buildingInfoMarkerRef.current = null;
+      clearBuildingInfo();
       map.remove();
       maplibregl.removeProtocol("pmtiles");
       mapRef.current = null;
@@ -1038,8 +1101,7 @@ export function MapView({
     // click must short-circuit BEFORE the cell-swap path ever runs, not
     // just resolve independently of it.
     const showBuildingInfo = (feature: maplibregl.MapGeoJSONFeature | undefined, lngLat: LngLat) => {
-      buildingInfoMarkerRef.current?.remove();
-      buildingInfoMarkerRef.current = null;
+      clearBuildingInfo();
       if (!feature) return;
       const props = feature.properties as {
         bbl: string | null;
@@ -1056,9 +1118,9 @@ export function MapView({
           hazard_class_c: props.hazard_class_c,
         },
         { building_age: sources.building_age, hazards: sources.hazards },
-        () => {
-          buildingInfoMarkerRef.current?.remove();
-          buildingInfoMarkerRef.current = null;
+        clearBuildingInfo,
+        (cancel) => {
+          buildingRecordCancelRef.current = cancel;
         },
       );
       buildingInfoMarkerRef.current = new maplibregl.Marker({ element: el, anchor: "bottom" })
@@ -1299,8 +1361,7 @@ export function MapView({
     // when `geo` goes back to `null`) matches CellReportView's own "a new
     // block's report swaps in -- clear whatever hover/expand state the
     // PREVIOUS cell's tiles were in" rule, applied to this marker instead.
-    buildingInfoMarkerRef.current?.remove();
-    buildingInfoMarkerRef.current = null;
+    clearBuildingInfo();
 
     if (!geo) return;
 
