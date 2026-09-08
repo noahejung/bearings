@@ -56,6 +56,25 @@ const LABELS: Record<string, string> = {
 
 export const ROW_KEYS = ["bedbugs", "rodents", "heat", "flood", "pavement"] as const;
 
+/** The longest a row's value may be before it wraps, in characters.
+ *
+ *  A character count is a real limit here rather than a proxy, because the
+ *  card is monospaced: `.buildinginfo` sets `font-family: var(--font-mono)`,
+ *  so every glyph in a value is exactly the same width. Measured on the
+ *  running app at the real card's real width (Playwright,
+ *  `getBoundingClientRect`, 2026-09-07): the card is 200px wide with 182px
+ *  inside its padding, the `auto` label column takes 45.2px and the `1fr`
+ *  value column gets **132.8px**, and one mono character at `--text-3xs` is
+ *  **5.86px**. So 22 characters measure 128.9px and fit with 3.9px to spare,
+ *  and 23 measure 134.8px and wrap.
+ *
+ *  This is checked by a test over every string every row can produce
+ *  (buildingRecord.test.tsx), which is the point: the previous longest
+ *  string, "not inspected in 24 months", was 26 characters and wrapped
+ *  "months" onto a line of its own, and nothing would have caught the next
+ *  one. */
+export const MAX_RECORD_VALUE_CHARS = 22;
+
 function loadingRow(key: string): RecordRow {
   return { key, label: LABELS[key], value: "checking…", tone: "loading" };
 }
@@ -111,10 +130,16 @@ function rodentRow(field: BuildingRecord["rodents"], months: number): RecordRow 
     return {
       key: "rodents",
       label: LABELS.rodents,
-      value: `not inspected in ${months} months`,
+      // "not inspected in 24 months" measured 152.3px against a 132.8px
+      // column and wrapped "months" onto its own line. The unit is
+      // abbreviated rather than the window dropped: the window is the
+      // denominator behind the sentence and a bare "not inspected" would
+      // be a claim with no stated period. Abbreviating the unit rather
+      // than the number also keeps this inside the budget if the window
+      // ever grows to three digits.
+      value: `not inspected, ${months} mo`,
       tone: "empty",
-      detail:
-        "No DOHMH initial or compliance inspection on record for this lot in the window. That is not the same as passing one.",
+      detail: `No DOHMH initial or compliance inspection on record for this lot in the last ${months} months. That is not the same as passing one.`,
     };
   }
   const detail = `Most recent: ${field.last_result}, ${field.last_date}. Counts initial and compliance visits only -- the ones that carry a pass/fail verdict.`;

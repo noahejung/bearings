@@ -14,9 +14,10 @@ import {
   buildRecordBlock,
   recordRows,
   recordSourceLines,
+  MAX_RECORD_VALUE_CHARS,
   type RecordState,
 } from "./buildingRecord";
-import type { BuildingRecord } from "../types";
+import type { BuildingRecord, PavementRecord } from "../types";
 
 const SOURCES: BuildingRecord["sources"] = {
   bedbugs: {
@@ -178,7 +179,7 @@ describe("building record rows", () => {
     const state: RecordState = { status: "ready", record: ALL_EMPTY };
     expect(values(state)).toEqual({
       bedbugs: "no filing on record",
-      rodents: "not inspected in 24 months",
+      rodents: "not inspected, 24 mo",
       heat: "no complaints",
       flood: "no FEMA study here",
       pavement: "no rated street nearby",
@@ -287,5 +288,90 @@ describe("building record block DOM", () => {
     expect(block.el.querySelector(".buildinginfo__record-heading")?.textContent).toBe(
       "Building record",
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The card is 200px wide and monospaced, and it does not grow. Every string
+// any row can produce has to fit its column on one line, which for a mono
+// font is a character count -- see MAX_RECORD_VALUE_CHARS for the measured
+// derivation. This walks every state of every row rather than spot-checking
+// the one that was found wrapping.
+// ---------------------------------------------------------------------------
+
+describe("every row value fits the card on one line", () => {
+  const STATES: RecordState[] = [
+    { status: "loading" },
+    { status: "error", message: "The building record could not be loaded." },
+    { status: "ready", record: ALL_VALUES },
+    { status: "ready", record: ALL_EMPTY },
+    { status: "ready", record: ALL_UNAVAILABLE },
+    // Deliberately implausible magnitudes: the widest a number can make a
+    // row is not the widest number the city has today.
+    {
+      status: "ready",
+      record: {
+        ...ALL_VALUES,
+        bedbugs: {
+          filings: 99,
+          period_end: "2025-10-31",
+          units_total: 9999,
+          units_infested: 999,
+          units_reinfested: 0,
+          units_eradicated: 0,
+        },
+        rodents: {
+          inspections: 999,
+          failed: 999,
+          last_result: "Failed for Rat Activity",
+          last_date: "2026-06-06",
+          months: 120,
+        },
+        heat: { ...ALL_VALUES.heat, complaints: 99999 },
+        flood: {
+          zone: "A99",
+          description: "x",
+          in_special_flood_hazard_area: true,
+          base_flood_elevation_ft: 12,
+        },
+        pavement: { ...(ALL_VALUES.pavement as PavementRecord), average_rating: 10 },
+      },
+    },
+    // The same magnitudes with no failures and no infestation, so the
+    // "clean" wording of each row is measured too.
+    {
+      status: "ready",
+      record: {
+        ...ALL_VALUES,
+        rodents: {
+          inspections: 999,
+          failed: 0,
+          last_result: "Passed",
+          last_date: "2026-06-06",
+          months: 120,
+        },
+      },
+    },
+  ];
+
+  it(`is never longer than ${MAX_RECORD_VALUE_CHARS} characters`, () => {
+    const tooLong: string[] = [];
+    for (const state of STATES) {
+      for (const row of recordRows(state)) {
+        if (row.value.length > MAX_RECORD_VALUE_CHARS) {
+          tooLong.push(`${row.key}: ${row.value.length} chars -- "${row.value}"`);
+        }
+      }
+    }
+    expect(tooLong).toEqual([]);
+  });
+
+  it("keeps the rodent window in the row rather than dropping it", () => {
+    // The window is the denominator behind "not inspected". Shortening the
+    // copy must not turn it into a claim with no stated period.
+    const rows = recordRows({ status: "ready", record: ALL_EMPTY });
+    const rodents = rows.find((r) => r.key === "rodents");
+    expect(rodents?.value).toBe("not inspected, 24 mo");
+    expect(rodents?.detail).toContain("24 months");
   });
 });

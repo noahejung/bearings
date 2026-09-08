@@ -101,8 +101,9 @@ import logging
 import math
 import time
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timezone
+from datetime import datetime
 from functools import lru_cache
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 
@@ -188,6 +189,21 @@ SOURCES = {
 # Commons outage cannot delay or blank a single hazard field. See photo_for()
 # and GET /api/building/{bbl}/photo.
 PHOTO_SOURCE = {**commons.SOURCE, "baked": False}
+
+
+def _today() -> str:
+    """Today's date in New York, as a plain `YYYY-MM-DD` string.
+
+    Not UTC. Every date this endpoint hands a reader is a date about New
+    York, and a UTC calendar day is a different day here for four or five
+    hours of every evening: a card opened at 21:38 on 2026-09-07 was citing
+    its live sources as "live 2026-09-08", a day that had not started yet
+    for anyone looking at it. Computed server-side and shipped as a date
+    string rather than a timestamp, so the card stays a plain renderer and
+    two readers in different timezones see the same, correct, New York date
+    for a New York fact.
+    """
+    return datetime.now(ZoneInfo(config.PROJECT_TZ)).strftime("%Y-%m-%d")
 
 
 def is_wellformed_bbl(bbl: str) -> bool:
@@ -311,7 +327,7 @@ def bake() -> dict:
 
     start, end = heat._season_bounds(HEAT_SEASONS)
     meta = {
-        "baked_at": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
+        "baked_at": _today(),
         "rows": int(len(merged)),
         "bedbugs": {
             "bbls": int(len(bedbug_frame)),
@@ -553,7 +569,7 @@ def record_for(bbl: str) -> dict:
     live = _live_blocks(bbl, point)
 
     baked_as_of = bake_meta().get("baked_at")
-    live_as_of = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    live_as_of = _today()
 
     return {
         "bbl": bbl,
@@ -614,7 +630,7 @@ def photo_for(bbl: str) -> dict:
     words. Both are `None` when the lookup was not answered -- we do not know
     the count, and 0 would claim we did.
     """
-    as_of = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    as_of = _today()
     envelope = {
         "bbl": bbl,
         "point": None,
